@@ -123,16 +123,28 @@ class BluetoothManager: NSObject, ObservableObject {
     
     private func removeStaleDevices() {
         let now = Date()
+        print("🧹 Checking for stale devices (count before: \(discoveredDevices.count))")
         discoveredDevices.removeAll { device in
             guard let lastUpdate = lastRSSIUpdate[device.id] else {
+                print("⚠️ No last update found for \(device.name) [\(device.id.uuidString.prefix(8))] - REMOVING")
                 return true
             }
-            let isStale = now.timeIntervalSince(lastUpdate) > deviceTimeout
+            let timeSinceUpdate = now.timeIntervalSince(lastUpdate)
+            let isStale = timeSinceUpdate > deviceTimeout
             if isStale {
-                print("🗑️ Removing stale device: \(device.name)")
+                print("🗑️ Removing stale device: \(device.name) [\(device.id.uuidString.prefix(8))] (last seen \(String(format: "%.1f", timeSinceUpdate))s ago)")
                 lastRSSIUpdate.removeValue(forKey: device.id)
             }
             return isStale
+        }
+        if discoveredDevices.count > 0 {
+            print("✅ Active devices after cleanup: \(discoveredDevices.count)")
+            for dev in discoveredDevices {
+                if let lastUpdate = lastRSSIUpdate[dev.id] {
+                    let age = now.timeIntervalSince(lastUpdate)
+                    print("   - \(dev.name) [\(dev.id.uuidString.prefix(8))]: \(String(format: "%.1f", age))s ago")
+                }
+            }
         }
     }
 }
@@ -159,7 +171,28 @@ extension BluetoothManager: CBCentralManagerDelegate {
         
         lastRSSIUpdate[deviceID] = now
         
-        let name = peripheral.name ?? "WatchDog"
+        // Debug: Print all advertisement data
+        print("📡 Advertisement data for \(deviceID.uuidString.prefix(8)):")
+        for (key, value) in advertisementData {
+            print("  \(key): \(value)")
+        }
+        
+        // Try to get name from multiple sources - prioritize fresh advertisement data over cached name
+        let name: String
+        if let advName = advertisementData[CBAdvertisementDataLocalNameKey] as? String, !advName.isEmpty {
+            // First try: local name from advertisement data (most up-to-date)
+            name = advName
+            print("✅ Using advertisement local name: \(name)")
+        } else if let peripheralName = peripheral.name, !peripheralName.isEmpty {
+            // Second try: peripheral name (might be cached)
+            name = peripheralName
+            print("✅ Using peripheral.name: \(name)")
+        } else {
+            // Fallback: show UUID prefix
+            name = "WatchDog-\(deviceID.uuidString.prefix(8))"
+            print("⚠️ No name found, using fallback: \(name)")
+        }
+        
         let device = BluetoothDevice(
             id: deviceID,
             name: name,
@@ -168,11 +201,21 @@ extension BluetoothManager: CBCentralManagerDelegate {
             isConnected: false
         )
         
+        print("🔍 Device object created: ID=\(deviceID.uuidString.prefix(8)), Name=\(name), RSSI=\(RSSI)")
+        
         if let index = discoveredDevices.firstIndex(where: { $0.id == device.id }) {
+            let oldDevice = discoveredDevices[index]
+            print("🔄 UPDATING existing device at index \(index):")
+            print("   Old: ID=\(oldDevice.id.uuidString.prefix(8)), Name=\(oldDevice.name), RSSI=\(oldDevice.rssi)")
+            print("   New: ID=\(device.id.uuidString.prefix(8)), Name=\(device.name), RSSI=\(device.rssi)")
             discoveredDevices[index] = device
         } else {
+            print("➕ ADDING new device to list (current count: \(discoveredDevices.count))")
             discoveredDevices.append(device)
-            print("Discovered: \(name) [\(deviceID.uuidString.prefix(8))]")
+            print("   Device list now has \(discoveredDevices.count) devices:")
+            for (idx, dev) in discoveredDevices.enumerated() {
+                print("   [\(idx)] \(dev.name) - \(dev.id.uuidString.prefix(8))")
+            }
         }
     }
     
