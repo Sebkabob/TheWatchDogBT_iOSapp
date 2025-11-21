@@ -7,6 +7,7 @@
 
 import Foundation
 import CoreMotion
+import QuartzCore
 
 class MotionManager: ObservableObject {
     @Published var rotation = SIMD3<Double>(0, 0, 0)

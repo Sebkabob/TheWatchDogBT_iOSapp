@@ -9,66 +9,106 @@ import SwiftUI
 
 struct WatchDogSettingsView: View {
     @Environment(\.dismiss) var dismiss
+    @ObservedObject private var settingsManager = SettingsManager.shared
+    @ObservedObject var bluetoothManager: BluetoothManager
     
-    @State private var sensitivity: Double = 50
-    @State private var alarmVolume: Double = 75
-    @State private var enableVibration = true
-    @State private var autoLock = false
+    // Local state for editing
+    @State private var watchDogName: String = ""
+    @State private var sensitivity: SensitivityLevel = .medium
+    @State private var alarmType: AlarmType = .normal
+    @State private var lightsEnabled: Bool = true
+    @State private var loggingEnabled: Bool = false
+    
+    // Character limit for name
+    private let maxNameLength = 16
     
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
+                // Settings content
                 Form {
+                    // WatchDog Name Section
+                    Section(header: Text("Device Name")) {
+                        TextField("WatchDog Name", text: $watchDogName)
+                            .onChange(of: watchDogName) { newValue in
+                                // Limit to 16 characters
+                                if newValue.count > maxNameLength {
+                                    watchDogName = String(newValue.prefix(maxNameLength))
+                                }
+                            }
+                        
+                        Text("\(watchDogName.count)/\(maxNameLength) characters")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    // Sensitivity Section
                     Section(header: Text("Motion Detection")) {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Sensitivity")
                                 .font(.subheadline)
-                            HStack {
-                                Text("Low")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                Slider(value: $sensitivity, in: 0...100)
-                                Text("High")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
+                            
+                            AnimatedSegmentedControl(
+                                selection: $sensitivity,
+                                options: SensitivityLevel.allCases
+                            )
                         }
                         .padding(.vertical, 4)
                     }
                     
+                    // Alarm Type Section
                     Section(header: Text("Alarm Settings")) {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Volume")
+                            Text("Alarm Type")
                                 .font(.subheadline)
-                            HStack {
-                                Image(systemName: "speaker.fill")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                Slider(value: $alarmVolume, in: 0...100)
-                                Image(systemName: "speaker.wave.3.fill")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
+                            
+                            AnimatedSegmentedControl(
+                                selection: $alarmType,
+                                options: AlarmType.allCases
+                            )
                         }
                         .padding(.vertical, 4)
-                        
-                        Toggle("Vibration", isOn: $enableVibration)
                     }
                     
-                    Section(header: Text("Behavior")) {
-                        Toggle("Auto-Lock on Connect", isOn: $autoLock)
+                    // Lights Section
+                    Section(header: Text("LED Indicator")) {
+                        HStack {
+                            Text("Lights")
+                                .font(.body)
+                            Spacer()
+                            Toggle("", isOn: $lightsEnabled)
+                                .labelsHidden()
+                        }
+                    }
+                    
+                    // Logging Section
+                    Section(header: Text("Data Logging")) {
+                        HStack {
+                            Text("Logging")
+                                .font(.body)
+                            Spacer()
+                            Toggle("", isOn: $loggingEnabled)
+                                .labelsHidden()
+                        }
+                        
+                        if loggingEnabled {
+                            Text("Records motion events locally. Event history syncs automatically when in range.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
                     }
                 }
                 
+                // Confirm button at bottom
                 VStack(spacing: 0) {
                     Divider()
                     
                     Button(action: {
-                        confirmSettings()
+                        applySettings()
                     }) {
                         HStack {
                             Image(systemName: "checkmark.circle.fill")
-                            Text("Confirm Settings")
+                            Text("Apply Settings")
                         }
                         .font(.headline)
                         .foregroundColor(.white)
@@ -96,11 +136,106 @@ struct WatchDogSettingsView: View {
                     }
                 }
             }
+            .onAppear {
+                // Load current settings from SettingsManager
+                watchDogName = settingsManager.deviceName
+                sensitivity = settingsManager.sensitivity
+                alarmType = settingsManager.alarmType
+                lightsEnabled = settingsManager.lightsEnabled
+                loggingEnabled = settingsManager.loggingEnabled
+            }
         }
     }
     
-    private func confirmSettings() {
-        // TODO: Package settings and send via Bluetooth
+    private func applySettings() {
+        // Update settings manager
+        settingsManager.updateSettings(
+            name: watchDogName,
+            alarm: alarmType,
+            sens: sensitivity,
+            lights: lightsEnabled,
+            logging: loggingEnabled
+        )
+        
+        // Send settings byte to WatchDog (armed state stays the same)
+        bluetoothManager.sendSettings()
+        
+        print("📤 Settings applied:")
+        print("  Name: \(watchDogName)")
+        print("  Sensitivity: \(sensitivity.rawValue)")
+        print("  Alarm Type: \(alarmType.rawValue)")
+        print("  Lights: \(lightsEnabled ? "On" : "Off")")
+        print("  Logging: \(loggingEnabled ? "On" : "Off")")
+        
+        // Dismiss after applying
         dismiss()
     }
+}
+
+// MARK: - Animated Segmented Control
+struct AnimatedSegmentedControl<T: RawRepresentable & Hashable & CaseIterable>: View where T.RawValue == String {
+    @Binding var selection: T
+    let options: [T]
+    
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                // Background
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(.systemGray5))
+                
+                // Sliding highlight
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.blue)
+                    .frame(width: geometry.size.width / CGFloat(options.count))
+                    .offset(x: CGFloat(selectedIndex) * (geometry.size.width / CGFloat(options.count)))
+                    .animation(.spring(response: 0.25, dampingFraction: 0.8), value: selection)
+                
+                // Buttons
+                HStack(spacing: 0) {
+                    ForEach(Array(options.enumerated()), id: \.element) { index, option in
+                        Button(action: {
+                            selection = option
+                            // Haptic feedback
+                            let generator = UIImpactFeedbackGenerator(style: .light)
+                            generator.impactOccurred()
+                        }) {
+                            Text(option.rawValue)
+                                .font(.subheadline)
+                                .fontWeight(selection == option ? .semibold : .regular)
+                                .foregroundColor(selection == option ? .white : .primary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                }
+            }
+        }
+        .frame(height: 36)
+    }
+    
+    private var selectedIndex: Int {
+        options.firstIndex(of: selection) ?? 0
+    }
+}
+
+// MARK: - Enums for Settings
+
+enum SensitivityLevel: String, CaseIterable {
+    case low = "Low"
+    case medium = "Medium"
+    case high = "High"
+}
+
+enum AlarmType: String, CaseIterable {
+    case none = "None"
+    case calm = "Calm"
+    case normal = "Normal"
+    case loud = "Loud"  // CHANGED FROM "aggressive"
+}
+
+#Preview {
+    WatchDogSettingsView(bluetoothManager: BluetoothManager())
 }

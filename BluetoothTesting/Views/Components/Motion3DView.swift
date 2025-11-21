@@ -18,6 +18,7 @@ struct Motion3DView: View {
     
     let usdzFileName = "WatchDogBTCase_Final"
     var isLocked: Bool = false
+    var bluetoothManager: BluetoothManager
     
     var body: some View {
         ZStack {
@@ -57,7 +58,7 @@ struct Motion3DView: View {
             )
         }
         .sheet(isPresented: $showSettings) {
-            WatchDogSettingsView()
+            WatchDogSettingsView(bluetoothManager: bluetoothManager)
         }
         .onAppear {
             motionManager.startTracking()
@@ -99,5 +100,5 @@ struct Motion3DView: View {
 }
 
 #Preview {
-    Motion3DView()
+    Motion3DView(bluetoothManager: BluetoothManager())
 }
