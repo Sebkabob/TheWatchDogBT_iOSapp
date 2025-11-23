@@ -17,6 +17,7 @@ class BluetoothManager: NSObject, ObservableObject {
     @Published var deviceState: UInt8 = 0
     @Published var hasReceivedInitialState = false
     @Published var batteryLevel: Int = -1
+    @Published var isCharging: Bool = false
     
     private let settingsManager = SettingsManager.shared
     
@@ -98,6 +99,7 @@ class BluetoothManager: NSObject, ObservableObject {
         deviceState = 0
         hasReceivedInitialState = false
         batteryLevel = -1
+        isCharging = false
     }
     
     func sendData(_ data: Data) {
@@ -123,28 +125,16 @@ class BluetoothManager: NSObject, ObservableObject {
     
     private func removeStaleDevices() {
         let now = Date()
-        print("🧹 Checking for stale devices (count before: \(discoveredDevices.count))")
         discoveredDevices.removeAll { device in
             guard let lastUpdate = lastRSSIUpdate[device.id] else {
-                print("⚠️ No last update found for \(device.name) [\(device.id.uuidString.prefix(8))] - REMOVING")
                 return true
             }
-            let timeSinceUpdate = now.timeIntervalSince(lastUpdate)
-            let isStale = timeSinceUpdate > deviceTimeout
+            let isStale = now.timeIntervalSince(lastUpdate) > deviceTimeout
             if isStale {
-                print("🗑️ Removing stale device: \(device.name) [\(device.id.uuidString.prefix(8))] (last seen \(String(format: "%.1f", timeSinceUpdate))s ago)")
+                print("🗑️ Removing stale device: \(device.name)")
                 lastRSSIUpdate.removeValue(forKey: device.id)
             }
             return isStale
-        }
-        if discoveredDevices.count > 0 {
-            print("✅ Active devices after cleanup: \(discoveredDevices.count)")
-            for dev in discoveredDevices {
-                if let lastUpdate = lastRSSIUpdate[dev.id] {
-                    let age = now.timeIntervalSince(lastUpdate)
-                    print("   - \(dev.name) [\(dev.id.uuidString.prefix(8))]: \(String(format: "%.1f", age))s ago")
-                }
-            }
         }
     }
 }
@@ -171,27 +161,8 @@ extension BluetoothManager: CBCentralManagerDelegate {
         
         lastRSSIUpdate[deviceID] = now
         
-        // Debug: Print all advertisement data
-        print("📡 Advertisement data for \(deviceID.uuidString.prefix(8)):")
-        for (key, value) in advertisementData {
-            print("  \(key): \(value)")
-        }
-        
-        // Try to get name from multiple sources - prioritize fresh advertisement data over cached name
-        let name: String
-        if let advName = advertisementData[CBAdvertisementDataLocalNameKey] as? String, !advName.isEmpty {
-            // First try: local name from advertisement data (most up-to-date)
-            name = advName
-            print("✅ Using advertisement local name: \(name)")
-        } else if let peripheralName = peripheral.name, !peripheralName.isEmpty {
-            // Second try: peripheral name (might be cached)
-            name = peripheralName
-            print("✅ Using peripheral.name: \(name)")
-        } else {
-            // Fallback: show UUID prefix
-            name = "WatchDog-\(deviceID.uuidString.prefix(8))"
-            print("⚠️ No name found, using fallback: \(name)")
-        }
+        // Get name from advertisement data (TOP PRIORITY), fallback to peripheral name
+        let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? peripheral.name ?? "WatchDog"
         
         let device = BluetoothDevice(
             id: deviceID,
@@ -201,21 +172,11 @@ extension BluetoothManager: CBCentralManagerDelegate {
             isConnected: false
         )
         
-        print("🔍 Device object created: ID=\(deviceID.uuidString.prefix(8)), Name=\(name), RSSI=\(RSSI)")
-        
         if let index = discoveredDevices.firstIndex(where: { $0.id == device.id }) {
-            let oldDevice = discoveredDevices[index]
-            print("🔄 UPDATING existing device at index \(index):")
-            print("   Old: ID=\(oldDevice.id.uuidString.prefix(8)), Name=\(oldDevice.name), RSSI=\(oldDevice.rssi)")
-            print("   New: ID=\(device.id.uuidString.prefix(8)), Name=\(device.name), RSSI=\(device.rssi)")
             discoveredDevices[index] = device
         } else {
-            print("➕ ADDING new device to list (current count: \(discoveredDevices.count))")
             discoveredDevices.append(device)
-            print("   Device list now has \(discoveredDevices.count) devices:")
-            for (idx, dev) in discoveredDevices.enumerated() {
-                print("   [\(idx)] \(dev.name) - \(dev.id.uuidString.prefix(8))")
-            }
+            print("Discovered: \(name) [\(deviceID.uuidString.prefix(8))]")
         }
     }
     
@@ -226,7 +187,14 @@ extension BluetoothManager: CBCentralManagerDelegate {
         connectionTimer = nil
         
         if let index = discoveredDevices.firstIndex(where: { $0.id == peripheral.identifier }) {
-            discoveredDevices[index].isConnected = true
+            // Keep the discovered name, just update connection status
+            discoveredDevices[index] = BluetoothDevice(
+                id: peripheral.identifier,
+                name: discoveredDevices[index].name,  // PRESERVE THE DISCOVERED NAME
+                peripheral: peripheral,
+                rssi: discoveredDevices[index].rssi,
+                isConnected: true
+            )
             connectedDevice = discoveredDevices[index]
         }
         
@@ -250,6 +218,7 @@ extension BluetoothManager: CBCentralManagerDelegate {
         deviceState = 0
         hasReceivedInitialState = false
         batteryLevel = -1
+        isCharging = false
     }
     
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
@@ -330,10 +299,18 @@ extension BluetoothManager: CBPeripheralDelegate {
         
         // Read battery level if available (byte 1)
         if data.count >= 2 {
-            let battery = Int(data[1])
+            let batteryByte = data[1]
+            
+            // Check bit 7 for charging state (0b10000000 = 0x80)
+            let charging = (batteryByte & 0x80) != 0
+            
+            // Extract actual battery level from lower 7 bits
+            let battery = Int(batteryByte & 0x7F)
+            
             DispatchQueue.main.async {
                 self.batteryLevel = battery
-                print("🔋 Battery level: \(battery)%")
+                self.isCharging = charging
+                print("🔋 Battery level: \(battery)% \(charging ? "(Charging)" : "")")
             }
         } else {
             print("⚠️ Only received \(data.count) byte(s), expected 2 for battery")
