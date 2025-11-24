@@ -21,7 +21,7 @@ struct WatchDogSettingsView: View {
     @State private var disableAlarmWhenConnected: Bool = false
     
     // Character limit for name
-    private let maxNameLength = 16
+    private let maxNameLength = 10
     
     var body: some View {
         NavigationView {
