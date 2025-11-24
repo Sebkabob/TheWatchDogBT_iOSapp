@@ -16,6 +16,7 @@ class SettingsManager: ObservableObject {
     @Published var sensitivity: SensitivityLevel = .medium
     @Published var lightsEnabled: Bool = true
     @Published var loggingEnabled: Bool = false
+    @Published var disableAlarmWhenConnected: Bool = false
     @Published var deviceName: String = "WatchDog"
     
     // UserDefaults keys
@@ -24,6 +25,7 @@ class SettingsManager: ObservableObject {
     private let sensitivityKey = "watchdog_sensitivity"
     private let lightsKey = "watchdog_lights"
     private let loggingKey = "watchdog_logging"
+    private let disableAlarmWhenConnectedKey = "watchdog_disable_alarm_connected"
     private let deviceNameKey = "watchdog_device_name"
     
     private init() {
@@ -35,11 +37,11 @@ class SettingsManager: ObservableObject {
     /// Encodes current settings into a single byte
     /// Bit layout:
     /// - Bit 0: Armed (0=unlocked, 1=locked)
-    /// - Bits 1-2: Alarm Type (00=None, 01=Calm, 10=Normal, 11=Aggressive)
+    /// - Bits 1-2: Alarm Type (00=None, 01=Calm, 10=Normal, 11=Loud)
     /// - Bits 3-4: Sensitivity (00=Low, 01=Medium, 10=High)
     /// - Bit 5: Lights (0=Off, 1=On)
     /// - Bit 6: Logging (0=Off, 1=On)
-    /// - Bit 7: Reserved (0)
+    /// - Bit 7: Disable Alarm When Connected (0=Alarm always, 1=Disable when connected)
     func encodeSettings() -> UInt8 {
         var byte: UInt8 = 0
         
@@ -66,7 +68,10 @@ class SettingsManager: ObservableObject {
             byte |= (1 << 6)
         }
         
-        // Bit 7: Reserved (always 0)
+        // Bit 7: Disable Alarm When Connected
+        if disableAlarmWhenConnected {
+            byte |= (1 << 7)
+        }
         
         return byte
     }
@@ -92,11 +97,15 @@ class SettingsManager: ObservableObject {
         // Bit 6: Logging
         loggingEnabled = (byte & (1 << 6)) != 0
         
+        // Bit 7: Disable Alarm When Connected
+        disableAlarmWhenConnected = (byte & (1 << 7)) != 0
+        
         print("  Armed: \(isArmed)")
         print("  Alarm: \(alarmType.rawValue)")
         print("  Sensitivity: \(sensitivity.rawValue)")
         print("  Lights: \(lightsEnabled)")
         print("  Logging: \(loggingEnabled)")
+        print("  Disable Alarm When Connected: \(disableAlarmWhenConnected)")
         
         // Save to UserDefaults (WatchDog is source of truth)
         saveSettings()
@@ -110,6 +119,7 @@ class SettingsManager: ObservableObject {
         UserDefaults.standard.set(sensitivity.rawValue, forKey: sensitivityKey)
         UserDefaults.standard.set(lightsEnabled, forKey: lightsKey)
         UserDefaults.standard.set(loggingEnabled, forKey: loggingKey)
+        UserDefaults.standard.set(disableAlarmWhenConnected, forKey: disableAlarmWhenConnectedKey)
         UserDefaults.standard.set(deviceName, forKey: deviceNameKey)
     }
     
@@ -117,6 +127,7 @@ class SettingsManager: ObservableObject {
         isArmed = UserDefaults.standard.bool(forKey: armedKey)
         lightsEnabled = UserDefaults.standard.bool(forKey: lightsKey)
         loggingEnabled = UserDefaults.standard.bool(forKey: loggingKey)
+        disableAlarmWhenConnected = UserDefaults.standard.bool(forKey: disableAlarmWhenConnectedKey)
         deviceName = UserDefaults.standard.string(forKey: deviceNameKey) ?? "WatchDog"
         
         if let alarmString = UserDefaults.standard.string(forKey: alarmTypeKey),
@@ -132,13 +143,15 @@ class SettingsManager: ObservableObject {
     
     /// Call this when user manually changes settings
     func updateSettings(name: String? = nil, armed: Bool? = nil, alarm: AlarmType? = nil,
-                       sens: SensitivityLevel? = nil, lights: Bool? = nil, logging: Bool? = nil) {
+                       sens: SensitivityLevel? = nil, lights: Bool? = nil, logging: Bool? = nil,
+                       disableAlarmConnected: Bool? = nil) {
         if let name = name { deviceName = name }
         if let armed = armed { isArmed = armed }
         if let alarm = alarm { alarmType = alarm }
         if let sens = sens { sensitivity = sens }
         if let lights = lights { lightsEnabled = lights }
         if let logging = logging { loggingEnabled = logging }
+        if let disableAlarmConnected = disableAlarmConnected { disableAlarmWhenConnected = disableAlarmConnected }
         
         saveSettings()
     }

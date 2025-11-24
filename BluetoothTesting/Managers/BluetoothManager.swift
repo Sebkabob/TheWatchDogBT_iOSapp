@@ -17,6 +17,7 @@ class BluetoothManager: NSObject, ObservableObject {
     @Published var deviceState: UInt8 = 0
     @Published var hasReceivedInitialState = false
     @Published var batteryLevel: Int = -1
+    @Published var isCharging: Bool = false
     
     private let settingsManager = SettingsManager.shared
     
@@ -98,6 +99,7 @@ class BluetoothManager: NSObject, ObservableObject {
         deviceState = 0
         hasReceivedInitialState = false
         batteryLevel = -1
+        isCharging = false
     }
     
     func sendData(_ data: Data) {
@@ -159,7 +161,9 @@ extension BluetoothManager: CBCentralManagerDelegate {
         
         lastRSSIUpdate[deviceID] = now
         
-        let name = peripheral.name ?? "WatchDog"
+        // Get name from advertisement data (TOP PRIORITY), fallback to peripheral name
+        let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? peripheral.name ?? "WatchDog"
+        
         let device = BluetoothDevice(
             id: deviceID,
             name: name,
@@ -183,7 +187,14 @@ extension BluetoothManager: CBCentralManagerDelegate {
         connectionTimer = nil
         
         if let index = discoveredDevices.firstIndex(where: { $0.id == peripheral.identifier }) {
-            discoveredDevices[index].isConnected = true
+            // Keep the discovered name, just update connection status
+            discoveredDevices[index] = BluetoothDevice(
+                id: peripheral.identifier,
+                name: discoveredDevices[index].name,  // PRESERVE THE DISCOVERED NAME
+                peripheral: peripheral,
+                rssi: discoveredDevices[index].rssi,
+                isConnected: true
+            )
             connectedDevice = discoveredDevices[index]
         }
         
@@ -207,6 +218,7 @@ extension BluetoothManager: CBCentralManagerDelegate {
         deviceState = 0
         hasReceivedInitialState = false
         batteryLevel = -1
+        isCharging = false
     }
     
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
@@ -287,10 +299,18 @@ extension BluetoothManager: CBPeripheralDelegate {
         
         // Read battery level if available (byte 1)
         if data.count >= 2 {
-            let battery = Int(data[1])
+            let batteryByte = data[1]
+            
+            // Check bit 7 for charging state (0b10000000 = 0x80)
+            let charging = (batteryByte & 0x80) != 0
+            
+            // Extract actual battery level from lower 7 bits
+            let battery = Int(batteryByte & 0x7F)
+            
             DispatchQueue.main.async {
                 self.batteryLevel = battery
-                print("🔋 Battery level: \(battery)%")
+                self.isCharging = charging
+                print("🔋 Battery level: \(battery)% \(charging ? "(Charging)" : "")")
             }
         } else {
             print("⚠️ Only received \(data.count) byte(s), expected 2 for battery")

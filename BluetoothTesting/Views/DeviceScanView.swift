@@ -14,35 +14,11 @@ struct DeviceScanView: View {
     
     var body: some View {
         VStack(spacing: 20) {
-            // Status indicator
-            HStack {
-                Circle()
-                    .fill(bluetoothManager.isScanning ? Color.green : Color.gray)
-                    .frame(width: 12, height: 12)
-                Text(bluetoothManager.isScanning ? "Scanning..." : "Not Scanning")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-            .padding(.top)
-            
-            // Scan button
-            Button(action: {
-                if bluetoothManager.isScanning {
-                    bluetoothManager.stopScanning()
-                } else {
-                    bluetoothManager.startScanning()
-                }
-            }) {
-                Text(bluetoothManager.isScanning ? "Stop Scanning" : "Scan for Devices")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(bluetoothManager.isScanning ? Color.red : Color.blue)
-                    .cornerRadius(10)
-            }
-            .padding(.horizontal)
-            .disabled(!bluetoothManager.isBluetoothReady)
+            // Debug info
+            Text("Devices: \(bluetoothManager.discoveredDevices.count) | Scanning: \(bluetoothManager.isScanning ? "Yes" : "No") | BT Ready: \(bluetoothManager.isBluetoothReady ? "Yes" : "No")")
+                .font(.caption)
+                .foregroundColor(.blue)
+                .padding()
             
             // Device list
             if bluetoothManager.discoveredDevices.isEmpty && bluetoothManager.isScanning {
@@ -63,7 +39,7 @@ struct DeviceScanView: View {
                         .foregroundColor(.gray)
                     Text("No devices found")
                         .font(.headline)
-                    Text("Tap 'Scan for Devices' to search for WatchDogs")
+                    Text("Searching for WatchDogs...")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -85,6 +61,19 @@ struct DeviceScanView: View {
             }
         }
         .navigationTitle("The WatchDog")
+        .onAppear {
+            print("🟢 DeviceScanView appeared")
+            print("🟢 Bluetooth ready: \(bluetoothManager.isBluetoothReady)")
+            print("🟢 Currently scanning: \(bluetoothManager.isScanning)")
+            bluetoothManager.startScanning()
+        }
+        .onChange(of: bluetoothManager.isBluetoothReady) { oldValue, newValue in
+            print("🔵 Bluetooth ready changed: \(oldValue) -> \(newValue)")
+            if newValue && !bluetoothManager.isScanning {
+                print("🔵 Starting scan because Bluetooth became ready")
+                bluetoothManager.startScanning()
+            }
+        }
         .alert(isPresented: $showAlert) {
             Alert(title: Text("Error"), message: Text(alertMessage), dismissButton: .default(Text("OK")))
         }

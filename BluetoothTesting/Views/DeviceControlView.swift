@@ -220,10 +220,30 @@ struct DeviceControlView: View {
         bluetoothManager.sendData(data)
     }
     
-    // Helper computed property for battery icon with more detail
+    // Helper computed property for battery icon with charging support
     private var batteryIcon: String {
         let level = bluetoothManager.batteryLevel
+        let isCharging = bluetoothManager.isCharging
         
+        // If charging, use bolt icons
+        if isCharging {
+            // 100%
+            if level == 100 { return "battery.100.bolt" }
+            
+            // 75-99%
+            if level >= 75 { return "battery.100.bolt" }
+            
+            // 50-74%
+            if level >= 50 { return "battery.75.bolt" }
+            
+            // 25-49%
+            if level >= 25 { return "battery.50.bolt" }
+            
+            // 0-24%
+            return "battery.25.bolt"
+        }
+        
+        // Not charging - use regular icons
         // 100%
         if level == 100 { return "battery.100" }
         
@@ -258,6 +278,13 @@ struct DeviceControlView: View {
     // Helper computed property for battery color
     private var batteryColor: Color {
         let level = bluetoothManager.batteryLevel
+        
+        // If charging, always show green
+        if bluetoothManager.isCharging {
+            return .green
+        }
+        
+        // Not charging - use level-based colors
         if level >= 20 { return .green }
         if level >= 10 { return .orange }
         return .red

@@ -18,9 +18,10 @@ struct WatchDogSettingsView: View {
     @State private var alarmType: AlarmType = .normal
     @State private var lightsEnabled: Bool = true
     @State private var loggingEnabled: Bool = false
+    @State private var disableAlarmWhenConnected: Bool = false
     
     // Character limit for name
-    private let maxNameLength = 16
+    private let maxNameLength = 10
     
     var body: some View {
         NavigationView {
@@ -68,6 +69,20 @@ struct WatchDogSettingsView: View {
                             )
                         }
                         .padding(.vertical, 4)
+                        
+                        // Disable Alarm When Connected Toggle
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Silent When Connected")
+                                    .font(.body)
+                                Text("Disable alarm when phone is connected")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Toggle("", isOn: $disableAlarmWhenConnected)
+                                .labelsHidden()
+                        }
                     }
                     
                     // Lights Section
@@ -143,6 +158,7 @@ struct WatchDogSettingsView: View {
                 alarmType = settingsManager.alarmType
                 lightsEnabled = settingsManager.lightsEnabled
                 loggingEnabled = settingsManager.loggingEnabled
+                disableAlarmWhenConnected = settingsManager.disableAlarmWhenConnected
             }
         }
     }
@@ -154,7 +170,8 @@ struct WatchDogSettingsView: View {
             alarm: alarmType,
             sens: sensitivity,
             lights: lightsEnabled,
-            logging: loggingEnabled
+            logging: loggingEnabled,
+            disableAlarmConnected: disableAlarmWhenConnected
         )
         
         // Send settings byte to WatchDog (armed state stays the same)
@@ -166,6 +183,7 @@ struct WatchDogSettingsView: View {
         print("  Alarm Type: \(alarmType.rawValue)")
         print("  Lights: \(lightsEnabled ? "On" : "Off")")
         print("  Logging: \(loggingEnabled ? "On" : "Off")")
+        print("  Disable Alarm When Connected: \(disableAlarmWhenConnected ? "Yes" : "No")")
         
         // Dismiss after applying
         dismiss()
@@ -233,7 +251,7 @@ enum AlarmType: String, CaseIterable {
     case none = "None"
     case calm = "Calm"
     case normal = "Normal"
-    case loud = "Loud"  // CHANGED FROM "aggressive"
+    case loud = "Loud"
 }
 
 #Preview {
