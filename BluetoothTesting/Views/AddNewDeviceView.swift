@@ -16,6 +16,8 @@ struct AddNewDeviceView: View {
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     @State private var bondedDeviceName = ""
+    @State private var connectingDeviceID: UUID?
+    @State private var pairingCompleted = false
     
     // Filter out already bonded devices
     private var availableDevices: [BluetoothDevice] {
@@ -69,7 +71,10 @@ struct AddNewDeviceView: View {
                     Spacer()
                 } else {
                     List(availableDevices) { device in
-                        NewDeviceRow(device: device) {
+                        NewDeviceRow(
+                            device: device,
+                            isConnecting: connectingDeviceID == device.id
+                        ) {
                             bondWithDevice(device)
                         }
                     }
@@ -96,6 +101,17 @@ struct AddNewDeviceView: View {
             .onDisappear {
                 bluetoothManager.stopScanning()
             }
+            .onChange(of: bluetoothManager.connectedDevice) { connectedDevice in
+                // Add bond IMMEDIATELY when connection succeeds
+                if let deviceID = connectingDeviceID,
+                   let connected = connectedDevice,
+                   connected.id == deviceID,
+                   !pairingCompleted {
+                    
+                    print("✅ Device connected - adding bond immediately")
+                    completePairing(device: connected)
+                }
+            }
             .alert("WatchDog Added!", isPresented: $showSuccessAlert) {
                 Button("Done") {
                     dismiss()
@@ -104,7 +120,9 @@ struct AddNewDeviceView: View {
                 Text("\(bondedDeviceName) has been bonded and is ready to use.")
             }
             .alert("Pairing Failed", isPresented: $showErrorAlert) {
-                Button("OK", role: .cancel) { }
+                Button("OK", role: .cancel) {
+                    connectingDeviceID = nil
+                }
             } message: {
                 Text(errorMessage)
             }
@@ -113,37 +131,45 @@ struct AddNewDeviceView: View {
     
     private func bondWithDevice(_ device: BluetoothDevice) {
         print("🔗 Attempting to bond with: \(device.name)")
+        connectingDeviceID = device.id
+        pairingCompleted = false
         
         // Connect to device
         bluetoothManager.connect(to: device)
-        
-        // Monitor connection status
-        // In a real implementation, you'd wait for pairing completion
-        // For now, we'll add the bond after connection
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            if bluetoothManager.connectedDevice?.id == device.id {
-                // Successfully connected - add bond
-                bondManager.addBond(deviceID: device.id, name: device.name)
-                bondedDeviceName = device.name
-                
-                // Disconnect after bonding
-                bluetoothManager.disconnect(from: device)
-                
-                showSuccessAlert = true
-            } else {
-                errorMessage = "Failed to connect to \(device.name). Please try again."
-                showErrorAlert = true
-            }
+    }
+    
+    private func completePairing(device: BluetoothDevice) {
+        guard !pairingCompleted else {
+            print("⚠️ Pairing already completed, skipping")
+            return
         }
+        
+        pairingCompleted = true
+        print("✅ Pairing complete for: \(device.name)")
+        
+        // Add bond IMMEDIATELY
+        bondManager.addBond(deviceID: device.id, name: device.name)
+        bondedDeviceName = device.name
+        
+        print("✅ Device added to bond list: \(device.name)")
+        print("📋 Total bonded devices: \(bondManager.bondedDevices.count)")
+        
+        // Clear connecting state
+        connectingDeviceID = nil
+        
+        // Show success and dismiss - STAY CONNECTED!
+        showSuccessAlert = true
+        
+        print("✅ Successfully bonded and staying connected to \(device.name)")
     }
 }
 
 struct NewDeviceRow: View {
     let device: BluetoothDevice
+    let isConnecting: Bool
     let onTap: () -> Void
     
     @State private var isPressed = false
-    @State private var isPairing = false
     
     var body: some View {
         HStack {
@@ -161,14 +187,14 @@ struct NewDeviceRow: View {
                     .foregroundColor(.gray)
                     .monospaced()
                 
-                Text(isPairing ? "Pairing..." : "Tap to pair")
+                Text(isConnecting ? "Pairing..." : "Tap to pair")
                     .font(.caption)
-                    .foregroundColor(isPairing ? .orange : .blue)
+                    .foregroundColor(isConnecting ? .orange : .blue)
             }
             
             Spacer()
             
-            if isPairing {
+            if isConnecting {
                 ProgressView()
                     .progressViewStyle(CircularProgressViewStyle(tint: .blue))
                     .scaleEffect(0.8)
@@ -190,22 +216,21 @@ struct NewDeviceRow: View {
         .simultaneousGesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { _ in
-                    if !isPressed && !isPairing {
+                    if !isPressed && !isConnecting {
                         isPressed = true
                         let generator = UIImpactFeedbackGenerator(style: .soft)
                         generator.impactOccurred()
                     }
                 }
                 .onEnded { _ in
-                    if !isPairing {
+                    if !isConnecting {
                         isPressed = false
-                        isPairing = true
                         onTap()
                     }
                 }
         )
         .animation(.easeInOut(duration: 0.05), value: isPressed)
-        .disabled(isPairing)
+        .disabled(isConnecting)
     }
 }
 

@@ -88,6 +88,12 @@ struct BondedDevicesListView: View {
             .onDisappear {
                 bluetoothManager.stopBackgroundScanning()
             }
+            .onChange(of: bluetoothManager.isBluetoothReady) { newValue in
+                if newValue && !bluetoothManager.isScanning {
+                    print("🔵 Bluetooth ready - starting background scan")
+                    bluetoothManager.startBackgroundScanning()
+                }
+            }
             .alert("Forget WatchDog?", isPresented: $showDeleteConfirmation) {
                 Button("Cancel", role: .cancel) {
                     deviceToDelete = nil
