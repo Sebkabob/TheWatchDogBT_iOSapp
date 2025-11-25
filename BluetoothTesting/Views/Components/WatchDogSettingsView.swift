@@ -10,6 +10,7 @@ import SwiftUI
 struct WatchDogSettingsView: View {
     @Environment(\.dismiss) var dismiss
     @ObservedObject private var settingsManager = SettingsManager.shared
+    @ObservedObject private var bondManager = BondManager.shared
     @ObservedObject var bluetoothManager: BluetoothManager
     
     // Local state for editing
@@ -20,8 +21,11 @@ struct WatchDogSettingsView: View {
     @State private var loggingEnabled: Bool = false
     @State private var disableAlarmWhenConnected: Bool = false
     
+    // Forget device confirmation
+    @State private var showForgetConfirmation = false
+    
     // Character limit for name
-    private let maxNameLength = 10
+    private let maxNameLength = 16
     
     var body: some View {
         NavigationView {
@@ -32,7 +36,6 @@ struct WatchDogSettingsView: View {
                     Section(header: Text("Device Name")) {
                         TextField("WatchDog Name", text: $watchDogName)
                             .onChange(of: watchDogName) { newValue in
-                                // Limit to 16 characters
                                 if newValue.count > maxNameLength {
                                     watchDogName = String(newValue.prefix(maxNameLength))
                                 }
@@ -112,6 +115,24 @@ struct WatchDogSettingsView: View {
                                 .foregroundColor(.secondary)
                         }
                     }
+                    
+                    // Forget Device Section
+                    Section {
+                        Button(action: {
+                            showForgetConfirmation = true
+                        }) {
+                            HStack {
+                                Image(systemName: "trash.fill")
+                                Text("Forget This Device")
+                            }
+                            .foregroundColor(.red)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                        }
+                    } footer: {
+                        Text("Removes this WatchDog from your bonded devices. You'll need to pair again to reconnect.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 }
                 
                 // Confirm button at bottom
@@ -160,6 +181,14 @@ struct WatchDogSettingsView: View {
                 loggingEnabled = settingsManager.loggingEnabled
                 disableAlarmWhenConnected = settingsManager.disableAlarmWhenConnected
             }
+            .alert("Forget WatchDog?", isPresented: $showForgetConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Forget Device", role: .destructive) {
+                    forgetDevice()
+                }
+            } message: {
+                Text("Are you sure you want to forget \(watchDogName)? You'll need to pair again to reconnect.")
+            }
         }
     }
     
@@ -174,6 +203,11 @@ struct WatchDogSettingsView: View {
             disableAlarmConnected: disableAlarmWhenConnected
         )
         
+        // Update bond name if changed
+        if let deviceID = bluetoothManager.connectedDevice?.id {
+            bondManager.renameBond(deviceID: deviceID, newName: watchDogName)
+        }
+        
         // Send settings byte to WatchDog (armed state stays the same)
         bluetoothManager.sendSettings()
         
@@ -186,6 +220,21 @@ struct WatchDogSettingsView: View {
         print("  Disable Alarm When Connected: \(disableAlarmWhenConnected ? "Yes" : "No")")
         
         // Dismiss after applying
+        dismiss()
+    }
+    
+    private func forgetDevice() {
+        guard let device = bluetoothManager.connectedDevice else { return }
+        
+        print("🗑️ Forgetting device: \(device.name)")
+        
+        // Remove bond
+        bondManager.removeBond(deviceID: device.id)
+        
+        // Disconnect
+        bluetoothManager.disconnect(from: device)
+        
+        // Dismiss settings
         dismiss()
     }
 }
@@ -214,7 +263,6 @@ struct AnimatedSegmentedControl<T: RawRepresentable & Hashable & CaseIterable>: 
                     ForEach(Array(options.enumerated()), id: \.element) { index, option in
                         Button(action: {
                             selection = option
-                            // Haptic feedback
                             let generator = UIImpactFeedbackGenerator(style: .light)
                             generator.impactOccurred()
                         }) {

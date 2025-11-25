@@ -15,7 +15,6 @@ struct DeviceControlView: View {
     @State private var isHolding = false
     @State private var holdTimer: Timer?
     
-    // Add haptic generators
     private let lightHaptic = UIImpactFeedbackGenerator(style: .light)
     private let heavyHaptic = UIImpactFeedbackGenerator(style: .heavy)
     
@@ -115,53 +114,33 @@ struct DeviceControlView: View {
         .navigationBarBackButtonHidden(true)
         .statusBar(hidden: true)
         .onAppear {
-            // Initialize state from settings manager
             isLocked = settingsManager.isArmed
-            print("🎬 View appeared - initial state: isLocked=\(isLocked), deviceState=\(bluetoothManager.deviceState)")
+            print("🎬 View appeared - initial state: isLocked=\(isLocked)")
         }
         .onChange(of: settingsManager.isArmed) { newIsArmed in
-            print("🔄 Settings manager armed changed: \(newIsArmed)")
-            
-            // Only update if different to avoid fighting with optimistic updates
             if isLocked != newIsArmed {
-                print("⚠️ Correcting state mismatch: local=\(isLocked), settings=\(newIsArmed)")
                 isLocked = newIsArmed
             }
         }
     }
     
-    // Helper computed property for state color
     private var stateColor: Color {
-        // Extract the armed bit (bit 0) from the settings byte
         let isArmed = (bluetoothManager.deviceState & 0x01) != 0
-        
-        if isArmed {
-            return .red  // Locked = Red
-        } else {
-            return .green  // Unlocked = Green
-        }
-        
-        // You can add orange for alarming state later if needed
+        return isArmed ? .red : .green
     }
     
     private func startHolding() {
         isHolding = true
         holdProgress = 0.0
-        print("🟡 Started holding - current state: isLocked=\(isLocked)")
         
-        // Prepare haptics for reduced latency
         lightHaptic.prepare()
         heavyHaptic.prepare()
-        
-        // Single haptic at start
         lightHaptic.impactOccurred()
         
-        // Use smooth animation for progress instead of manual timer updates
         withAnimation(.linear(duration: 1.0)) {
             holdProgress = 1.0
         }
         
-        // Single timer just for completion
         holdTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { _ in
             if self.isHolding {
                 self.completeHold()
@@ -173,29 +152,18 @@ struct DeviceControlView: View {
         isHolding = false
         holdTimer?.invalidate()
         holdTimer = nil
-        print("🔴 Stopped holding early")
         
-        // Animate progress back to 0
         withAnimation(.easeOut(duration: 0.3)) {
             holdProgress = 0.0
         }
     }
     
     private func completeHold() {
-        print("✅ Hold complete - current isLocked=\(isLocked)")
-        
-        // Heavy haptic at completion
         heavyHaptic.impactOccurred(intensity: 1.0)
         
-        // Toggle armed state in settings manager
         settingsManager.updateSettings(armed: !isLocked)
-        
-        // Send updated settings byte (with new armed state)
         bluetoothManager.sendSettings()
-        
-        // Optimistically update the UI immediately
         isLocked.toggle()
-        print("🔄 Optimistically toggled to isLocked=\(isLocked)")
         
         isHolding = false
         holdTimer?.invalidate()
@@ -206,87 +174,29 @@ struct DeviceControlView: View {
         }
     }
     
-    private func sendHexValue(_ hexString: String) {
-        var data = Data()
-        var index = hexString.startIndex
-        while index < hexString.endIndex {
-            let nextIndex = hexString.index(index, offsetBy: 2)
-            let byteString = hexString[index..<nextIndex]
-            if let byte = UInt8(byteString, radix: 16) {
-                data.append(byte)
-            }
-            index = nextIndex
-        }
-        bluetoothManager.sendData(data)
-    }
-    
-    // Helper computed property for battery icon with charging support
     private var batteryIcon: String {
         let level = bluetoothManager.batteryLevel
-        let isCharging = bluetoothManager.isCharging
         
-        // If charging, use bolt icons
-        if isCharging {
-            // 100%
-            if level == 100 { return "battery.100.bolt" }
-            
-            // 75-99%
-            if level >= 75 { return "battery.100.bolt" }
-            
-            // 50-74%
-            if level >= 50 { return "battery.75.bolt" }
-            
-            // 25-49%
-            if level >= 25 { return "battery.50.bolt" }
-            
-            // 0-24%
-            return "battery.25.bolt"
-        }
-        
-        // Not charging - use regular icons
-        // 100%
         if level == 100 { return "battery.100" }
-        
-        // 90-99%
         if level >= 90 { return "battery.100" }
-        
-        // 75-89%
         if level >= 75 { return "battery.75" }
-        
-        // 60-74%
         if level >= 60 { return "battery.75" }
-        
-        // 50-59%
         if level >= 50 { return "battery.50" }
-        
-        // 40-49%
         if level >= 40 { return "battery.50" }
-        
-        // 25-39%
         if level >= 25 { return "battery.25" }
-        
-        // 10-24%
         if level >= 10 { return "battery.25" }
-        
-        // 1-9%
         if level > 0 { return "battery.0" }
-        
-        // 0% or unknown
         return "battery.0"
     }
 
-    // Helper computed property for battery color
     private var batteryColor: Color {
         let level = bluetoothManager.batteryLevel
-        
-        // If charging, always show green
-        if bluetoothManager.isCharging {
-            return .green
-        }
-        
-        // Not charging - use level-based colors
         if level >= 20 { return .green }
         if level >= 10 { return .orange }
         return .red
     }
+}
+
+#Preview {
+    DeviceControlView(bluetoothManager: BluetoothManager())
 }

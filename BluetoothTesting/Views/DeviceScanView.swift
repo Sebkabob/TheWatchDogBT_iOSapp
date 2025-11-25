@@ -65,10 +65,18 @@ struct DeviceScanView: View {
             print("🟢 DeviceScanView appeared")
             print("🟢 Bluetooth ready: \(bluetoothManager.isBluetoothReady)")
             print("🟢 Currently scanning: \(bluetoothManager.isScanning)")
-            bluetoothManager.startScanning()
+            
+            // Small delay to ensure Bluetooth is fully initialized
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                if bluetoothManager.isBluetoothReady {
+                    bluetoothManager.startScanning()
+                } else {
+                    print("⚠️ Bluetooth not ready yet, will start when ready")
+                }
+            }
         }
-        .onChange(of: bluetoothManager.isBluetoothReady) { oldValue, newValue in
-            print("🔵 Bluetooth ready changed: \(oldValue) -> \(newValue)")
+        .onChange(of: bluetoothManager.isBluetoothReady) { newValue in
+            print("🔵 Bluetooth ready changed to: \(newValue)")
             if newValue && !bluetoothManager.isScanning {
                 print("🔵 Starting scan because Bluetooth became ready")
                 bluetoothManager.startScanning()

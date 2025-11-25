@@ -34,7 +34,14 @@ class BluetoothManager: NSObject, ObservableObject {
     private var staleDeviceTimer: Timer?
     
     private var connectionTimer: Timer?
-    private let connectionTimeout: TimeInterval = 10.0
+    private let connectionTimeout: TimeInterval = 30.0  // INCREASED from 10s to 30s
+    
+    // Track if we're in the middle of connecting to prevent duplicate attempts
+    private var isConnecting = false
+    private var pendingConnectionDevice: UUID?
+    
+    // Background scanning for bonded devices list
+    private var isBackgroundScanning = false
     
     var deviceStateText: String {
         // Extract the armed bit (bit 0) from the settings byte
@@ -52,20 +59,40 @@ class BluetoothManager: NSObject, ObservableObject {
     
     override init() {
         super.init()
-        centralManager = CBCentralManager(delegate: self, queue: nil)
+        // Initialize with a dedicated queue for better reliability
+        let queue = DispatchQueue(label: "com.watchdog.bluetooth", qos: .userInitiated)
+        centralManager = CBCentralManager(delegate: self, queue: queue)
     }
     
     func startScanning() {
-        guard isBluetoothReady else { return }
+        guard isBluetoothReady else {
+            print("⚠️ Cannot scan - Bluetooth not ready")
+            return
+        }
+        
+        // Stop any existing scan first
+        if isScanning {
+            print("🔄 Already scanning, stopping first...")
+            centralManager.stopScan()
+        }
+        
         discoveredDevices.removeAll()
         lastRSSIUpdate.removeAll()
         
+        // Scan with longer timeout and allow duplicates for RSSI updates
         centralManager.scanForPeripherals(
             withServices: [targetServiceUUID],
-            options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
+            options: [
+                CBCentralManagerScanOptionAllowDuplicatesKey: true,
+                CBCentralManagerScanOptionSolicitedServiceUUIDsKey: [targetServiceUUID]
+            ]
         )
-        isScanning = true
-        print("Started scanning for 0x183E devices")
+        
+        DispatchQueue.main.async {
+            self.isScanning = true
+        }
+        
+        print("✅ Started scanning for 0x183E devices")
         
         staleDeviceTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             self?.removeStaleDevices()
@@ -74,24 +101,67 @@ class BluetoothManager: NSObject, ObservableObject {
     
     func stopScanning() {
         centralManager.stopScan()
-        isScanning = false
+        DispatchQueue.main.async {
+            self.isScanning = false
+            
+            // Clear RSSI for bonded devices when we stop scanning
+            // unless we're in background scanning mode
+            if !self.isBackgroundScanning {
+                BondManager.shared.clearAllRSSI()
+            }
+        }
         staleDeviceTimer?.invalidate()
         staleDeviceTimer = nil
+        print("🛑 Stopped scanning")
     }
     
     func connect(to device: BluetoothDevice) {
-        print("Connecting to: \(device.name)")
-        centralManager.connect(device.peripheral, options: nil)
+        // Prevent duplicate connection attempts
+        if isConnecting && pendingConnectionDevice == device.id {
+            print("⚠️ Already connecting to this device")
+            return
+        }
+        
+        isConnecting = true
+        pendingConnectionDevice = device.id
+        
+        print("🔌 Connecting to: \(device.name) [\(device.id.uuidString.prefix(8))]")
+        
+        // Stop scanning to improve connection reliability
+        if isScanning {
+            stopScanning()
+        }
+        
+        // Connect with specific options for better reliability
+        let options: [String: Any] = [
+            CBConnectPeripheralOptionNotifyOnConnectionKey: true,
+            CBConnectPeripheralOptionNotifyOnDisconnectionKey: true,
+            CBConnectPeripheralOptionNotifyOnNotificationKey: true,
+            CBConnectPeripheralOptionStartDelayKey: 0
+        ]
+        
+        centralManager.connect(device.peripheral, options: options)
         
         connectionTimer = Timer.scheduledTimer(withTimeInterval: connectionTimeout, repeats: false) { [weak self] _ in
             print("⏱️ Connection timeout for \(device.name)")
             self?.centralManager.cancelPeripheralConnection(device.peripheral)
             self?.connectionTimer = nil
+            self?.isConnecting = false
+            self?.pendingConnectionDevice = nil
         }
     }
     
     func disconnect(from device: BluetoothDevice) {
+        print("🔌 Disconnecting from: \(device.name)")
         centralManager.cancelPeripheralConnection(device.peripheral)
+        
+        // Clean up timers
+        connectionTimer?.invalidate()
+        connectionTimer = nil
+        isConnecting = false
+        pendingConnectionDevice = nil
+        
+        // Reset state
         connectedDevice = nil
         writeCharacteristic = nil
         notifyCharacteristic = nil
@@ -105,7 +175,7 @@ class BluetoothManager: NSObject, ObservableObject {
     func sendData(_ data: Data) {
         guard let characteristic = writeCharacteristic,
               let peripheral = connectedDevice?.peripheral else {
-            print("No writable characteristic found")
+            print("❌ No writable characteristic found")
             return
         }
         
@@ -113,7 +183,7 @@ class BluetoothManager: NSObject, ObservableObject {
         
         let hexString = data.map { String(format: "%02X", $0) }.joined(separator: " ")
         lastSentData = "0x\(hexString) (\(data.count) bytes)"
-        print("Sent: \(lastSentData)")
+        print("📤 Sent: \(lastSentData)")
     }
     
     func sendSettings() {
@@ -121,6 +191,27 @@ class BluetoothManager: NSObject, ObservableObject {
         let data = Data([settingsByte])
         sendData(data)
         print("📤 Sent settings byte: 0x\(String(format: "%02X", settingsByte))")
+    }
+    
+    // MARK: - Background Scanning for Bonded Devices
+    
+    func startBackgroundScanning() {
+        guard !isBackgroundScanning else {
+            print("⚠️ Background scanning already active")
+            return
+        }
+        
+        isBackgroundScanning = true
+        startScanning()
+        print("🔍 Started background scanning for bonded devices")
+    }
+    
+    func stopBackgroundScanning() {
+        guard isBackgroundScanning else { return }
+        
+        isBackgroundScanning = false
+        stopScanning()
+        print("🛑 Stopped background scanning")
     }
     
     private func removeStaleDevices() {
@@ -142,7 +233,27 @@ class BluetoothManager: NSObject, ObservableObject {
 // MARK: - CBCentralManagerDelegate
 extension BluetoothManager: CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        isBluetoothReady = central.state == .poweredOn
+        DispatchQueue.main.async {
+            self.isBluetoothReady = central.state == .poweredOn
+            
+            switch central.state {
+            case .poweredOn:
+                print("✅ Bluetooth powered on")
+            case .poweredOff:
+                print("❌ Bluetooth powered off")
+            case .unauthorized:
+                print("⚠️ Bluetooth unauthorized")
+            case .unsupported:
+                print("❌ Bluetooth unsupported")
+            case .resetting:
+                print("🔄 Bluetooth resetting")
+            case .unknown:
+                print("❓ Bluetooth state unknown")
+            @unknown default:
+                print("❓ Bluetooth state unknown")
+            }
+        }
+        
         if !isBluetoothReady {
             stopScanning()
             connectedDevice = nil
@@ -153,6 +264,7 @@ extension BluetoothManager: CBCentralManagerDelegate {
         let deviceID = peripheral.identifier
         let now = Date()
         
+        // Throttle RSSI updates
         if let lastUpdate = lastRSSIUpdate[deviceID] {
             if now.timeIntervalSince(lastUpdate) < rssiUpdateInterval {
                 return
@@ -172,53 +284,83 @@ extension BluetoothManager: CBCentralManagerDelegate {
             isConnected: false
         )
         
-        if let index = discoveredDevices.firstIndex(where: { $0.id == device.id }) {
-            discoveredDevices[index] = device
-        } else {
-            discoveredDevices.append(device)
-            print("Discovered: \(name) [\(deviceID.uuidString.prefix(8))]")
+        DispatchQueue.main.async {
+            if let index = self.discoveredDevices.firstIndex(where: { $0.id == device.id }) {
+                self.discoveredDevices[index] = device
+            } else {
+                self.discoveredDevices.append(device)
+                print("📱 Discovered: \(name) [\(deviceID.uuidString.prefix(8))] RSSI: \(RSSI.intValue)dBm")
+            }
+            
+            // Update BondManager if this is a bonded device
+            let bondManager = BondManager.shared
+            if bondManager.isBonded(deviceID: deviceID) {
+                bondManager.updateDeviceRSSI(deviceID: deviceID, rssi: RSSI.intValue)
+                // Update name if it changed
+                if let bond = bondManager.getBond(deviceID: deviceID), bond.name != name {
+                    bondManager.updateDeviceName(deviceID: deviceID, name: name)
+                }
+            }
         }
     }
     
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        print("✅ Connected to: \(peripheral.name ?? "Unknown")")
+        print("✅ Connected to: \(peripheral.name ?? "Unknown") [\(peripheral.identifier.uuidString.prefix(8))]")
         
+        // Clear connection timer
         connectionTimer?.invalidate()
         connectionTimer = nil
+        isConnecting = false
+        pendingConnectionDevice = nil
         
-        if let index = discoveredDevices.firstIndex(where: { $0.id == peripheral.identifier }) {
-            // Keep the discovered name, just update connection status
-            discoveredDevices[index] = BluetoothDevice(
-                id: peripheral.identifier,
-                name: discoveredDevices[index].name,  // PRESERVE THE DISCOVERED NAME
-                peripheral: peripheral,
-                rssi: discoveredDevices[index].rssi,
-                isConnected: true
-            )
-            connectedDevice = discoveredDevices[index]
+        DispatchQueue.main.async {
+            if let index = self.discoveredDevices.firstIndex(where: { $0.id == peripheral.identifier }) {
+                // Keep the discovered name, just update connection status
+                self.discoveredDevices[index] = BluetoothDevice(
+                    id: peripheral.identifier,
+                    name: self.discoveredDevices[index].name,  // PRESERVE THE DISCOVERED NAME
+                    peripheral: peripheral,
+                    rssi: self.discoveredDevices[index].rssi,
+                    isConnected: true
+                )
+                self.connectedDevice = self.discoveredDevices[index]
+            }
         }
         
-        stopScanning()
+        // Don't stop scanning here - let the view handle it
         
         peripheral.delegate = self
-        peripheral.discoverServices([targetServiceUUID])
+        
+        // Delay service discovery slightly to ensure connection is stable
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            print("🔍 Discovering services...")
+            peripheral.discoverServices([self.targetServiceUUID])
+        }
     }
     
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
-        print("Disconnected from: \(peripheral.name ?? "Unknown")")
-        
-        if let index = discoveredDevices.firstIndex(where: { $0.id == peripheral.identifier }) {
-            discoveredDevices[index].isConnected = false
+        if let error = error {
+            print("❌ Disconnected from: \(peripheral.name ?? "Unknown") - Error: \(error.localizedDescription)")
+        } else {
+            print("🔌 Disconnected from: \(peripheral.name ?? "Unknown")")
         }
         
-        connectedDevice = nil
-        writeCharacteristic = nil
-        notifyCharacteristic = nil
-        lastSentData = ""
-        deviceState = 0
-        hasReceivedInitialState = false
-        batteryLevel = -1
-        isCharging = false
+        DispatchQueue.main.async {
+            if let index = self.discoveredDevices.firstIndex(where: { $0.id == peripheral.identifier }) {
+                self.discoveredDevices[index].isConnected = false
+            }
+            
+            self.connectedDevice = nil
+            self.writeCharacteristic = nil
+            self.notifyCharacteristic = nil
+            self.lastSentData = ""
+            self.deviceState = 0
+            self.hasReceivedInitialState = false
+            self.batteryLevel = -1
+            self.isCharging = false
+            self.isConnecting = false
+            self.pendingConnectionDevice = nil
+        }
     }
     
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
@@ -226,6 +368,8 @@ extension BluetoothManager: CBCentralManagerDelegate {
         
         connectionTimer?.invalidate()
         connectionTimer = nil
+        isConnecting = false
+        pendingConnectionDevice = nil
     }
 }
 
@@ -237,10 +381,14 @@ extension BluetoothManager: CBPeripheralDelegate {
             return
         }
         
-        guard let services = peripheral.services else { return }
+        guard let services = peripheral.services else {
+            print("⚠️ No services found")
+            return
+        }
         
+        print("📋 Found \(services.count) service(s)")
         for service in services {
-            print("Discovered service: \(service.uuid)")
+            print("  🔹 Service: \(service.uuid)")
             peripheral.discoverCharacteristics(nil, for: service)
         }
     }
@@ -251,22 +399,46 @@ extension BluetoothManager: CBPeripheralDelegate {
             return
         }
         
-        guard let characteristics = service.characteristics else { return }
+        guard let characteristics = service.characteristics else {
+            print("⚠️ No characteristics found")
+            return
+        }
+        
+        print("📋 Found \(characteristics.count) characteristic(s) for service \(service.uuid)")
         
         for characteristic in characteristics {
-            print("Found characteristic: \(characteristic.uuid)")
-            print("  Properties: \(characteristic.properties)")
+            print("  🔹 Characteristic: \(characteristic.uuid)")
+            print("     Properties: \(characteristic.properties)")
             
             if characteristic.properties.contains(.write) || characteristic.properties.contains(.writeWithoutResponse) {
                 writeCharacteristic = characteristic
-                print("  ✅ This is writable! Ready to send data.")
+                print("     ✅ This is writable! Ready to send data.")
             }
             
             if characteristic.properties.contains(.notify) {
                 notifyCharacteristic = characteristic
                 peripheral.setNotifyValue(true, for: characteristic)
-                print("  ✅ Subscribed to notifications!")
+                print("     ✅ Subscribed to notifications!")
             }
+            
+            // Read initial value if readable
+            if characteristic.properties.contains(.read) {
+                print("     📖 Reading initial value...")
+                peripheral.readValue(for: characteristic)
+            }
+        }
+    }
+    
+    func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
+        if let error = error {
+            print("❌ Error updating notification state: \(error.localizedDescription)")
+            return
+        }
+        
+        if characteristic.isNotifying {
+            print("✅ Notifications enabled for \(characteristic.uuid)")
+        } else {
+            print("⚠️ Notifications disabled for \(characteristic.uuid)")
         }
     }
     
@@ -276,7 +448,10 @@ extension BluetoothManager: CBPeripheralDelegate {
             return
         }
         
-        guard let data = characteristic.value else { return }
+        guard let data = characteristic.value else {
+            print("⚠️ No data received")
+            return
+        }
         
         // Debug: print all received bytes
         print("📦 Received \(data.count) bytes: \(data.map { String(format: "%02X", $0) }.joined(separator: " "))")
@@ -321,7 +496,7 @@ extension BluetoothManager: CBPeripheralDelegate {
         if let error = error {
             print("❌ Write error: \(error.localizedDescription)")
         } else {
-            print("✅ Data written successfully")
+            print("✅ Data written successfully to \(characteristic.uuid)")
         }
     }
 }
