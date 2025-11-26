@@ -22,7 +22,7 @@ struct BondedDevicesListView: View {
                 if bondManager.bondedDevices.isEmpty {
                     // Empty state
                     VStack(spacing: 20) {
-                        Image(systemName: "lock.shield")
+                        Image(systemName: "dog")
                             .font(.system(size: 80))
                             .foregroundColor(.gray)
                         
@@ -73,10 +73,11 @@ struct BondedDevicesListView: View {
                             deleteDevices(at: indexSet)
                         }
                     }
+                    .listStyle(.plain)
                 }
             }
             .navigationTitle("My WatchDogs")
-            .padding(.top, 10)
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: {
@@ -103,11 +104,11 @@ struct BondedDevicesListView: View {
                     bluetoothManager.startBackgroundScanning()
                 }
             }
-            .alert("Delete WatchDog?", isPresented: $showDeleteConfirmation) {
+            .alert("Forget WatchDog?", isPresented: $showDeleteConfirmation) {
                 Button("Cancel", role: .cancel) {
                     deviceToDelete = nil
                 }
-                Button("Delete", role: .destructive) {
+                Button("Forget Device", role: .destructive) {
                     if let device = deviceToDelete {
                         forgetDevice(device)
                     }
@@ -115,7 +116,7 @@ struct BondedDevicesListView: View {
             } message: {
                 if let device = deviceToDelete {
                     let displayName = nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
-                    Text("Are you sure you want to delete \(displayName)? You'll need to pair again to reconnect.")
+                    Text("Are you sure you want to forget \(displayName)? You'll need to pair again to reconnect.")
                 }
             }
         }

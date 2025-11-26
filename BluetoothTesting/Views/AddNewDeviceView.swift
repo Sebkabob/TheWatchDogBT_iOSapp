@@ -20,6 +20,11 @@ struct AddNewDeviceView: View {
     @State private var connectingDeviceID: UUID?
     @State private var pairingCompleted = false
     
+    // Naming prompt for new devices
+    @State private var showNamingPrompt = false
+    @State private var newDeviceName = ""
+    @State private var deviceToPair: BluetoothDevice?
+    
     // Filter out already bonded devices
     private var availableDevices: [BluetoothDevice] {
         bluetoothManager.discoveredDevices.filter { device in
@@ -82,7 +87,7 @@ struct AddNewDeviceView: View {
                             displayName: displayName,
                             isConnecting: connectingDeviceID == device.id
                         ) {
-                            bondWithDevice(device)
+                            handleDeviceTap(device)
                         }
                     }
                 }
@@ -115,7 +120,7 @@ struct AddNewDeviceView: View {
                    connected.id == deviceID,
                    !pairingCompleted {
                     
-                    print("✅ Device connected - adding bond immediately")
+                    print("✅ Device connected - completing pairing")
                     completePairing(device: connected)
                 }
             }
@@ -133,12 +138,60 @@ struct AddNewDeviceView: View {
             } message: {
                 Text(errorMessage)
             }
+            .sheet(isPresented: $showNamingPrompt) {
+                NameYourWatchDogSheet(
+                    deviceName: $newDeviceName,
+                    onSave: {
+                        print("💾 User clicked Save in naming sheet")
+                        // Set custom name then start pairing
+                        if let device = deviceToPair {
+                            let trimmedName = newDeviceName.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if !trimmedName.isEmpty {
+                                nameManager.setCustomName(deviceID: device.id, name: trimmedName)
+                                bondedDeviceName = trimmedName
+                                print("✅ Set custom name: \(trimmedName)")
+                            } else {
+                                bondedDeviceName = device.name
+                            }
+                            startPairing(device: device)
+                        }
+                    },
+                    onSkip: {
+                        print("⏭️ User clicked Skip in naming sheet")
+                        // Don't set custom name, just use BT name and start pairing
+                        if let device = deviceToPair {
+                            bondedDeviceName = device.name
+                            startPairing(device: device)
+                        }
+                    }
+                )
+            }
         }
     }
     
-    private func bondWithDevice(_ device: BluetoothDevice) {
+    private func handleDeviceTap(_ device: BluetoothDevice) {
         let displayName = nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
-        print("🔗 Attempting to bond with: \(displayName)")
+        
+        // Check if this device has been named before
+        let hasBeenNamedBefore = nameManager.hasCustomName(deviceID: device.id)
+        
+        if hasBeenNamedBefore {
+            // Already named - just pair directly
+            print("🔗 Device already named - pairing directly with: \(displayName)")
+            bondedDeviceName = displayName
+            startPairing(device: device)
+        } else {
+            // New device - prompt for name FIRST
+            print("📝 New device detected - showing naming prompt BEFORE pairing")
+            deviceToPair = device
+            newDeviceName = device.name  // Pre-fill with BT name
+            bondedDeviceName = device.name  // Default to BT name in case they skip
+            showNamingPrompt = true
+        }
+    }
+    
+    private func startPairing(device: BluetoothDevice) {
+        print("🔗 Starting pairing process for: \(bondedDeviceName)")
         connectingDeviceID = device.id
         pairingCompleted = false
         
@@ -153,23 +206,22 @@ struct AddNewDeviceView: View {
         }
         
         pairingCompleted = true
-        let displayName = nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
-        print("✅ Pairing complete for: \(displayName)")
+        print("✅ Pairing complete for: \(device.name)")
         
         // Add bond IMMEDIATELY
         bondManager.addBond(deviceID: device.id, name: device.name)
-        bondedDeviceName = displayName
         
-        print("✅ Device added to bond list: \(displayName)")
+        print("✅ Device added to bond list: \(device.name)")
         print("📋 Total bonded devices: \(bondManager.bondedDevices.count)")
         
         // Clear connecting state
         connectingDeviceID = nil
+        deviceToPair = nil
         
-        // Show success and dismiss - STAY CONNECTED!
+        // Show success
         showSuccessAlert = true
         
-        print("✅ Successfully bonded and staying connected to \(displayName)")
+        print("✅ Successfully bonded and staying connected to \(bondedDeviceName)")
     }
 }
 
@@ -246,4 +298,93 @@ struct NewDeviceRow: View {
 
 #Preview {
     AddNewDeviceView(bluetoothManager: BluetoothManager())
+}
+
+// MARK: - Name Your WatchDog Sheet
+struct NameYourWatchDogSheet: View {
+    @Environment(\.dismiss) var dismiss
+    @Binding var deviceName: String
+    let onSave: () -> Void
+    let onSkip: () -> Void
+    
+    private let maxNameLength = 16
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 24) {
+                // Icon
+                Image(systemName: "tag.fill")
+                    .font(.system(size: 60))
+                    .foregroundColor(.blue)
+                    .padding(.top, 40)
+                
+                // Title
+                Text("Name Your WatchDog")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                
+                // Description
+                Text("Give this WatchDog a unique name so you don't mix them up with others.")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+                
+                // Text field
+                VStack(alignment: .leading, spacing: 8) {
+                    TextField("WatchDog Name", text: $deviceName)
+                        .textFieldStyle(.roundedBorder)
+                        .padding(.horizontal, 32)
+                        .onChange(of: deviceName) { newValue in
+                            if newValue.count > maxNameLength {
+                                deviceName = String(newValue.prefix(maxNameLength))
+                            }
+                        }
+                    
+                    Text("\(deviceName.count)/\(maxNameLength) characters")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 32)
+                }
+                .padding(.top, 8)
+                
+                Spacer()
+                
+                // Buttons
+                VStack(spacing: 12) {
+                    Button(action: {
+                        dismiss()
+                        onSave()
+                    }) {
+                        Text("Save Name & Pair")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color.blue)
+                            .cornerRadius(12)
+                    }
+                    
+                    Button(action: {
+                        dismiss()
+                        onSkip()
+                    }) {
+                        Text("Skip & Pair Now")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(.horizontal, 32)
+                .padding(.bottom, 32)
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
 }

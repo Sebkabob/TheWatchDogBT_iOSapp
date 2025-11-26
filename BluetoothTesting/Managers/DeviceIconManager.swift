@@ -23,6 +23,7 @@ enum DeviceIcon: String, Codable, CaseIterable {
     case motorcycle = "motorcycle"
     case scooter = "scooter"
     case dog = "dog"
+    case pill = "pill"
     case suitcase = "suitcase.rolling"
     
     var displayName: String {
@@ -42,6 +43,7 @@ enum DeviceIcon: String, Codable, CaseIterable {
         case .motorcycle: return "Motorcycle"
         case .scooter: return "Scooter"
         case .dog: return "Dog"
+        case .pill: return "Pill"
         case .suitcase: return "Luggage"
         }
     }
@@ -64,6 +66,7 @@ enum DeviceIcon: String, Codable, CaseIterable {
         case .motorcycle: return false
         case .scooter: return false
         case .dog: return true
+        case .pill: return true
         case .suitcase: return true
         }
     }
