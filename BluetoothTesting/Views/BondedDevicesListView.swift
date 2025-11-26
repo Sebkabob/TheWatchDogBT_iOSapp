@@ -11,6 +11,7 @@ struct BondedDevicesListView: View {
     @ObservedObject var bluetoothManager: BluetoothManager
     @ObservedObject private var bondManager = BondManager.shared
     @ObservedObject private var nameManager = DeviceNameManager.shared
+    @ObservedObject private var iconManager = DeviceIconManager.shared
     @State private var showAddDevice = false
     @State private var deviceToDelete: BondedDevice?
     @State private var showDeleteConfirmation = false
@@ -61,6 +62,7 @@ struct BondedDevicesListView: View {
                             BondedDeviceRow(
                                 device: device,
                                 displayName: nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name),
+                                displayIcon: iconManager.getDisplayIcon(deviceID: device.id),
                                 isConnected: bluetoothManager.connectedDevice?.id == device.id,
                                 onTap: {
                                     connectToDevice(device)
@@ -74,6 +76,7 @@ struct BondedDevicesListView: View {
                 }
             }
             .navigationTitle("My WatchDogs")
+            .padding(.top, 10)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: {
@@ -100,11 +103,11 @@ struct BondedDevicesListView: View {
                     bluetoothManager.startBackgroundScanning()
                 }
             }
-            .alert("Forget WatchDog?", isPresented: $showDeleteConfirmation) {
+            .alert("Delete WatchDog?", isPresented: $showDeleteConfirmation) {
                 Button("Cancel", role: .cancel) {
                     deviceToDelete = nil
                 }
-                Button("Forget Device", role: .destructive) {
+                Button("Delete", role: .destructive) {
                     if let device = deviceToDelete {
                         forgetDevice(device)
                     }
@@ -112,7 +115,7 @@ struct BondedDevicesListView: View {
             } message: {
                 if let device = deviceToDelete {
                     let displayName = nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
-                    Text("Are you sure you want to forget \(displayName)? You'll need to pair again to reconnect.")
+                    Text("Are you sure you want to delete \(displayName)? You'll need to pair again to reconnect.")
                 }
             }
         }
@@ -142,7 +145,7 @@ struct BondedDevicesListView: View {
             bluetoothManager.disconnect(from: connectedDevice)
         }
         
-        // Remove bond (custom name persists intentionally)
+        // Remove bond (custom name and icon persist intentionally)
         bondManager.removeBond(deviceID: device.id)
         
         deviceToDelete = nil
@@ -163,17 +166,33 @@ struct BondedDevicesListView: View {
 struct BondedDeviceRow: View {
     let device: BondedDevice
     let displayName: String
+    let displayIcon: DeviceIcon
     let isConnected: Bool
     let onTap: () -> Void
     
     @State private var isPressed = false
     
+    // Get the appropriate icon name based on connection state and fill variant availability
+    private var iconName: String {
+        // Use .fill variant when connected IF it has one
+        if isConnected && displayIcon.hasFillVariant {
+            return "\(displayIcon.rawValue).fill"
+        }
+        return displayIcon.rawValue
+    }
+    
+    // ALL icons change color - green when connected, blue when not
+    private var iconColor: Color {
+        return isConnected ? .green : .blue
+    }
+    
     var body: some View {
         HStack(spacing: 12) {
-            // Device icon
-            Image(systemName: isConnected ? "lock.shield.fill" : "lock.shield")
+            // Device icon - ALL icons change color (green when connected)
+            // Icons with .fill also get filled when connected
+            Image(systemName: iconName)
                 .font(.title2)
-                .foregroundColor(isConnected ? .green : .blue)
+                .foregroundColor(iconColor)
                 .frame(width: 40)
             
             VStack(alignment: .leading, spacing: 4) {
