@@ -10,6 +10,7 @@ import SwiftUI
 struct BondedDevicesListView: View {
     @ObservedObject var bluetoothManager: BluetoothManager
     @ObservedObject private var bondManager = BondManager.shared
+    @ObservedObject private var nameManager = DeviceNameManager.shared
     @State private var showAddDevice = false
     @State private var deviceToDelete: BondedDevice?
     @State private var showDeleteConfirmation = false
@@ -50,11 +51,16 @@ struct BondedDevicesListView: View {
                         .padding(.top, 20)
                     }
                 } else {
-                    // Device list
+                    // Device list - sort by display name
                     List {
-                        ForEach(bondManager.bondedDevices.sorted(by: { $0.name < $1.name })) { device in
+                        ForEach(bondManager.bondedDevices.sorted(by: { device1, device2 in
+                            let name1 = nameManager.getDisplayName(deviceID: device1.id, advertisingName: device1.name)
+                            let name2 = nameManager.getDisplayName(deviceID: device2.id, advertisingName: device2.name)
+                            return name1 < name2
+                        })) { device in
                             BondedDeviceRow(
                                 device: device,
+                                displayName: nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name),
                                 isConnected: bluetoothManager.connectedDevice?.id == device.id,
                                 onTap: {
                                     connectToDevice(device)
@@ -105,7 +111,8 @@ struct BondedDevicesListView: View {
                 }
             } message: {
                 if let device = deviceToDelete {
-                    Text("Are you sure you want to forget \(device.name)? You'll need to pair again to reconnect.")
+                    let displayName = nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
+                    Text("Are you sure you want to forget \(displayName)? You'll need to pair again to reconnect.")
                 }
             }
         }
@@ -113,7 +120,11 @@ struct BondedDevicesListView: View {
     }
     
     private func deleteDevices(at offsets: IndexSet) {
-        let sortedDevices = bondManager.bondedDevices.sorted(by: { $0.name < $1.name })
+        let sortedDevices = bondManager.bondedDevices.sorted(by: { device1, device2 in
+            let name1 = nameManager.getDisplayName(deviceID: device1.id, advertisingName: device1.name)
+            let name2 = nameManager.getDisplayName(deviceID: device2.id, advertisingName: device2.name)
+            return name1 < name2
+        })
         
         for index in offsets {
             deviceToDelete = sortedDevices[index]
@@ -122,7 +133,8 @@ struct BondedDevicesListView: View {
     }
     
     private func forgetDevice(_ device: BondedDevice) {
-        print("🗑️ Forgetting device: \(device.name)")
+        let displayName = nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
+        print("🗑️ Forgetting device: \(displayName)")
         
         // Disconnect if currently connected
         if bluetoothManager.connectedDevice?.id == device.id,
@@ -130,7 +142,7 @@ struct BondedDevicesListView: View {
             bluetoothManager.disconnect(from: connectedDevice)
         }
         
-        // Remove bond
+        // Remove bond (custom name persists intentionally)
         bondManager.removeBond(deviceID: device.id)
         
         deviceToDelete = nil
@@ -141,7 +153,8 @@ struct BondedDevicesListView: View {
         if let discoveredDevice = bluetoothManager.discoveredDevices.first(where: { $0.id == device.id }) {
             bluetoothManager.connect(to: discoveredDevice)
         } else {
-            print("⚠️ Device not in range: \(device.name)")
+            let displayName = nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
+            print("⚠️ Device not in range: \(displayName)")
             // Could show an alert here
         }
     }
@@ -149,6 +162,7 @@ struct BondedDevicesListView: View {
 
 struct BondedDeviceRow: View {
     let device: BondedDevice
+    let displayName: String
     let isConnected: Bool
     let onTap: () -> Void
     
@@ -163,7 +177,7 @@ struct BondedDeviceRow: View {
                 .frame(width: 40)
             
             VStack(alignment: .leading, spacing: 4) {
-                Text(device.name)
+                Text(displayName)
                     .font(.headline)
                     .foregroundColor(.primary)
                 

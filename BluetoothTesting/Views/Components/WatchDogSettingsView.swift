@@ -11,6 +11,7 @@ struct WatchDogSettingsView: View {
     @Environment(\.dismiss) var dismiss
     @ObservedObject private var settingsManager = SettingsManager.shared
     @ObservedObject private var bondManager = BondManager.shared
+    @ObservedObject private var nameManager = DeviceNameManager.shared
     @ObservedObject var bluetoothManager: BluetoothManager
     
     // Local state for editing
@@ -173,13 +174,7 @@ struct WatchDogSettingsView: View {
                 }
             }
             .onAppear {
-                // Load current settings from SettingsManager
-                watchDogName = settingsManager.deviceName
-                sensitivity = settingsManager.sensitivity
-                alarmType = settingsManager.alarmType
-                lightsEnabled = settingsManager.lightsEnabled
-                loggingEnabled = settingsManager.loggingEnabled
-                disableAlarmWhenConnected = settingsManager.disableAlarmWhenConnected
+                loadCurrentSettings()
             }
             .alert("Forget WatchDog?", isPresented: $showForgetConfirmation) {
                 Button("Cancel", role: .cancel) { }
@@ -192,10 +187,36 @@ struct WatchDogSettingsView: View {
         }
     }
     
+    private func loadCurrentSettings() {
+        guard let device = bluetoothManager.connectedDevice else { return }
+        
+        // Load custom name or fall back to advertising name
+        watchDogName = nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
+        
+        // Load other settings from SettingsManager
+        sensitivity = settingsManager.sensitivity
+        alarmType = settingsManager.alarmType
+        lightsEnabled = settingsManager.lightsEnabled
+        loggingEnabled = settingsManager.loggingEnabled
+        disableAlarmWhenConnected = settingsManager.disableAlarmWhenConnected
+    }
+    
     private func applySettings() {
-        // Update settings manager
+        guard let device = bluetoothManager.connectedDevice else { return }
+        
+        // Save custom name (or remove if blank)
+        let trimmedName = watchDogName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedName.isEmpty {
+            // Remove custom name - will revert to advertising name
+            nameManager.removeCustomName(deviceID: device.id)
+            // Update display to show advertising name
+            watchDogName = device.name
+        } else {
+            nameManager.setCustomName(deviceID: device.id, name: trimmedName)
+        }
+        
+        // Update settings manager (but NOT the device name in SettingsManager - that's separate)
         settingsManager.updateSettings(
-            name: watchDogName,
             alarm: alarmType,
             sens: sensitivity,
             lights: lightsEnabled,
@@ -203,16 +224,11 @@ struct WatchDogSettingsView: View {
             disableAlarmConnected: disableAlarmWhenConnected
         )
         
-        // Update bond name if changed
-        if let deviceID = bluetoothManager.connectedDevice?.id {
-            bondManager.renameBond(deviceID: deviceID, newName: watchDogName)
-        }
-        
         // Send settings byte to WatchDog (armed state stays the same)
         bluetoothManager.sendSettings()
         
         print("📤 Settings applied:")
-        print("  Name: \(watchDogName)")
+        print("  Custom Name: \(nameManager.hasCustomName(deviceID: device.id) ? trimmedName : "(using advertising name)")")
         print("  Sensitivity: \(sensitivity.rawValue)")
         print("  Alarm Type: \(alarmType.rawValue)")
         print("  Lights: \(lightsEnabled ? "On" : "Off")")
@@ -226,7 +242,7 @@ struct WatchDogSettingsView: View {
     private func forgetDevice() {
         guard let device = bluetoothManager.connectedDevice else { return }
         
-        print("🗑️ Forgetting device: \(device.name)")
+        print("🗑️ Forgetting device: \(watchDogName)")
         
         // Remove bond
         bondManager.removeBond(deviceID: device.id)

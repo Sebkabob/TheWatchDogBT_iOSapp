@@ -11,6 +11,7 @@ struct AddNewDeviceView: View {
     @Environment(\.dismiss) var dismiss
     @ObservedObject var bluetoothManager: BluetoothManager
     @ObservedObject private var bondManager = BondManager.shared
+    @ObservedObject private var nameManager = DeviceNameManager.shared
     
     @State private var showSuccessAlert = false
     @State private var showErrorAlert = false
@@ -23,7 +24,11 @@ struct AddNewDeviceView: View {
     private var availableDevices: [BluetoothDevice] {
         bluetoothManager.discoveredDevices.filter { device in
             !bondManager.isBonded(deviceID: device.id)
-        }.sorted { $0.name < $1.name }
+        }.sorted { device1, device2 in
+            let name1 = nameManager.getDisplayName(deviceID: device1.id, advertisingName: device1.name)
+            let name2 = nameManager.getDisplayName(deviceID: device2.id, advertisingName: device2.name)
+            return name1 < name2
+        }
     }
     
     var body: some View {
@@ -71,8 +76,10 @@ struct AddNewDeviceView: View {
                     Spacer()
                 } else {
                     List(availableDevices) { device in
+                        let displayName = nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
                         NewDeviceRow(
                             device: device,
+                            displayName: displayName,
                             isConnecting: connectingDeviceID == device.id
                         ) {
                             bondWithDevice(device)
@@ -130,7 +137,8 @@ struct AddNewDeviceView: View {
     }
     
     private func bondWithDevice(_ device: BluetoothDevice) {
-        print("🔗 Attempting to bond with: \(device.name)")
+        let displayName = nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
+        print("🔗 Attempting to bond with: \(displayName)")
         connectingDeviceID = device.id
         pairingCompleted = false
         
@@ -145,13 +153,14 @@ struct AddNewDeviceView: View {
         }
         
         pairingCompleted = true
-        print("✅ Pairing complete for: \(device.name)")
+        let displayName = nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
+        print("✅ Pairing complete for: \(displayName)")
         
         // Add bond IMMEDIATELY
         bondManager.addBond(deviceID: device.id, name: device.name)
-        bondedDeviceName = device.name
+        bondedDeviceName = displayName
         
-        print("✅ Device added to bond list: \(device.name)")
+        print("✅ Device added to bond list: \(displayName)")
         print("📋 Total bonded devices: \(bondManager.bondedDevices.count)")
         
         // Clear connecting state
@@ -160,12 +169,13 @@ struct AddNewDeviceView: View {
         // Show success and dismiss - STAY CONNECTED!
         showSuccessAlert = true
         
-        print("✅ Successfully bonded and staying connected to \(device.name)")
+        print("✅ Successfully bonded and staying connected to \(displayName)")
     }
 }
 
 struct NewDeviceRow: View {
     let device: BluetoothDevice
+    let displayName: String
     let isConnecting: Bool
     let onTap: () -> Void
     
@@ -175,7 +185,7 @@ struct NewDeviceRow: View {
         HStack {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 8) {
-                    Text(device.name)
+                    Text(displayName)
                         .font(.headline)
                         .foregroundColor(.primary)
                     
