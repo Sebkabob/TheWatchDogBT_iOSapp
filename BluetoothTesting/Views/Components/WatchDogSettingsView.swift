@@ -11,10 +11,13 @@ struct WatchDogSettingsView: View {
     @Environment(\.dismiss) var dismiss
     @ObservedObject private var settingsManager = SettingsManager.shared
     @ObservedObject private var bondManager = BondManager.shared
+    @ObservedObject private var nameManager = DeviceNameManager.shared
+    @ObservedObject private var iconManager = DeviceIconManager.shared
     @ObservedObject var bluetoothManager: BluetoothManager
     
     // Local state for editing
     @State private var watchDogName: String = ""
+    @State private var selectedIcon: DeviceIcon = .lockShield
     @State private var sensitivity: SensitivityLevel = .medium
     @State private var alarmType: AlarmType = .normal
     @State private var lightsEnabled: Bool = true
@@ -44,6 +47,11 @@ struct WatchDogSettingsView: View {
                         Text("\(watchDogName.count)/\(maxNameLength) characters")
                             .font(.caption)
                             .foregroundColor(.secondary)
+                    }
+                    
+                    // Icon Picker Section - Horizontal Scrolling
+                    Section(header: Text("Device Icon")) {
+                        HorizontalIconPicker(selectedIcon: $selectedIcon)
                     }
                     
                     // Sensitivity Section
@@ -173,13 +181,7 @@ struct WatchDogSettingsView: View {
                 }
             }
             .onAppear {
-                // Load current settings from SettingsManager
-                watchDogName = settingsManager.deviceName
-                sensitivity = settingsManager.sensitivity
-                alarmType = settingsManager.alarmType
-                lightsEnabled = settingsManager.lightsEnabled
-                loggingEnabled = settingsManager.loggingEnabled
-                disableAlarmWhenConnected = settingsManager.disableAlarmWhenConnected
+                loadCurrentSettings()
             }
             .alert("Forget WatchDog?", isPresented: $showForgetConfirmation) {
                 Button("Cancel", role: .cancel) { }
@@ -192,10 +194,42 @@ struct WatchDogSettingsView: View {
         }
     }
     
+    private func loadCurrentSettings() {
+        guard let device = bluetoothManager.connectedDevice else { return }
+        
+        // Load custom name or fall back to advertising name
+        watchDogName = nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
+        
+        // Load custom icon or use default
+        selectedIcon = iconManager.getDisplayIcon(deviceID: device.id)
+        
+        // Load other settings from SettingsManager
+        sensitivity = settingsManager.sensitivity
+        alarmType = settingsManager.alarmType
+        lightsEnabled = settingsManager.lightsEnabled
+        loggingEnabled = settingsManager.loggingEnabled
+        disableAlarmWhenConnected = settingsManager.disableAlarmWhenConnected
+    }
+    
     private func applySettings() {
-        // Update settings manager
+        guard let device = bluetoothManager.connectedDevice else { return }
+        
+        // Save custom name (or remove if blank)
+        let trimmedName = watchDogName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedName.isEmpty {
+            // Remove custom name - will revert to advertising name
+            nameManager.removeCustomName(deviceID: device.id)
+            // Update display to show advertising name
+            watchDogName = device.name
+        } else {
+            nameManager.setCustomName(deviceID: device.id, name: trimmedName)
+        }
+        
+        // Save custom icon
+        iconManager.setCustomIcon(deviceID: device.id, icon: selectedIcon)
+        
+        // Update settings manager (but NOT the device name in SettingsManager - that's separate)
         settingsManager.updateSettings(
-            name: watchDogName,
             alarm: alarmType,
             sens: sensitivity,
             lights: lightsEnabled,
@@ -203,16 +237,12 @@ struct WatchDogSettingsView: View {
             disableAlarmConnected: disableAlarmWhenConnected
         )
         
-        // Update bond name if changed
-        if let deviceID = bluetoothManager.connectedDevice?.id {
-            bondManager.renameBond(deviceID: deviceID, newName: watchDogName)
-        }
-        
         // Send settings byte to WatchDog (armed state stays the same)
         bluetoothManager.sendSettings()
         
         print("📤 Settings applied:")
-        print("  Name: \(watchDogName)")
+        print("  Custom Name: \(nameManager.hasCustomName(deviceID: device.id) ? trimmedName : "(using advertising name)")")
+        print("  Custom Icon: \(selectedIcon.displayName)")
         print("  Sensitivity: \(sensitivity.rawValue)")
         print("  Alarm Type: \(alarmType.rawValue)")
         print("  Lights: \(lightsEnabled ? "On" : "Off")")
@@ -226,7 +256,7 @@ struct WatchDogSettingsView: View {
     private func forgetDevice() {
         guard let device = bluetoothManager.connectedDevice else { return }
         
-        print("🗑️ Forgetting device: \(device.name)")
+        print("🗑️ Forgetting device: \(watchDogName)")
         
         // Remove bond
         bondManager.removeBond(deviceID: device.id)
@@ -236,6 +266,63 @@ struct WatchDogSettingsView: View {
         
         // Dismiss settings
         dismiss()
+    }
+}
+
+// MARK: - Horizontal Icon Picker
+struct HorizontalIconPicker: View {
+    @Binding var selectedIcon: DeviceIcon
+    
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                ForEach(DeviceIcon.allCases, id: \.self) { icon in
+                    CompactIconButton(
+                        icon: icon,
+                        isSelected: selectedIcon == icon,
+                        onTap: {
+                            selectedIcon = icon
+                            let generator = UIImpactFeedbackGenerator(style: .light)
+                            generator.impactOccurred()
+                        }
+                    )
+                }
+            }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 8)
+        }
+    }
+}
+
+struct CompactIconButton: View {
+    let icon: DeviceIcon
+    let isSelected: Bool
+    let onTap: () -> Void
+    
+    var body: some View {
+        Button(action: onTap) {
+            VStack(spacing: 4) {
+                Image(systemName: icon.rawValue)
+                    .font(.system(size: 24))
+                    .foregroundColor(isSelected ? .white : .blue)
+                    .frame(width: 28, height: 28)
+                
+                Text(icon.displayName)
+                    .font(.caption2)
+                    .foregroundColor(isSelected ? .white : .primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+            }
+            .frame(width: 60)
+            .padding(.vertical, 8)
+            .background(isSelected ? Color.blue : Color(.systemGray6))
+            .cornerRadius(8)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 2)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
     }
 }
 

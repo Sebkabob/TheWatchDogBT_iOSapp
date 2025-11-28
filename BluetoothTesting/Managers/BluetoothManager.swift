@@ -43,6 +43,9 @@ class BluetoothManager: NSObject, ObservableObject {
     // Background scanning for bonded devices list
     private var isBackgroundScanning = false
     
+    // Flag to track if we should start scanning once Bluetooth is ready
+    private var shouldStartScanningWhenReady = false
+    
     var deviceStateText: String {
         // Extract the armed bit (bit 0) from the settings byte
         let isArmed = (deviceState & 0x01) != 0
@@ -66,7 +69,8 @@ class BluetoothManager: NSObject, ObservableObject {
     
     func startScanning() {
         guard isBluetoothReady else {
-            print("⚠️ Cannot scan - Bluetooth not ready")
+            print("⚠️ Cannot scan - Bluetooth not ready, will start when ready")
+            shouldStartScanningWhenReady = true
             return
         }
         
@@ -76,7 +80,9 @@ class BluetoothManager: NSObject, ObservableObject {
             centralManager.stopScan()
         }
         
-        discoveredDevices.removeAll()
+        DispatchQueue.main.async {
+            self.discoveredDevices.removeAll()
+        }
         lastRSSIUpdate.removeAll()
         
         // Scan with longer timeout and allow duplicates for RSSI updates
@@ -94,8 +100,11 @@ class BluetoothManager: NSObject, ObservableObject {
         
         print("✅ Started scanning for 0x183E devices")
         
-        staleDeviceTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.removeStaleDevices()
+        // Schedule stale device timer on main thread
+        DispatchQueue.main.async {
+            self.staleDeviceTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+                self?.removeStaleDevices()
+            }
         }
     }
     
@@ -109,9 +118,10 @@ class BluetoothManager: NSObject, ObservableObject {
             if !self.isBackgroundScanning {
                 BondManager.shared.clearAllRSSI()
             }
+            
+            self.staleDeviceTimer?.invalidate()
+            self.staleDeviceTimer = nil
         }
-        staleDeviceTimer?.invalidate()
-        staleDeviceTimer = nil
         print("🛑 Stopped scanning")
     }
     
@@ -142,12 +152,15 @@ class BluetoothManager: NSObject, ObservableObject {
         
         centralManager.connect(device.peripheral, options: options)
         
-        connectionTimer = Timer.scheduledTimer(withTimeInterval: connectionTimeout, repeats: false) { [weak self] _ in
-            print("⏱️ Connection timeout for \(device.name)")
-            self?.centralManager.cancelPeripheralConnection(device.peripheral)
-            self?.connectionTimer = nil
-            self?.isConnecting = false
-            self?.pendingConnectionDevice = nil
+        // Schedule connection timer on main thread
+        DispatchQueue.main.async {
+            self.connectionTimer = Timer.scheduledTimer(withTimeInterval: self.connectionTimeout, repeats: false) { [weak self] _ in
+                print("⏱️ Connection timeout for \(device.name)")
+                self?.centralManager.cancelPeripheralConnection(device.peripheral)
+                self?.connectionTimer = nil
+                self?.isConnecting = false
+                self?.pendingConnectionDevice = nil
+            }
         }
     }
     
@@ -155,21 +168,23 @@ class BluetoothManager: NSObject, ObservableObject {
         print("🔌 Disconnecting from: \(device.name)")
         centralManager.cancelPeripheralConnection(device.peripheral)
         
-        // Clean up timers
-        connectionTimer?.invalidate()
-        connectionTimer = nil
-        isConnecting = false
-        pendingConnectionDevice = nil
-        
-        // Reset state
-        connectedDevice = nil
-        writeCharacteristic = nil
-        notifyCharacteristic = nil
-        lastSentData = ""
-        deviceState = 0
-        hasReceivedInitialState = false
-        batteryLevel = -1
-        isCharging = false
+        // Clean up timers on main thread
+        DispatchQueue.main.async {
+            self.connectionTimer?.invalidate()
+            self.connectionTimer = nil
+            self.isConnecting = false
+            self.pendingConnectionDevice = nil
+            
+            // Reset state
+            self.connectedDevice = nil
+            self.writeCharacteristic = nil
+            self.notifyCharacteristic = nil
+            self.lastSentData = ""
+            self.deviceState = 0
+            self.hasReceivedInitialState = false
+            self.batteryLevel = -1
+            self.isCharging = false
+        }
     }
     
     func sendData(_ data: Data) {
@@ -182,8 +197,10 @@ class BluetoothManager: NSObject, ObservableObject {
         peripheral.writeValue(data, for: characteristic, type: .withResponse)
         
         let hexString = data.map { String(format: "%02X", $0) }.joined(separator: " ")
-        lastSentData = "0x\(hexString) (\(data.count) bytes)"
-        print("📤 Sent: \(lastSentData)")
+        DispatchQueue.main.async {
+            self.lastSentData = "0x\(hexString) (\(data.count) bytes)"
+        }
+        print("📤 Sent: 0x\(hexString) (\(data.count) bytes)")
     }
     
     func sendSettings() {
@@ -216,16 +233,18 @@ class BluetoothManager: NSObject, ObservableObject {
     
     private func removeStaleDevices() {
         let now = Date()
-        discoveredDevices.removeAll { device in
-            guard let lastUpdate = lastRSSIUpdate[device.id] else {
-                return true
+        DispatchQueue.main.async {
+            self.discoveredDevices.removeAll { device in
+                guard let lastUpdate = self.lastRSSIUpdate[device.id] else {
+                    return true
+                }
+                let isStale = now.timeIntervalSince(lastUpdate) > self.deviceTimeout
+                if isStale {
+                    print("🗑️ Removing stale device: \(device.name)")
+                    self.lastRSSIUpdate.removeValue(forKey: device.id)
+                }
+                return isStale
             }
-            let isStale = now.timeIntervalSince(lastUpdate) > deviceTimeout
-            if isStale {
-                print("🗑️ Removing stale device: \(device.name)")
-                lastRSSIUpdate.removeValue(forKey: device.id)
-            }
-            return isStale
         }
     }
 }
@@ -239,6 +258,12 @@ extension BluetoothManager: CBCentralManagerDelegate {
             switch central.state {
             case .poweredOn:
                 print("✅ Bluetooth powered on")
+                // Start scanning if we were waiting for Bluetooth to be ready
+                if self.shouldStartScanningWhenReady {
+                    self.shouldStartScanningWhenReady = false
+                    print("🔄 Bluetooth ready - starting pending scan")
+                    self.startScanning()
+                }
             case .poweredOff:
                 print("❌ Bluetooth powered off")
             case .unauthorized:
@@ -256,7 +281,9 @@ extension BluetoothManager: CBCentralManagerDelegate {
         
         if !isBluetoothReady {
             stopScanning()
-            connectedDevice = nil
+            DispatchQueue.main.async {
+                self.connectedDevice = nil
+            }
         }
     }
     
@@ -307,13 +334,13 @@ extension BluetoothManager: CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         print("✅ Connected to: \(peripheral.name ?? "Unknown") [\(peripheral.identifier.uuidString.prefix(8))]")
         
-        // Clear connection timer
-        connectionTimer?.invalidate()
-        connectionTimer = nil
-        isConnecting = false
-        pendingConnectionDevice = nil
-        
+        // Clear connection timer on main thread
         DispatchQueue.main.async {
+            self.connectionTimer?.invalidate()
+            self.connectionTimer = nil
+            self.isConnecting = false
+            self.pendingConnectionDevice = nil
+            
             if let index = self.discoveredDevices.firstIndex(where: { $0.id == peripheral.identifier }) {
                 // Keep the discovered name, just update connection status
                 self.discoveredDevices[index] = BluetoothDevice(
@@ -366,10 +393,12 @@ extension BluetoothManager: CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         print("❌ Failed to connect: \(error?.localizedDescription ?? "Unknown error")")
         
-        connectionTimer?.invalidate()
-        connectionTimer = nil
-        isConnecting = false
-        pendingConnectionDevice = nil
+        DispatchQueue.main.async {
+            self.connectionTimer?.invalidate()
+            self.connectionTimer = nil
+            self.isConnecting = false
+            self.pendingConnectionDevice = nil
+        }
     }
 }
 

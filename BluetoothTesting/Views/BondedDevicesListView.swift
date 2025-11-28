@@ -10,6 +10,8 @@ import SwiftUI
 struct BondedDevicesListView: View {
     @ObservedObject var bluetoothManager: BluetoothManager
     @ObservedObject private var bondManager = BondManager.shared
+    @ObservedObject private var nameManager = DeviceNameManager.shared
+    @ObservedObject private var iconManager = DeviceIconManager.shared
     @State private var showAddDevice = false
     @State private var deviceToDelete: BondedDevice?
     @State private var showDeleteConfirmation = false
@@ -20,7 +22,7 @@ struct BondedDevicesListView: View {
                 if bondManager.bondedDevices.isEmpty {
                     // Empty state
                     VStack(spacing: 20) {
-                        Image(systemName: "lock.shield")
+                        Image(systemName: "dog")
                             .font(.system(size: 80))
                             .foregroundColor(.gray)
                         
@@ -50,11 +52,17 @@ struct BondedDevicesListView: View {
                         .padding(.top, 20)
                     }
                 } else {
-                    // Device list
+                    // Device list - sort by display name
                     List {
-                        ForEach(bondManager.bondedDevices.sorted(by: { $0.name < $1.name })) { device in
+                        ForEach(bondManager.bondedDevices.sorted(by: { device1, device2 in
+                            let name1 = nameManager.getDisplayName(deviceID: device1.id, advertisingName: device1.name)
+                            let name2 = nameManager.getDisplayName(deviceID: device2.id, advertisingName: device2.name)
+                            return name1 < name2
+                        })) { device in
                             BondedDeviceRow(
                                 device: device,
+                                displayName: nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name),
+                                displayIcon: iconManager.getDisplayIcon(deviceID: device.id),
                                 isConnected: bluetoothManager.connectedDevice?.id == device.id,
                                 onTap: {
                                     connectToDevice(device)
@@ -65,9 +73,11 @@ struct BondedDevicesListView: View {
                             deleteDevices(at: indexSet)
                         }
                     }
+                    .listStyle(.plain)
                 }
             }
             .navigationTitle("My WatchDogs")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: {
@@ -88,6 +98,12 @@ struct BondedDevicesListView: View {
             .onDisappear {
                 bluetoothManager.stopBackgroundScanning()
             }
+            .onChange(of: bluetoothManager.isBluetoothReady) { newValue in
+                if newValue && !bluetoothManager.isScanning {
+                    print("🔵 Bluetooth ready - starting background scan")
+                    bluetoothManager.startBackgroundScanning()
+                }
+            }
             .alert("Forget WatchDog?", isPresented: $showDeleteConfirmation) {
                 Button("Cancel", role: .cancel) {
                     deviceToDelete = nil
@@ -99,7 +115,8 @@ struct BondedDevicesListView: View {
                 }
             } message: {
                 if let device = deviceToDelete {
-                    Text("Are you sure you want to forget \(device.name)? You'll need to pair again to reconnect.")
+                    let displayName = nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
+                    Text("Are you sure you want to forget \(displayName)? You'll need to pair again to reconnect.")
                 }
             }
         }
@@ -107,7 +124,11 @@ struct BondedDevicesListView: View {
     }
     
     private func deleteDevices(at offsets: IndexSet) {
-        let sortedDevices = bondManager.bondedDevices.sorted(by: { $0.name < $1.name })
+        let sortedDevices = bondManager.bondedDevices.sorted(by: { device1, device2 in
+            let name1 = nameManager.getDisplayName(deviceID: device1.id, advertisingName: device1.name)
+            let name2 = nameManager.getDisplayName(deviceID: device2.id, advertisingName: device2.name)
+            return name1 < name2
+        })
         
         for index in offsets {
             deviceToDelete = sortedDevices[index]
@@ -116,7 +137,8 @@ struct BondedDevicesListView: View {
     }
     
     private func forgetDevice(_ device: BondedDevice) {
-        print("🗑️ Forgetting device: \(device.name)")
+        let displayName = nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
+        print("🗑️ Forgetting device: \(displayName)")
         
         // Disconnect if currently connected
         if bluetoothManager.connectedDevice?.id == device.id,
@@ -124,7 +146,7 @@ struct BondedDevicesListView: View {
             bluetoothManager.disconnect(from: connectedDevice)
         }
         
-        // Remove bond
+        // Remove bond (custom name and icon persist intentionally)
         bondManager.removeBond(deviceID: device.id)
         
         deviceToDelete = nil
@@ -135,7 +157,8 @@ struct BondedDevicesListView: View {
         if let discoveredDevice = bluetoothManager.discoveredDevices.first(where: { $0.id == device.id }) {
             bluetoothManager.connect(to: discoveredDevice)
         } else {
-            print("⚠️ Device not in range: \(device.name)")
+            let displayName = nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
+            print("⚠️ Device not in range: \(displayName)")
             // Could show an alert here
         }
     }
@@ -143,21 +166,38 @@ struct BondedDevicesListView: View {
 
 struct BondedDeviceRow: View {
     let device: BondedDevice
+    let displayName: String
+    let displayIcon: DeviceIcon
     let isConnected: Bool
     let onTap: () -> Void
     
     @State private var isPressed = false
     
+    // Get the appropriate icon name based on connection state and fill variant availability
+    private var iconName: String {
+        // Use .fill variant when connected IF it has one
+        if isConnected && displayIcon.hasFillVariant {
+            return "\(displayIcon.rawValue).fill"
+        }
+        return displayIcon.rawValue
+    }
+    
+    // ALL icons change color - green when connected, blue when not
+    private var iconColor: Color {
+        return isConnected ? .green : .blue
+    }
+    
     var body: some View {
         HStack(spacing: 12) {
-            // Device icon
-            Image(systemName: isConnected ? "lock.shield.fill" : "lock.shield")
+            // Device icon - ALL icons change color (green when connected)
+            // Icons with .fill also get filled when connected
+            Image(systemName: iconName)
                 .font(.title2)
-                .foregroundColor(isConnected ? .green : .blue)
+                .foregroundColor(iconColor)
                 .frame(width: 40)
             
             VStack(alignment: .leading, spacing: 4) {
-                Text(device.name)
+                Text(displayName)
                     .font(.headline)
                     .foregroundColor(.primary)
                 

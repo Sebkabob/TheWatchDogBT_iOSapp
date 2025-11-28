@@ -14,6 +14,7 @@ class BondManager: ObservableObject {
     @Published var bondedDevices: [BondedDevice] = []
     
     private let bondsKey = "watchdog_bonded_devices"
+    private let nameManager = DeviceNameManager.shared
     
     private init() {
         loadBonds()
@@ -40,6 +41,7 @@ class BondManager: ObservableObject {
             bondedDevices.remove(at: index)
             saveBonds()
             print("🗑️ Removed bond: \(name) [\(deviceID.uuidString.prefix(8))]")
+            // Note: We intentionally do NOT remove custom name - it persists
         }
     }
     
@@ -52,11 +54,11 @@ class BondManager: ObservableObject {
     
     func updateDeviceName(deviceID: UUID, name: String) {
         if let index = bondedDevices.firstIndex(where: { $0.id == deviceID }) {
-            // Only update if the name has changed
+            // Only update if the advertising name has changed
             if bondedDevices[index].name != name {
                 bondedDevices[index].name = name
                 saveBonds()
-                print("✏️ Updated device name to: \(name)")
+                print("✏️ Updated advertising name to: \(name)")
             }
         }
     }
@@ -81,12 +83,10 @@ class BondManager: ObservableObject {
         return bondedDevices.first(where: { $0.id == deviceID })
     }
     
-    func renameBond(deviceID: UUID, newName: String) {
-        if let index = bondedDevices.firstIndex(where: { $0.id == deviceID }) {
-            bondedDevices[index].name = newName
-            saveBonds()
-            print("✏️ Renamed device to: \(newName)")
-        }
+    /// Get display name for a device (custom name if set, otherwise advertising name)
+    func getDisplayName(deviceID: UUID) -> String? {
+        guard let bond = getBond(deviceID: deviceID) else { return nil }
+        return nameManager.getDisplayName(deviceID: deviceID, advertisingName: bond.name)
     }
     
     // MARK: - Persistence

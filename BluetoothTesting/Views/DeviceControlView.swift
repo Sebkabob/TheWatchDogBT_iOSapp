@@ -10,6 +10,7 @@ import SwiftUI
 struct DeviceControlView: View {
     @ObservedObject var bluetoothManager: BluetoothManager
     @ObservedObject private var settingsManager = SettingsManager.shared
+    @ObservedObject private var nameManager = DeviceNameManager.shared
     @State private var isLocked = true
     @State private var holdProgress: CGFloat = 0.0
     @State private var isHolding = false
@@ -18,17 +19,21 @@ struct DeviceControlView: View {
     private let lightHaptic = UIImpactFeedbackGenerator(style: .light)
     private let heavyHaptic = UIImpactFeedbackGenerator(style: .heavy)
     
+    // Get display name for connected device
+    private var displayName: String {
+        guard let device = bluetoothManager.connectedDevice else { return "WatchDog" }
+        return nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
+    }
+    
     var body: some View {
         VStack(spacing: 0) {
             // Device State Display at the top - Horizontal Layout
             HStack(alignment: .center, spacing: 0) {
                 // Left: Device name
-                if let deviceName = bluetoothManager.connectedDevice?.name {
-                    Text(deviceName)
-                        .font(.headline)
-                        .foregroundColor(.primary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
+                Text(displayName)
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 
                 // Center: Lock state
                 HStack(spacing: 8) {
