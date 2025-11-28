@@ -8,42 +8,42 @@
 import Foundation
 
 enum DeviceIcon: String, Codable, CaseIterable {
+    case dog = "dog"
     case lockShield = "lock.shield"
     case door = "door.left.hand.closed"
-    case cabinet = "cabinet"
     case bicycle = "bicycle"
+    case cabinet = "cabinet"
     case backpack = "backpack"
-    case car = "car"
-    case house = "house"
-    case briefcase = "briefcase"
     case key = "key"
     case bag = "bag"
     case box = "shippingbox"
+    case car = "car"
+    case house = "house"
+    case briefcase = "briefcase"
     case skateboard = "skateboard"
     case motorcycle = "motorcycle"
     case scooter = "scooter"
-    case dog = "dog"
     case pill = "pill"
     case suitcase = "suitcase.rolling"
     
     var displayName: String {
         switch self {
+        case .dog: return "Dog"
         case .lockShield: return "Lock"
         case .door: return "Door"
-        case .cabinet: return "Cabinet"
         case .bicycle: return "Bike"
+        case .cabinet: return "Cabinet"
         case .backpack: return "Backpack"
-        case .car: return "Car"
-        case .house: return "House"
-        case .briefcase: return "Briefcase"
         case .key: return "Keys"
         case .bag: return "Bag"
         case .box: return "Box"
-        case .skateboard: return "Skateboard"
+        case .car: return "Car"
+        case .house: return "House"
+        case .briefcase: return "Briefcase"
+        case .skateboard: return "Board"
         case .motorcycle: return "Motorcycle"
         case .scooter: return "Scooter"
-        case .dog: return "Dog"
-        case .pill: return "Pill"
+        case .pill: return "PillS"
         case .suitcase: return "Luggage"
         }
     }
@@ -51,21 +51,21 @@ enum DeviceIcon: String, Codable, CaseIterable {
     // Track which icons have .fill variants
     var hasFillVariant: Bool {
         switch self {
+        case .dog: return true
         case .lockShield: return true
         case .door: return true
-        case .cabinet: return true
         case .bicycle: return false
+        case .cabinet: return true
         case .backpack: return true
-        case .car: return true
-        case .house: return true
-        case .briefcase: return true
         case .key: return true
         case .bag: return true
         case .box: return true
+        case .car: return true
+        case .house: return true
+        case .briefcase: return true
         case .skateboard: return false
         case .motorcycle: return false
         case .scooter: return false
-        case .dog: return true
         case .pill: return true
         case .suitcase: return true
         }
