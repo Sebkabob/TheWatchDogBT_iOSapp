@@ -43,7 +43,7 @@ enum DeviceIcon: String, Codable, CaseIterable {
         case .skateboard: return "Board"
         case .motorcycle: return "Motorcycle"
         case .scooter: return "Scooter"
-        case .pill: return "PillS"
+        case .pill: return "Pills"
         case .suitcase: return "Luggage"
         }
     }
