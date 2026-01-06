@@ -34,10 +34,27 @@ class MotionManager: ObservableObject {
     private var displayLink: CADisplayLink?
     private var isPaused = false
     
+    // Track if motion is available
+    private(set) var isMotionAvailable = false
+    
     func startTracking() {
-        guard motionManager.isDeviceMotionAvailable else {
+        // Check if we're on the main thread
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async {
+                self.startTracking()
+            }
             return
         }
+        
+        // Check if device motion is available
+        guard motionManager.isDeviceMotionAvailable else {
+            print("⚠️ Device motion not available - motion tracking disabled (Simulator or unsupported device)")
+            isMotionAvailable = false
+            return
+        }
+        
+        isMotionAvailable = true
+        print("✅ Device motion available - starting tracking")
         
         motionManager.deviceMotionUpdateInterval = 1.0 / 60.0
         motionManager.startDeviceMotionUpdates(to: queue) { [weak self] motion, error in
@@ -97,6 +114,8 @@ class MotionManager: ObservableObject {
     }
     
     func stopTracking() {
+        guard isMotionAvailable else { return }
+        
         motionManager.stopDeviceMotionUpdates()
         displayLink?.invalidate()
         displayLink = nil
@@ -106,10 +125,12 @@ class MotionManager: ObservableObject {
     }
     
     func pauseTracking() {
+        guard isMotionAvailable else { return }
         isPaused = true
     }
     
     func resumeTracking() {
+        guard isMotionAvailable else { return }
         isPaused = false
     }
     

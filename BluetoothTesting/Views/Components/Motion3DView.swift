@@ -43,7 +43,11 @@ struct Motion3DView: View {
                                 0,
                                 Double(value.translation.width) * dragSensitivity
                             )
-                            motionManager.pauseTracking()
+                            
+                            // Only pause if motion is available
+                            if motionManager.isMotionAvailable {
+                                motionManager.pauseTracking()
+                            }
                         }
                     }
                     .onEnded { value in
@@ -52,10 +56,33 @@ struct Motion3DView: View {
                         }
                         
                         isDragging = false
-                        motionManager.resumeTracking()
+                        
+                        // Only resume if motion is available
+                        if motionManager.isMotionAvailable {
+                            motionManager.resumeTracking()
+                        }
+                        
                         startDecay()
                     }
             )
+            
+            // Optional: Show indicator when motion is not available (Simulator)
+            if !motionManager.isMotionAvailable {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Image(systemName: "hand.draw")
+                            .font(.caption)
+                        Text("Drag to rotate")
+                            .font(.caption)
+                    }
+                    .padding(8)
+                    .background(Color.black.opacity(0.6))
+                    .foregroundColor(.white)
+                    .cornerRadius(8)
+                    .padding(.bottom, 100)
+                }
+            }
         }
         .sheet(isPresented: $showSettings) {
             WatchDogSettingsView(bluetoothManager: bluetoothManager)
