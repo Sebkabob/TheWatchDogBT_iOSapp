@@ -8,6 +8,22 @@
 import Foundation
 import CoreBluetooth
 
+// Command definitions matching firmware
+enum WatchDogCommand: UInt8 {
+    case requestLogCount = 0xF0
+    case requestEvent = 0xF1
+    case clearLog = 0xF2
+    case ackEvent = 0xF3
+}
+
+// Response types matching firmware
+enum WatchDogResponse: UInt8 {
+    case logCount = 0xE0
+    case eventData = 0xE1
+    case noMoreEvents = 0xE2
+    case logCleared = 0xE3
+}
+
 class BluetoothManager: NSObject, ObservableObject {
     @Published var discoveredDevices: [BluetoothDevice] = []
     @Published var isScanning = false
@@ -18,8 +34,11 @@ class BluetoothManager: NSObject, ObservableObject {
     @Published var hasReceivedInitialState = false
     @Published var batteryLevel: Int = -1
     @Published var isCharging: Bool = false
+    @Published var isSyncingMotionLogs = false
+    @Published var syncProgress: Float = 0.0
     
     private let settingsManager = SettingsManager.shared
+    private let motionLogManager = MotionLogManager.shared
     
     private var centralManager: CBCentralManager!
     private var writeCharacteristic: CBCharacteristic?
@@ -34,20 +53,20 @@ class BluetoothManager: NSObject, ObservableObject {
     private var staleDeviceTimer: Timer?
     
     private var connectionTimer: Timer?
-    private let connectionTimeout: TimeInterval = 30.0  // INCREASED from 10s to 30s
+    private let connectionTimeout: TimeInterval = 30.0
     
-    // Track if we're in the middle of connecting to prevent duplicate attempts
     private var isConnecting = false
     private var pendingConnectionDevice: UUID?
     
-    // Background scanning for bonded devices list
     private var isBackgroundScanning = false
     
-    // Flag to track if we should start scanning once Bluetooth is ready
     private var shouldStartScanningWhenReady = false
     
+    // Motion log sync state
+    private var expectedEventCount: UInt16 = 0
+    private var receivedEventCount: UInt16 = 0
+    
     var deviceStateText: String {
-        // Extract the armed bit (bit 0) from the settings byte
         let isArmed = (deviceState & 0x01) != 0
         
         if isArmed {
@@ -55,14 +74,10 @@ class BluetoothManager: NSObject, ObservableObject {
         } else {
             return "Unlocked"
         }
-        
-        // You can add alarm detection logic later if needed
-        // For now, just check the armed bit
     }
     
     override init() {
         super.init()
-        // Initialize with a dedicated queue for better reliability
         let queue = DispatchQueue(label: "com.watchdog.bluetooth", qos: .userInitiated)
         centralManager = CBCentralManager(delegate: self, queue: queue)
     }
@@ -74,7 +89,6 @@ class BluetoothManager: NSObject, ObservableObject {
             return
         }
         
-        // Stop any existing scan first
         if isScanning {
             print("🔄 Already scanning, stopping first...")
             centralManager.stopScan()
@@ -85,7 +99,6 @@ class BluetoothManager: NSObject, ObservableObject {
         }
         lastRSSIUpdate.removeAll()
         
-        // Scan with longer timeout and allow duplicates for RSSI updates
         centralManager.scanForPeripherals(
             withServices: [targetServiceUUID],
             options: [
@@ -100,7 +113,6 @@ class BluetoothManager: NSObject, ObservableObject {
         
         print("✅ Started scanning for 0x183E devices")
         
-        // Schedule stale device timer on main thread
         DispatchQueue.main.async {
             self.staleDeviceTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
                 self?.removeStaleDevices()
@@ -113,8 +125,6 @@ class BluetoothManager: NSObject, ObservableObject {
         DispatchQueue.main.async {
             self.isScanning = false
             
-            // Clear RSSI for bonded devices when we stop scanning
-            // unless we're in background scanning mode
             if !self.isBackgroundScanning {
                 BondManager.shared.clearAllRSSI()
             }
@@ -126,7 +136,6 @@ class BluetoothManager: NSObject, ObservableObject {
     }
     
     func connect(to device: BluetoothDevice) {
-        // Prevent duplicate connection attempts
         if isConnecting && pendingConnectionDevice == device.id {
             print("⚠️ Already connecting to this device")
             return
@@ -137,12 +146,10 @@ class BluetoothManager: NSObject, ObservableObject {
         
         print("🔌 Connecting to: \(device.name) [\(device.id.uuidString.prefix(8))]")
         
-        // Stop scanning to improve connection reliability
         if isScanning {
             stopScanning()
         }
         
-        // Connect with specific options for better reliability
         let options: [String: Any] = [
             CBConnectPeripheralOptionNotifyOnConnectionKey: true,
             CBConnectPeripheralOptionNotifyOnDisconnectionKey: true,
@@ -152,7 +159,6 @@ class BluetoothManager: NSObject, ObservableObject {
         
         centralManager.connect(device.peripheral, options: options)
         
-        // Schedule connection timer on main thread
         DispatchQueue.main.async {
             self.connectionTimer = Timer.scheduledTimer(withTimeInterval: self.connectionTimeout, repeats: false) { [weak self] _ in
                 print("⏱️ Connection timeout for \(device.name)")
@@ -168,14 +174,12 @@ class BluetoothManager: NSObject, ObservableObject {
         print("🔌 Disconnecting from: \(device.name)")
         centralManager.cancelPeripheralConnection(device.peripheral)
         
-        // Clean up timers on main thread
         DispatchQueue.main.async {
             self.connectionTimer?.invalidate()
             self.connectionTimer = nil
             self.isConnecting = false
             self.pendingConnectionDevice = nil
             
-            // Reset state
             self.connectedDevice = nil
             self.writeCharacteristic = nil
             self.notifyCharacteristic = nil
@@ -184,6 +188,10 @@ class BluetoothManager: NSObject, ObservableObject {
             self.hasReceivedInitialState = false
             self.batteryLevel = -1
             self.isCharging = false
+            self.isSyncingMotionLogs = false
+            self.syncProgress = 0.0
+            self.expectedEventCount = 0
+            self.receivedEventCount = 0
         }
     }
     
@@ -210,7 +218,168 @@ class BluetoothManager: NSObject, ObservableObject {
         print("📤 Sent settings byte: 0x\(String(format: "%02X", settingsByte))")
     }
     
-    // MARK: - Background Scanning for Bonded Devices
+    // MARK: - Motion Log Sync Methods
+    
+    func requestMotionLogCount() {
+        guard connectedDevice != nil else {
+            print("❌ Not connected to device")
+            return
+        }
+        
+        print("📤 Requesting motion log count...")
+        let command = Data([WatchDogCommand.requestLogCount.rawValue])
+        sendData(command)
+        
+        DispatchQueue.main.async {
+            self.isSyncingMotionLogs = true
+            self.syncProgress = 0.0
+            self.receivedEventCount = 0
+        }
+    }
+    
+    func requestEvent(atIndex index: UInt16) {
+        guard connectedDevice != nil else { return }
+        
+        let highByte = UInt8((index >> 8) & 0xFF)
+        let lowByte = UInt8(index & 0xFF)
+        
+        let command = Data([WatchDogCommand.requestEvent.rawValue, highByte, lowByte])
+        sendData(command)
+        print("📤 Requesting event at index \(index)")
+    }
+    
+    func clearMotionLogs() {
+        guard connectedDevice != nil else { return }
+        
+        print("📤 Requesting to clear motion logs...")
+        let command = Data([WatchDogCommand.clearLog.rawValue])
+        sendData(command)
+    }
+    
+    private func handleMotionLogCount(data: Data) {
+        guard data.count >= 3 else {
+            print("❌ Invalid log count data length: \(data.count)")
+            return
+        }
+        
+        let highByte = UInt16(data[1])
+        let lowByte = UInt16(data[2])
+        expectedEventCount = (highByte << 8) | lowByte
+        
+        print("📥 Received event count: \(expectedEventCount)")
+        
+        DispatchQueue.main.async {
+            self.expectedEventCount = self.expectedEventCount
+        }
+        
+        if expectedEventCount == 0 {
+            print("✅ No events to sync")
+            DispatchQueue.main.async {
+                self.isSyncingMotionLogs = false
+                self.syncProgress = 1.0
+            }
+            return
+        }
+        
+        // Start requesting events
+        requestEvent(atIndex: 0)
+    }
+    
+    private func handleEventData(data: Data) {
+        guard data.count >= 10 else {
+            print("❌ Invalid event data length: \(data.count)")
+            return
+        }
+        
+        let highByte = UInt16(data[1])
+        let lowByte = UInt16(data[2])
+        let eventIndex = (highByte << 8) | lowByte
+        
+        // Parse event data from firmware
+        let year = data[3]
+        let month = data[4]
+        let day = data[5]
+        let hour = data[6]
+        let minute = data[7]
+        let second = data[8]
+        let motionTypeByte = data[9]
+        
+        // Convert to timestamp
+        var dateComponents = DateComponents()
+        dateComponents.year = 2000 + Int(year)  // Firmware sends year offset from 2000
+        dateComponents.month = Int(month)
+        dateComponents.day = Int(day)
+        dateComponents.hour = Int(hour)
+        dateComponents.minute = Int(minute)
+        dateComponents.second = Int(second)
+        
+        let calendar = Calendar.current
+        guard let timestamp = calendar.date(from: dateComponents) else {
+            print("❌ Failed to create date from components")
+            return
+        }
+        
+        // Use MotionTypeConfig to convert firmware type to iOS type
+        let (eventType, alarmSounded) = MotionTypeConfig.convert(firmwareType: motionTypeByte)
+        
+        let motionEvent = MotionEvent(
+            timestamp: timestamp,
+            eventType: eventType,
+            alarmSounded: alarmSounded
+        )
+        
+        motionLogManager.addMotionEvent(motionEvent)
+        
+        DispatchQueue.main.async {
+            self.receivedEventCount += 1
+            self.syncProgress = Float(self.receivedEventCount) / Float(self.expectedEventCount)
+        }
+        
+        print("📥 Received event \(eventIndex + 1)/\(expectedEventCount): \(eventType.displayName)")
+        
+        // Request next event
+        let nextIndex = eventIndex + 1
+        if nextIndex < expectedEventCount {
+            // Small delay to avoid overwhelming the device
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                self.requestEvent(atIndex: nextIndex)
+            }
+        } else {
+            // All events received
+            print("✅ All motion events synced!")
+            DispatchQueue.main.async {
+                self.isSyncingMotionLogs = false
+                self.syncProgress = 1.0
+            }
+        }
+    }
+    
+    private func handleNoMoreEvents(data: Data) {
+        guard data.count >= 3 else { return }
+        
+        let highByte = UInt16(data[1])
+        let lowByte = UInt16(data[2])
+        let requestedIndex = (highByte << 8) | lowByte
+        
+        print("⚠️ No event at index \(requestedIndex)")
+        
+        DispatchQueue.main.async {
+            self.isSyncingMotionLogs = false
+        }
+    }
+    
+    private func handleLogCleared(data: Data) {
+        print("✅ Motion logs cleared on WatchDog")
+        
+        DispatchQueue.main.async {
+            self.isSyncingMotionLogs = false
+            self.syncProgress = 0.0
+            self.expectedEventCount = 0
+            self.receivedEventCount = 0
+        }
+    }
+    
+    // MARK: - Background Scanning
     
     func startBackgroundScanning() {
         guard !isBackgroundScanning else {
@@ -258,7 +427,6 @@ extension BluetoothManager: CBCentralManagerDelegate {
             switch central.state {
             case .poweredOn:
                 print("✅ Bluetooth powered on")
-                // Start scanning if we were waiting for Bluetooth to be ready
                 if self.shouldStartScanningWhenReady {
                     self.shouldStartScanningWhenReady = false
                     print("🔄 Bluetooth ready - starting pending scan")
@@ -291,7 +459,6 @@ extension BluetoothManager: CBCentralManagerDelegate {
         let deviceID = peripheral.identifier
         let now = Date()
         
-        // Throttle RSSI updates
         if let lastUpdate = lastRSSIUpdate[deviceID] {
             if now.timeIntervalSince(lastUpdate) < rssiUpdateInterval {
                 return
@@ -300,7 +467,6 @@ extension BluetoothManager: CBCentralManagerDelegate {
         
         lastRSSIUpdate[deviceID] = now
         
-        // Get name from advertisement data (TOP PRIORITY), fallback to peripheral name
         let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? peripheral.name ?? "WatchDog"
         
         let device = BluetoothDevice(
@@ -319,11 +485,9 @@ extension BluetoothManager: CBCentralManagerDelegate {
                 print("📱 Discovered: \(name) [\(deviceID.uuidString.prefix(8))] RSSI: \(RSSI.intValue)dBm")
             }
             
-            // Update BondManager if this is a bonded device
             let bondManager = BondManager.shared
             if bondManager.isBonded(deviceID: deviceID) {
                 bondManager.updateDeviceRSSI(deviceID: deviceID, rssi: RSSI.intValue)
-                // Update name if it changed
                 if let bond = bondManager.getBond(deviceID: deviceID), bond.name != name {
                     bondManager.updateDeviceName(deviceID: deviceID, name: name)
                 }
@@ -334,7 +498,6 @@ extension BluetoothManager: CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         print("✅ Connected to: \(peripheral.name ?? "Unknown") [\(peripheral.identifier.uuidString.prefix(8))]")
         
-        // Clear connection timer on main thread
         DispatchQueue.main.async {
             self.connectionTimer?.invalidate()
             self.connectionTimer = nil
@@ -342,10 +505,9 @@ extension BluetoothManager: CBCentralManagerDelegate {
             self.pendingConnectionDevice = nil
             
             if let index = self.discoveredDevices.firstIndex(where: { $0.id == peripheral.identifier }) {
-                // Keep the discovered name, just update connection status
                 self.discoveredDevices[index] = BluetoothDevice(
                     id: peripheral.identifier,
-                    name: self.discoveredDevices[index].name,  // PRESERVE THE DISCOVERED NAME
+                    name: self.discoveredDevices[index].name,
                     peripheral: peripheral,
                     rssi: self.discoveredDevices[index].rssi,
                     isConnected: true
@@ -354,16 +516,13 @@ extension BluetoothManager: CBCentralManagerDelegate {
             }
         }
         
-        // Don't stop scanning here - let the view handle it
-        
         peripheral.delegate = self
         
-        // Delay service discovery slightly to ensure connection is stable
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             print("🔍 Discovering services...")
             peripheral.discoverServices([self.targetServiceUUID])
         }
-    }
+    }a
     
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         if let error = error {
@@ -387,6 +546,10 @@ extension BluetoothManager: CBCentralManagerDelegate {
             self.isCharging = false
             self.isConnecting = false
             self.pendingConnectionDevice = nil
+            self.isSyncingMotionLogs = false
+            self.syncProgress = 0.0
+            self.expectedEventCount = 0
+            self.receivedEventCount = 0
         }
     }
     
@@ -450,7 +613,6 @@ extension BluetoothManager: CBPeripheralDelegate {
                 print("     ✅ Subscribed to notifications!")
             }
             
-            // Read initial value if readable
             if characteristic.properties.contains(.read) {
                 print("     📖 Reading initial value...")
                 peripheral.readValue(for: characteristic)
@@ -482,10 +644,35 @@ extension BluetoothManager: CBPeripheralDelegate {
             return
         }
         
-        // Debug: print all received bytes
         print("📦 Received \(data.count) bytes: \(data.map { String(format: "%02X", $0) }.joined(separator: " "))")
         
-        // We expect 2 bytes: [settings, battery]
+        // Check if this is a motion log response
+        if data.count > 0 {
+            let responseType = data[0]
+            
+            switch responseType {
+            case WatchDogResponse.logCount.rawValue:
+                handleMotionLogCount(data: data)
+                return
+                
+            case WatchDogResponse.eventData.rawValue:
+                handleEventData(data: data)
+                return
+                
+            case WatchDogResponse.noMoreEvents.rawValue:
+                handleNoMoreEvents(data: data)
+                return
+                
+            case WatchDogResponse.logCleared.rawValue:
+                handleLogCleared(data: data)
+                return
+                
+            default:
+                break
+            }
+        }
+        
+        // Handle regular state/battery data
         if data.count >= 1 {
             let settingsByte = data[0]
             
@@ -494,21 +681,16 @@ extension BluetoothManager: CBPeripheralDelegate {
                 self.deviceState = settingsByte
                 self.hasReceivedInitialState = true
                 
-                // Decode settings from WatchDog (WatchDog is source of truth!)
                 self.settingsManager.decodeSettings(from: settingsByte)
                 
                 print("📥 Received device state: 0x\(String(format: "%02X", settingsByte)) - \(self.deviceStateText) (was: 0x\(String(format: "%02X", oldState)))")
             }
         }
         
-        // Read battery level if available (byte 1)
         if data.count >= 2 {
             let batteryByte = data[1]
             
-            // Check bit 7 for charging state (0b10000000 = 0x80)
             let charging = (batteryByte & 0x80) != 0
-            
-            // Extract actual battery level from lower 7 bits
             let battery = Int(batteryByte & 0x7F)
             
             DispatchQueue.main.async {

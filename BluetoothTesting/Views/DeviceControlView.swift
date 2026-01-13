@@ -115,7 +115,7 @@ struct DeviceControlView: View {
                     }
                     
                     // Motion Logs button (right, light gray)
-                    NavigationLink(destination: MotionLogsView()) {
+                    NavigationLink(destination: MotionLogsView(bluetoothManager: bluetoothManager)) {
                         HStack {
                             Image(systemName: "exclamationmark.triangle")
                             Text("Motion Logs")
@@ -140,7 +140,7 @@ struct DeviceControlView: View {
             isLocked = settingsManager.isArmed
             print("🎬 View appeared - initial state: isLocked=\(isLocked)")
         }
-        .onChange(of: settingsManager.isArmed) { newIsArmed in
+        .onChange(of: settingsManager.isArmed) { oldValue, newIsArmed in
             if isLocked != newIsArmed {
                 isLocked = newIsArmed
             }

@@ -10,9 +10,13 @@ import SwiftUI
 struct MotionLogsView: View {
     @Environment(\.dismiss) var dismiss
     @ObservedObject private var motionLogManager = MotionLogManager.shared
+    var bluetoothManager: BluetoothManager
     @State private var selectedDate: Date
+    @State private var isSyncing = false
+    @State private var syncProgress: Float = 0.0
     
-    init() {
+    init(bluetoothManager: BluetoothManager) {
+        self.bluetoothManager = bluetoothManager
         // Initialize with most recent event date or today
         let mostRecentDate = MotionLogManager.shared.getMostRecentEventDate() ?? Date()
         _selectedDate = State(initialValue: mostRecentDate)
@@ -77,6 +81,27 @@ struct MotionLogsView: View {
         .navigationTitle("Motion Logs")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                if isSyncing {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                        Text("\(Int(syncProgress * 100))%")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                } else if bluetoothManager.connectedDevice != nil {
+                    Button(action: {
+                        startSync()
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.clockwise")
+                            Text("Sync")
+                        }
+                    }
+                }
+            }
+            
             ToolbarItem(placement: .navigationBarTrailing) {
                 if !motionLogManager.motionEvents.isEmpty {
                     Menu {
@@ -125,6 +150,28 @@ struct MotionLogsView: View {
         }
         
         return eventsPerDay
+    }
+    
+    private func startSync() {
+        guard bluetoothManager.connectedDevice != nil else {
+            print("❌ Not connected to device")
+            return
+        }
+        
+        print("📤 Requesting motion log count...")
+        isSyncing = true
+        syncProgress = 0.0
+        
+        // Send command to request log count
+        let command = Data([0xF0])  // CMD_REQUEST_LOG_COUNT
+        bluetoothManager.sendData(command)
+        
+        // TODO: For now, just show syncing state for 2 seconds
+        // When you replace with BluetoothManager_Updated.swift, the full sync will work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            isSyncing = false
+            syncProgress = 1.0
+        }
     }
 }
 
@@ -178,7 +225,7 @@ struct CalendarView: View {
             
             // Calendar grid
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 7), spacing: 8) {
-                ForEach(getDaysInMonth(), id: \.self) { date in
+                ForEach(Array(getDaysInMonth().enumerated()), id: \.offset) { index, date in
                     if let date = date {
                         DayCell(
                             date: date,
@@ -355,6 +402,6 @@ struct MotionEventRow: View {
 
 #Preview {
     NavigationView {
-        MotionLogsView()
+        MotionLogsView(bluetoothManager: BluetoothManager())
     }
 }
