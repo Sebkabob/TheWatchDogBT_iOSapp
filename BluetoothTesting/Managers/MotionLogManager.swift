@@ -2,7 +2,7 @@
 //  MotionLogManager.swift
 //  BluetoothTesting
 //
-//  Created by Assistant on 1/6/26.
+//  Created by Sebastian Forenza on 1/13/26.
 //
 
 import Foundation
