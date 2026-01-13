@@ -15,6 +15,7 @@ struct DeviceControlView: View {
     @State private var holdProgress: CGFloat = 0.0
     @State private var isHolding = false
     @State private var holdTimer: Timer?
+    @State private var showMotionLogs = false
     
     private let lightHaptic = UIImpactFeedbackGenerator(style: .light)
     private let heavyHaptic = UIImpactFeedbackGenerator(style: .heavy)
@@ -93,22 +94,39 @@ struct DeviceControlView: View {
                         }
                 )
                 
-                // Disconnect button
-                Button(action: {
-                    if let device = bluetoothManager.connectedDevice {
-                        bluetoothManager.disconnect(from: device)
+                // Disconnect and Motion Logs buttons side by side
+                HStack(spacing: 12) {
+                    // Disconnect button (left, red)
+                    Button(action: {
+                        if let device = bluetoothManager.connectedDevice {
+                            bluetoothManager.disconnect(from: device)
+                        }
+                    }) {
+                        HStack {
+                            Image(systemName: "xmark.circle.fill")
+                            Text("Disconnect")
+                        }
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.red.opacity(0.8))
+                        .cornerRadius(10)
                     }
-                }) {
-                    HStack {
-                        Image(systemName: "xmark.circle.fill")
-                        Text("Disconnect")
+                    
+                    // Motion Logs button (right, light gray)
+                    NavigationLink(destination: MotionLogsView()) {
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle")
+                            Text("Motion Logs")
+                        }
+                        .font(.headline)
+                        .foregroundColor(.primary)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color(.systemGray5))
+                        .cornerRadius(10)
                     }
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(Color.red.opacity(0.8))
-                    .cornerRadius(10)
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 20)
