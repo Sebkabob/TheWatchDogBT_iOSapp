@@ -199,14 +199,12 @@ struct DeviceControlView: View {
     
     private var batteryIcon: String {
         let level = bluetoothManager.batteryLevel
+        let charge = bluetoothManager.isCharging
         
-        if level == 100 { return "battery.100" }
-        if level >= 90 { return "battery.100" }
-        if level >= 75 { return "battery.75" }
+        if charge {return "battery.100percent.bolt"}
+        if level >= 80 { return "battery.100" }
         if level >= 60 { return "battery.75" }
-        if level >= 50 { return "battery.50" }
-        if level >= 40 { return "battery.50" }
-        if level >= 25 { return "battery.25" }
+        if level >= 30 { return "battery.50" }
         if level >= 10 { return "battery.25" }
         if level > 0 { return "battery.0" }
         return "battery.0"
@@ -214,8 +212,11 @@ struct DeviceControlView: View {
 
     private var batteryColor: Color {
         let level = bluetoothManager.batteryLevel
-        if level >= 20 { return .green }
-        if level >= 10 { return .orange }
+        let charge = bluetoothManager.isCharging
+        if charge {return .green}
+        if level >= 20 { return .white }
+        if level >= 20 { return .orange }
+        if level < 20 { return .red }
         return .red
     }
 }

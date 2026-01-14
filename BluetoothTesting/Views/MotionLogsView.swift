@@ -14,6 +14,8 @@ struct MotionLogsView: View {
     @State private var selectedDate: Date
     @State private var isSyncing = false
     @State private var syncProgress: Float = 0.0
+    @State private var showClearDayConfirmation = false
+    @State private var showClearAllConfirmation = false
     
     init(bluetoothManager: BluetoothManager) {
         self.bluetoothManager = bluetoothManager
@@ -86,18 +88,9 @@ struct MotionLogsView: View {
                     HStack(spacing: 8) {
                         ProgressView()
                             .scaleEffect(0.8)
-                        Text("\(Int(syncProgress * 100))%")
+                        Text("Syncing...")
                             .font(.caption)
                             .foregroundColor(.secondary)
-                    }
-                } else if bluetoothManager.connectedDevice != nil {
-                    Button(action: {
-                        startSync()
-                    }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.clockwise")
-                            Text("Sync")
-                        }
                     }
                 }
             }
@@ -106,7 +99,13 @@ struct MotionLogsView: View {
                 if !motionLogManager.motionEvents.isEmpty {
                     Menu {
                         Button(role: .destructive, action: {
-                            motionLogManager.clearAllEvents()
+                            showClearDayConfirmation = true
+                        }) {
+                            Label("Clear Today's Events", systemImage: "calendar.badge.minus")
+                        }
+                        
+                        Button(role: .destructive, action: {
+                            showClearAllConfirmation = true
                         }) {
                             Label("Clear All Events", systemImage: "trash")
                         }
@@ -115,6 +114,35 @@ struct MotionLogsView: View {
                     }
                 }
             }
+        }
+        .onAppear {
+            // Auto-sync when view appears
+            if bluetoothManager.connectedDevice != nil {
+                print("🔄 Auto-syncing motion logs on view appear...")
+                bluetoothManager.requestMotionLogCount()
+            }
+        }
+        .onReceive(bluetoothManager.$isSyncingMotionLogs) { syncing in
+            isSyncing = syncing
+        }
+        .onReceive(bluetoothManager.$syncProgress) { progress in
+            syncProgress = progress
+        }
+        .alert("Clear Today's Events?", isPresented: $showClearDayConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                motionLogManager.deleteEvents(for: selectedDate)
+            }
+        } message: {
+            Text("Are you sure you want to delete today's motion logs? This data cannot be recovered.")
+        }
+        .alert("Clear All Events?", isPresented: $showClearAllConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete All", role: .destructive) {
+                motionLogManager.clearAllEvents()
+            }
+        } message: {
+            Text("Are you sure you want to delete all motion logs? This data cannot be recovered.")
         }
     }
     
@@ -150,28 +178,6 @@ struct MotionLogsView: View {
         }
         
         return eventsPerDay
-    }
-    
-    private func startSync() {
-        guard bluetoothManager.connectedDevice != nil else {
-            print("❌ Not connected to device")
-            return
-        }
-        
-        print("📤 Requesting motion log count...")
-        isSyncing = true
-        syncProgress = 0.0
-        
-        // Send command to request log count
-        let command = Data([0xF0])  // CMD_REQUEST_LOG_COUNT
-        bluetoothManager.sendData(command)
-        
-        // TODO: For now, just show syncing state for 2 seconds
-        // When you replace with BluetoothManager_Updated.swift, the full sync will work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            isSyncing = false
-            syncProgress = 1.0
-        }
     }
 }
 
@@ -346,7 +352,7 @@ struct MotionEventRow: View {
     
     private var timeString: String {
         let formatter = DateFormatter()
-        formatter.timeStyle = .short
+        formatter.timeStyle = .medium
         return formatter.string(from: event.timestamp)
     }
     

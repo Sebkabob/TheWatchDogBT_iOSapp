@@ -202,13 +202,27 @@ class BluetoothManager: NSObject, ObservableObject {
             return
         }
         
-        peripheral.writeValue(data, for: characteristic, type: .withResponse)
+        // Get current date/time
+        let now = Date()
+        let calendar = Calendar.current
+        let components = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: now)
         
-        let hexString = data.map { String(format: "%02X", $0) }.joined(separator: " ")
+        // Create packet: [original_data] + [year_offset] + [month] + [day] + [hour] + [minute] + [second]
+        var packet = data
+        packet.append(UInt8((components.year ?? 2025) - 2000))  // Year offset from 2000
+        packet.append(UInt8(components.month ?? 1))
+        packet.append(UInt8(components.day ?? 1))
+        packet.append(UInt8(components.hour ?? 0))
+        packet.append(UInt8(components.minute ?? 0))
+        packet.append(UInt8(components.second ?? 0))
+        
+        peripheral.writeValue(packet, for: characteristic, type: .withResponse)
+        
+        let hexString = packet.map { String(format: "%02X", $0) }.joined(separator: " ")
         DispatchQueue.main.async {
-            self.lastSentData = "0x\(hexString) (\(data.count) bytes)"
+            self.lastSentData = "0x\(hexString) (\(packet.count) bytes)"
         }
-        print("📤 Sent: 0x\(hexString) (\(data.count) bytes)")
+        print("📤 Sent: 0x\(hexString) (\(packet.count) bytes)")
     }
     
     func sendSettings() {
@@ -345,8 +359,15 @@ class BluetoothManager: NSObject, ObservableObject {
                 self.requestEvent(atIndex: nextIndex)
             }
         } else {
-            // All events received
+            // All events received - AUTO-CLEAR firmware log
             print("✅ All motion events synced!")
+            
+            // Clear the firmware log after successful sync
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                print("🧹 Clearing firmware motion log...")
+                self.clearMotionLogs()
+            }
+            
             DispatchQueue.main.async {
                 self.isSyncingMotionLogs = false
                 self.syncProgress = 1.0
@@ -372,7 +393,6 @@ class BluetoothManager: NSObject, ObservableObject {
         print("✅ Motion logs cleared on WatchDog")
         
         DispatchQueue.main.async {
-            self.isSyncingMotionLogs = false
             self.syncProgress = 0.0
             self.expectedEventCount = 0
             self.receivedEventCount = 0
@@ -522,7 +542,7 @@ extension BluetoothManager: CBCentralManagerDelegate {
             print("🔍 Discovering services...")
             peripheral.discoverServices([self.targetServiceUUID])
         }
-    }a
+    }
     
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         if let error = error {
@@ -646,8 +666,17 @@ extension BluetoothManager: CBPeripheralDelegate {
         
         print("📦 Received \(data.count) bytes: \(data.map { String(format: "%02X", $0) }.joined(separator: " "))")
         
-        // Check if this is a motion log response
-        if data.count > 0 {
+        // Check for motion alert (0xFF marker)
+        if data.count >= 1 && data[0] == 0xFF {
+            print("🚨 Motion alert received - auto-syncing...")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                self.requestMotionLogCount()
+            }
+            return
+        }
+        
+        // Check if this is a motion log response (needs at least 3 bytes for type + data)
+        if data.count >= 3 {
             let responseType = data[0]
             
             switch responseType {
@@ -672,7 +701,7 @@ extension BluetoothManager: CBPeripheralDelegate {
             }
         }
         
-        // Handle regular state/battery data
+        // Handle regular state/battery data (2 bytes)
         if data.count >= 1 {
             let settingsByte = data[0]
             

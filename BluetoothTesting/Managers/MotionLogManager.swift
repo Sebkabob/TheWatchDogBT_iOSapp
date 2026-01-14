@@ -40,6 +40,18 @@ class MotionLogManager: ObservableObject {
         print("🗑️ Cleared all motion events")
     }
     
+    func deleteEvents(for date: Date) {
+        let calendar = Calendar.current
+        let dayStart = calendar.startOfDay(for: date)
+        
+        motionEvents.removeAll { event in
+            calendar.isDate(event.timestamp, inSameDayAs: dayStart)
+        }
+        
+        saveMotionEvents()
+        print("🗑️ Deleted events for \(dayStart)")
+    }
+    
     func clearEventsForDate(_ date: Date) {
         let calendar = Calendar.current
         motionEvents.removeAll { event in
