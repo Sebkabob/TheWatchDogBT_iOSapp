@@ -10,18 +10,11 @@ import SwiftUI
 struct MotionLogsView: View {
     @Environment(\.dismiss) var dismiss
     @ObservedObject private var motionLogManager = MotionLogManager.shared
-    var bluetoothManager: BluetoothManager
     @State private var selectedDate: Date
-    @State private var isSyncing = false
-    @State private var syncProgress: Float = 0.0
-    @State private var showClearDayConfirmation = false
-    @State private var showClearAllConfirmation = false
     
-    init(bluetoothManager: BluetoothManager) {
-        self.bluetoothManager = bluetoothManager
-        // Initialize with most recent event date or today
-        let mostRecentDate = MotionLogManager.shared.getMostRecentEventDate() ?? Date()
-        _selectedDate = State(initialValue: mostRecentDate)
+    init() {
+        // Initialize with today's date
+        _selectedDate = State(initialValue: Date())
     }
     
     private var filteredEvents: [MotionEvent] {
@@ -83,29 +76,11 @@ struct MotionLogsView: View {
         .navigationTitle("Motion Logs")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
-                if isSyncing {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                        Text("Syncing...")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-            
             ToolbarItem(placement: .navigationBarTrailing) {
                 if !motionLogManager.motionEvents.isEmpty {
                     Menu {
                         Button(role: .destructive, action: {
-                            showClearDayConfirmation = true
-                        }) {
-                            Label("Clear Today's Events", systemImage: "calendar.badge.minus")
-                        }
-                        
-                        Button(role: .destructive, action: {
-                            showClearAllConfirmation = true
+                            motionLogManager.clearAllEvents()
                         }) {
                             Label("Clear All Events", systemImage: "trash")
                         }
@@ -114,35 +89,6 @@ struct MotionLogsView: View {
                     }
                 }
             }
-        }
-        .onAppear {
-            // Auto-sync when view appears
-            if bluetoothManager.connectedDevice != nil {
-                print("🔄 Auto-syncing motion logs on view appear...")
-                bluetoothManager.requestMotionLogCount()
-            }
-        }
-        .onReceive(bluetoothManager.$isSyncingMotionLogs) { syncing in
-            isSyncing = syncing
-        }
-        .onReceive(bluetoothManager.$syncProgress) { progress in
-            syncProgress = progress
-        }
-        .alert("Clear Today's Events?", isPresented: $showClearDayConfirmation) {
-            Button("Cancel", role: .cancel) { }
-            Button("Delete", role: .destructive) {
-                motionLogManager.deleteEvents(for: selectedDate)
-            }
-        } message: {
-            Text("Are you sure you want to delete today's motion logs? This data cannot be recovered.")
-        }
-        .alert("Clear All Events?", isPresented: $showClearAllConfirmation) {
-            Button("Cancel", role: .cancel) { }
-            Button("Delete All", role: .destructive) {
-                motionLogManager.clearAllEvents()
-            }
-        } message: {
-            Text("Are you sure you want to delete all motion logs? This data cannot be recovered.")
         }
     }
     
@@ -231,7 +177,7 @@ struct CalendarView: View {
             
             // Calendar grid
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 7), spacing: 8) {
-                ForEach(Array(getDaysInMonth().enumerated()), id: \.offset) { index, date in
+                ForEach(getDaysInMonth(), id: \.self) { date in
                     if let date = date {
                         DayCell(
                             date: date,
@@ -352,7 +298,7 @@ struct MotionEventRow: View {
     
     private var timeString: String {
         let formatter = DateFormatter()
-        formatter.timeStyle = .medium
+        formatter.timeStyle = .short
         return formatter.string(from: event.timestamp)
     }
     
@@ -408,6 +354,6 @@ struct MotionEventRow: View {
 
 #Preview {
     NavigationView {
-        MotionLogsView(bluetoothManager: BluetoothManager())
+        MotionLogsView()
     }
 }

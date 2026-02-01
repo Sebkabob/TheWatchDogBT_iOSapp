@@ -16,8 +16,13 @@ class BondManager: ObservableObject {
     private let bondsKey = "watchdog_bonded_devices"
     private let nameManager = DeviceNameManager.shared
     
+    // Timer to check for stale devices
+    private var staleCheckTimer: Timer?
+    private let staleTimeout: TimeInterval = 3.0  // 3 seconds
+    
     private init() {
         loadBonds()
+        startStaleDeviceCheck()
     }
     
     // MARK: - Bond Management
@@ -66,12 +71,14 @@ class BondManager: ObservableObject {
     func clearRSSI(deviceID: UUID) {
         if let index = bondedDevices.firstIndex(where: { $0.id == deviceID }) {
             bondedDevices[index].currentRSSI = nil
+            bondedDevices[index].lastSeen = nil
         }
     }
     
     func clearAllRSSI() {
         for index in bondedDevices.indices {
             bondedDevices[index].currentRSSI = nil
+            bondedDevices[index].lastSeen = nil
         }
     }
     
@@ -87,6 +94,46 @@ class BondManager: ObservableObject {
     func getDisplayName(deviceID: UUID) -> String? {
         guard let bond = getBond(deviceID: deviceID) else { return nil }
         return nameManager.getDisplayName(deviceID: deviceID, advertisingName: bond.name)
+    }
+    
+    // MARK: - Stale Device Check
+    
+    private func startStaleDeviceCheck() {
+        // Check every second for devices that haven't been seen in 3 seconds
+        staleCheckTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.checkForStaleDevices()
+        }
+        print("🔄 Started stale device check timer")
+    }
+    
+    private func checkForStaleDevices() {
+        let now = Date()
+        var needsUpdate = false
+        
+        for index in bondedDevices.indices {
+            // If device has RSSI and lastSeen, check if it's stale
+            if bondedDevices[index].currentRSSI != nil,
+               let lastSeen = bondedDevices[index].lastSeen {
+                let timeSinceLastSeen = now.timeIntervalSince(lastSeen)
+                
+                // Clear RSSI if not seen in 3 seconds
+                if timeSinceLastSeen > staleTimeout {
+                    print("🕐 Device went out of range: \(bondedDevices[index].name) (last seen \(String(format: "%.1f", timeSinceLastSeen))s ago)")
+                    bondedDevices[index].currentRSSI = nil
+                    bondedDevices[index].lastSeen = nil
+                    needsUpdate = true
+                }
+            }
+        }
+        
+        // Force UI update if any devices became stale
+        if needsUpdate {
+            objectWillChange.send()
+        }
+    }
+    
+    deinit {
+        staleCheckTimer?.invalidate()
     }
     
     // MARK: - Persistence

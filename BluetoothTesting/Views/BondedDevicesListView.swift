@@ -15,6 +15,8 @@ struct BondedDevicesListView: View {
     @State private var showAddDevice = false
     @State private var deviceToDelete: BondedDevice?
     @State private var showDeleteConfirmation = false
+    @State private var refreshTimer: Timer?
+    @State private var refreshTrigger = false
     
     var body: some View {
         NavigationView {
@@ -53,6 +55,7 @@ struct BondedDevicesListView: View {
                     }
                 } else {
                     // Device list - sort by display name
+                    // Force refresh by using refreshTrigger in the id
                     List {
                         ForEach(bondManager.bondedDevices.sorted(by: { device1, device2 in
                             let name1 = nameManager.getDisplayName(deviceID: device1.id, advertisingName: device1.name)
@@ -68,6 +71,7 @@ struct BondedDevicesListView: View {
                                     connectToDevice(device)
                                 }
                             )
+                            .id("\(device.id)-\(device.currentRSSI ?? -999)-\(refreshTrigger)")
                         }
                         .onDelete { indexSet in
                             deleteDevices(at: indexSet)
@@ -94,9 +98,15 @@ struct BondedDevicesListView: View {
             .onAppear {
                 // Start background scanning to update RSSI
                 bluetoothManager.startBackgroundScanning()
+                
+                // Start refresh timer
+                startRefreshTimer()
             }
             .onDisappear {
                 bluetoothManager.stopBackgroundScanning()
+                
+                // Stop refresh timer
+                stopRefreshTimer()
             }
             .onChange(of: bluetoothManager.isBluetoothReady) { newValue in
                 if newValue && !bluetoothManager.isScanning {
@@ -121,6 +131,21 @@ struct BondedDevicesListView: View {
             }
         }
         .navigationViewStyle(StackNavigationViewStyle())
+    }
+    
+    private func startRefreshTimer() {
+        // Schedule timer to refresh UI every second
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+            // Toggle refresh trigger to force view updates
+            refreshTrigger.toggle()
+        }
+        print("🔄 Started refresh timer for bonded devices list")
+    }
+    
+    private func stopRefreshTimer() {
+        refreshTimer?.invalidate()
+        refreshTimer = nil
+        print("🛑 Stopped refresh timer for bonded devices list")
     }
     
     private func deleteDevices(at offsets: IndexSet) {

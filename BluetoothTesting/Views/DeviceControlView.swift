@@ -115,7 +115,7 @@ struct DeviceControlView: View {
                     }
                     
                     // Motion Logs button (right, light gray)
-                    NavigationLink(destination: MotionLogsView(bluetoothManager: bluetoothManager)) {
+                    NavigationLink(destination: MotionLogsView()) {
                         HStack {
                             Image(systemName: "exclamationmark.triangle")
                             Text("Motion Logs")
@@ -140,7 +140,7 @@ struct DeviceControlView: View {
             isLocked = settingsManager.isArmed
             print("🎬 View appeared - initial state: isLocked=\(isLocked)")
         }
-        .onChange(of: settingsManager.isArmed) { oldValue, newIsArmed in
+        .onChange(of: settingsManager.isArmed) { newIsArmed in
             if isLocked != newIsArmed {
                 isLocked = newIsArmed
             }
@@ -199,24 +199,33 @@ struct DeviceControlView: View {
     
     private var batteryIcon: String {
         let level = bluetoothManager.batteryLevel
-        let charge = bluetoothManager.isCharging
         
-        if charge {return "battery.100percent.bolt"}
-        if level >= 80 { return "battery.100" }
+        // Show charging bolt icon if charging
+        if bluetoothManager.isCharging {
+            return "battery.100.bolt"
+        }
+        
+        if level == 100 { return "battery.100" }
+        if level >= 90 { return "battery.100" }
+        if level >= 75 { return "battery.75" }
         if level >= 60 { return "battery.75" }
-        if level >= 30 { return "battery.50" }
+        if level >= 50 { return "battery.50" }
+        if level >= 40 { return "battery.50" }
+        if level >= 25 { return "battery.25" }
         if level >= 10 { return "battery.25" }
         if level > 0 { return "battery.0" }
         return "battery.0"
     }
 
     private var batteryColor: Color {
+        // Show green when charging, otherwise color based on level
+        if bluetoothManager.isCharging {
+            return .green
+        }
+        
         let level = bluetoothManager.batteryLevel
-        let charge = bluetoothManager.isCharging
-        if charge {return .green}
-        if level >= 20 { return .white }
-        if level >= 20 { return .orange }
-        if level < 20 { return .red }
+        if level >= 20 { return .green }
+        if level >= 10 { return .orange }
         return .red
     }
 }
