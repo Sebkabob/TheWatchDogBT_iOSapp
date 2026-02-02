@@ -18,11 +18,12 @@ class BluetoothManager: NSObject, ObservableObject {
     @Published var hasReceivedInitialState = false
     @Published var batteryLevel: Int = -1
     @Published var isCharging: Bool = false
-    @Published var wasDisconnectIntentional: Bool = false
     
-    // EXPOSE these so views can check scan mode
-    @Published var isBackgroundScanning = false
-    @Published var isFastScanning = false
+    // Debug data
+    @Published var debugCurrentDraw: Double = 0.0  // mA
+    @Published var debugVoltage: Double = 0.0      // V
+    @Published var connectionStartTime: Date?
+    @Published var connectionDuration: TimeInterval = 0
     
     private let settingsManager = SettingsManager.shared
     
@@ -33,7 +34,7 @@ class BluetoothManager: NSObject, ObservableObject {
     private let targetServiceUUID = CBUUID(string: "183E")
     
     private var lastRSSIUpdate: [UUID: Date] = [:]
-    private var rssiUpdateInterval: TimeInterval = 1.0
+    private let rssiUpdateInterval: TimeInterval = 1.0
     
     private let deviceTimeout: TimeInterval = 5.0
     private var staleDeviceTimer: Timer?
@@ -41,9 +42,14 @@ class BluetoothManager: NSObject, ObservableObject {
     private var connectionTimer: Timer?
     private let connectionTimeout: TimeInterval = 30.0
     
+    private var connectionDurationTimer: Timer?
+    
     // Track if we're in the middle of connecting to prevent duplicate attempts
     private var isConnecting = false
     private var pendingConnectionDevice: UUID?
+    
+    // Background scanning for bonded devices list
+    private var isBackgroundScanning = false
     
     // Flag to track if we should start scanning once Bluetooth is ready
     private var shouldStartScanningWhenReady = false
@@ -57,6 +63,9 @@ class BluetoothManager: NSObject, ObservableObject {
         } else {
             return "Unlocked"
         }
+        
+        // You can add alarm detection logic later if needed
+        // For now, just check the armed bit
     }
     
     override init() {
@@ -79,16 +88,10 @@ class BluetoothManager: NSObject, ObservableObject {
             centralManager.stopScan()
         }
         
-        // Don't clear discovered devices when fast scanning - we need them for auto-reconnect
-        if !isFastScanning {
-            DispatchQueue.main.async {
-                self.discoveredDevices.removeAll()
-            }
-            lastRSSIUpdate.removeAll()
+        DispatchQueue.main.async {
+            self.discoveredDevices.removeAll()
         }
-        
-        // Determine RSSI update interval based on scanning mode
-        rssiUpdateInterval = isFastScanning ? 0.5 : 1.0
+        lastRSSIUpdate.removeAll()
         
         // Scan with longer timeout and allow duplicates for RSSI updates
         centralManager.scanForPeripherals(
@@ -103,11 +106,10 @@ class BluetoothManager: NSObject, ObservableObject {
             self.isScanning = true
         }
         
-        print("✅ Started scanning for 0x183E devices (interval: \(rssiUpdateInterval)s)")
+        print("✅ Started scanning for 0x183E devices")
         
         // Schedule stale device timer on main thread
         DispatchQueue.main.async {
-            self.staleDeviceTimer?.invalidate()
             self.staleDeviceTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
                 self?.removeStaleDevices()
             }
@@ -120,8 +122,8 @@ class BluetoothManager: NSObject, ObservableObject {
             self.isScanning = false
             
             // Clear RSSI for bonded devices when we stop scanning
-            // unless we're in background or fast scanning mode
-            if !self.isBackgroundScanning && !self.isFastScanning {
+            // unless we're in background scanning mode
+            if !self.isBackgroundScanning {
                 BondManager.shared.clearAllRSSI()
             }
             
@@ -143,7 +145,10 @@ class BluetoothManager: NSObject, ObservableObject {
         
         print("🔌 Connecting to: \(device.name) [\(device.id.uuidString.prefix(8))]")
         
-        // Don't stop scanning during fast scanning mode - let the view handle it
+        // Stop scanning to improve connection reliability
+        if isScanning {
+            stopScanning()
+        }
         
         // Connect with specific options for better reliability
         let options: [String: Any] = [
@@ -167,13 +172,8 @@ class BluetoothManager: NSObject, ObservableObject {
         }
     }
     
-    func disconnect(from device: BluetoothDevice, intentional: Bool = false) {
-        print("🔌 Disconnecting from: \(device.name) (intentional: \(intentional))")
-        
-        DispatchQueue.main.async {
-            self.wasDisconnectIntentional = intentional
-        }
-        
+    func disconnect(from device: BluetoothDevice) {
+        print("🔌 Disconnecting from: \(device.name)")
         centralManager.cancelPeripheralConnection(device.peripheral)
         
         // Clean up timers on main thread
@@ -183,6 +183,10 @@ class BluetoothManager: NSObject, ObservableObject {
             self.isConnecting = false
             self.pendingConnectionDevice = nil
             
+            // Stop connection duration timer
+            self.connectionDurationTimer?.invalidate()
+            self.connectionDurationTimer = nil
+            
             // Reset state
             self.connectedDevice = nil
             self.writeCharacteristic = nil
@@ -190,8 +194,12 @@ class BluetoothManager: NSObject, ObservableObject {
             self.lastSentData = ""
             self.deviceState = 0
             self.hasReceivedInitialState = false
-            // Keep battery level for display when disconnected
+            self.batteryLevel = -1
             self.isCharging = false
+            self.debugCurrentDraw = 0.0
+            self.debugVoltage = 0.0
+            self.connectionStartTime = nil
+            self.connectionDuration = 0
         }
     }
     
@@ -226,40 +234,17 @@ class BluetoothManager: NSObject, ObservableObject {
             return
         }
         
-        print("🔍 Starting background scanning for bonded devices")
         isBackgroundScanning = true
-        isFastScanning = false
         startScanning()
+        print("🔍 Started background scanning for bonded devices")
     }
     
     func stopBackgroundScanning() {
         guard isBackgroundScanning else { return }
         
-        print("🛑 Stopping background scanning")
         isBackgroundScanning = false
         stopScanning()
-    }
-    
-    // MARK: - Fast Scanning for Device Control View
-    
-    func startFastScanning() {
-        guard !isFastScanning else {
-            print("⚠️ Fast scanning already active")
-            return
-        }
-        
-        print("⚡ Starting fast scanning for device control view (500ms interval)")
-        isFastScanning = true
-        isBackgroundScanning = false
-        startScanning()
-    }
-    
-    func stopFastScanning() {
-        guard isFastScanning else { return }
-        
-        print("🛑 Stopping fast scanning")
-        isFastScanning = false
-        stopScanning()
+        print("🛑 Stopped background scanning")
     }
     
     private func removeStaleDevices() {
@@ -275,6 +260,18 @@ class BluetoothManager: NSObject, ObservableObject {
                     self.lastRSSIUpdate.removeValue(forKey: device.id)
                 }
                 return isStale
+            }
+        }
+    }
+    
+    private func startConnectionDurationTimer() {
+        DispatchQueue.main.async {
+            self.connectionStartTime = Date()
+            self.connectionDuration = 0
+            
+            self.connectionDurationTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+                guard let self = self, let startTime = self.connectionStartTime else { return }
+                self.connectionDuration = Date().timeIntervalSince(startTime)
             }
         }
     }
@@ -365,6 +362,9 @@ extension BluetoothManager: CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         print("✅ Connected to: \(peripheral.name ?? "Unknown") [\(peripheral.identifier.uuidString.prefix(8))]")
         
+        // Start connection duration timer
+        startConnectionDurationTimer()
+        
         // Clear connection timer on main thread
         DispatchQueue.main.async {
             self.connectionTimer?.invalidate()
@@ -376,7 +376,7 @@ extension BluetoothManager: CBCentralManagerDelegate {
                 // Keep the discovered name, just update connection status
                 self.discoveredDevices[index] = BluetoothDevice(
                     id: peripheral.identifier,
-                    name: self.discoveredDevices[index].name,
+                    name: self.discoveredDevices[index].name,  // PRESERVE THE DISCOVERED NAME
                     peripheral: peripheral,
                     rssi: self.discoveredDevices[index].rssi,
                     isConnected: true
@@ -384,6 +384,8 @@ extension BluetoothManager: CBCentralManagerDelegate {
                 self.connectedDevice = self.discoveredDevices[index]
             }
         }
+        
+        // Don't stop scanning here - let the view handle it
         
         peripheral.delegate = self
         
@@ -397,13 +399,8 @@ extension BluetoothManager: CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         if let error = error {
             print("❌ Disconnected from: \(peripheral.name ?? "Unknown") - Error: \(error.localizedDescription)")
-            // This was an unintentional disconnect (error/timeout occurred)
-            DispatchQueue.main.async {
-                self.wasDisconnectIntentional = false
-            }
         } else {
             print("🔌 Disconnected from: \(peripheral.name ?? "Unknown")")
-            // Keep wasDisconnectIntentional as is - it was set by disconnect() if intentional
         }
         
         DispatchQueue.main.async {
@@ -417,10 +414,17 @@ extension BluetoothManager: CBCentralManagerDelegate {
             self.lastSentData = ""
             self.deviceState = 0
             self.hasReceivedInitialState = false
-            // Don't reset battery level - keep last known value
+            self.batteryLevel = -1
             self.isCharging = false
             self.isConnecting = false
             self.pendingConnectionDevice = nil
+            self.debugCurrentDraw = 0.0
+            self.debugVoltage = 0.0
+            self.connectionStartTime = nil
+            self.connectionDuration = 0
+            
+            self.connectionDurationTimer?.invalidate()
+            self.connectionDurationTimer = nil
         }
     }
     
@@ -519,7 +523,7 @@ extension BluetoothManager: CBPeripheralDelegate {
         // Debug: print all received bytes
         print("📦 Received \(data.count) bytes: \(data.map { String(format: "%02X", $0) }.joined(separator: " "))")
         
-        // We expect 2 bytes: [settings, battery]
+        // Parse based on packet length
         if data.count >= 1 {
             let settingsByte = data[0]
             
@@ -550,8 +554,28 @@ extension BluetoothManager: CBPeripheralDelegate {
                 self.isCharging = charging
                 print("🔋 Battery level: \(battery)% \(charging ? "(Charging)" : "")")
             }
-        } else {
-            print("⚠️ Only received \(data.count) byte(s), expected 2 for battery")
+        }
+        
+        // Read debug data if available (bytes 2-5: current + voltage)
+        if data.count >= 6 {
+            // Bytes 2-3: Current in mA (little-endian, SIGNED)
+            let currentLow = UInt16(data[2])
+            let currentHigh = UInt16(data[3])
+            let currentRaw = currentLow | (currentHigh << 8)
+            // Reinterpret as signed int16 (negative = charging, positive = discharging)
+            let current = Double(Int16(bitPattern: currentRaw))
+            
+            // Bytes 4-5: Voltage in mV (little-endian)
+            let voltageLow = UInt16(data[4])
+            let voltageHigh = UInt16(data[5])
+            let voltageRaw = voltageLow | (voltageHigh << 8)
+            let voltage = Double(voltageRaw) / 1000.0  // Convert mV to V
+            
+            DispatchQueue.main.async {
+                self.debugCurrentDraw = current
+                self.debugVoltage = voltage
+                print("🔧 Debug - Current: \(current)mA, Voltage: \(voltage)V")
+            }
         }
     }
     

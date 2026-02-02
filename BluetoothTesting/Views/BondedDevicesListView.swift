@@ -19,6 +19,15 @@ struct BondedDevicesListView: View {
     @State private var navigationPath = NavigationPath()
     @State private var connectingDeviceID: UUID?
     
+    // Helper to get sorted devices
+    private var sortedDevices: [BondedDevice] {
+        bondManager.bondedDevices.sorted { device1, device2 in
+            let name1 = nameManager.getDisplayName(deviceID: device1.id, advertisingName: device1.name)
+            let name2 = nameManager.getDisplayName(deviceID: device2.id, advertisingName: device2.name)
+            return name1 < name2
+        }
+    }
+    
     var body: some View {
         NavigationStack(path: $navigationPath) {
             ZStack {
@@ -57,11 +66,7 @@ struct BondedDevicesListView: View {
                 } else {
                     // Device list - sort by display name
                     List {
-                        ForEach(bondManager.bondedDevices.sorted(by: { device1, device2 in
-                            let name1 = nameManager.getDisplayName(deviceID: device1.id, advertisingName: device1.name)
-                            let name2 = nameManager.getDisplayName(deviceID: device2.id, advertisingName: device2.name)
-                            return name1 < name2
-                        })) { device in
+                        ForEach(sortedDevices) { device in
                             Button(action: {
                                 handleDeviceTap(device)
                             }) {
@@ -103,7 +108,7 @@ struct BondedDevicesListView: View {
                 }
             }
             .navigationDestination(for: UUID.self) { deviceID in
-                DeviceControlView(bluetoothManager: bluetoothManager, deviceID: deviceID)
+                DeviceControlView(bluetoothManager: bluetoothManager)
             }
             .navigationTitle("My WatchDogs")
             .navigationBarTitleDisplayMode(.inline)
@@ -122,34 +127,28 @@ struct BondedDevicesListView: View {
             }
             .onAppear {
                 print("🏠 BondedDevicesListView: View appeared")
-                // Only start background scanning if NOT already fast scanning
-                if !bluetoothManager.isFastScanning {
+                // Start background scanning
+                if !bluetoothManager.isScanning {
                     print("🔍 BondedDevicesListView: Starting background scan")
                     bluetoothManager.startBackgroundScanning()
-                } else {
-                    print("⚡ BondedDevicesListView: Fast scan already active, not starting background scan")
                 }
             }
             .onDisappear {
                 print("👋 BondedDevicesListView: View disappeared")
-                // Only stop background scanning if we're actually in background mode
-                if bluetoothManager.isBackgroundScanning {
-                    print("🛑 BondedDevicesListView: Stopping background scan")
-                    bluetoothManager.stopBackgroundScanning()
-                }
+                bluetoothManager.stopBackgroundScanning()
             }
-            .onChange(of: bluetoothManager.isBluetoothReady) {
-                print("🔵 BondedDevicesListView: Bluetooth ready changed to \(bluetoothManager.isBluetoothReady)")
-                if bluetoothManager.isBluetoothReady && !bluetoothManager.isScanning && !bluetoothManager.isFastScanning {
+            .onChange(of: bluetoothManager.isBluetoothReady) { newValue in
+                print("🔵 BondedDevicesListView: Bluetooth ready changed to \(newValue)")
+                if newValue && !bluetoothManager.isScanning {
                     print("🔍 BondedDevicesListView: Bluetooth ready - starting background scan")
                     bluetoothManager.startBackgroundScanning()
                 }
             }
-            .onChange(of: bluetoothManager.hasReceivedInitialState) {
+            .onChange(of: bluetoothManager.hasReceivedInitialState) { newValue in
                 // Navigate to device control view once we have initial state
                 if let deviceID = connectingDeviceID,
                    bluetoothManager.connectedDevice?.id == deviceID,
-                   bluetoothManager.hasReceivedInitialState {
+                   newValue {
                     print("✅ BondedDevicesListView: Got initial state, navigating to device view")
                     navigationPath.append(deviceID)
                     connectingDeviceID = nil
@@ -216,12 +215,6 @@ struct BondedDevicesListView: View {
     }
     
     private func deleteDevices(at offsets: IndexSet) {
-        let sortedDevices = bondManager.bondedDevices.sorted(by: { device1, device2 in
-            let name1 = nameManager.getDisplayName(deviceID: device1.id, advertisingName: device1.name)
-            let name2 = nameManager.getDisplayName(deviceID: device2.id, advertisingName: device2.name)
-            return name1 < name2
-        })
-        
         for index in offsets {
             deviceToDelete = sortedDevices[index]
             showDeleteConfirmation = true
@@ -235,7 +228,7 @@ struct BondedDevicesListView: View {
         // Disconnect if currently connected
         if bluetoothManager.connectedDevice?.id == device.id,
            let connectedDevice = bluetoothManager.connectedDevice {
-            bluetoothManager.disconnect(from: connectedDevice, intentional: true)
+            bluetoothManager.disconnect(from: connectedDevice)
         }
         
         // Remove bond (custom name and icon persist intentionally)

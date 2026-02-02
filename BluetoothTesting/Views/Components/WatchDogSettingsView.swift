@@ -23,6 +23,7 @@ struct WatchDogSettingsView: View {
     @State private var lightsEnabled: Bool = true
     @State private var loggingEnabled: Bool = false
     @State private var disableAlarmWhenConnected: Bool = false
+    @State private var debugModeEnabled: Bool = false
     
     // Forget device confirmation
     @State private var showForgetConfirmation = false
@@ -124,6 +125,22 @@ struct WatchDogSettingsView: View {
                         }
                     }
                     
+                    // Debug Mode Section
+                    Section(header: Text("Advanced")) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Debug Mode")
+                                    .font(.body)
+                                Text("Show technical diagnostics")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Toggle("", isOn: $debugModeEnabled)
+                                .labelsHidden()
+                        }
+                    }
+                    
                     // Forget Device Section
                     Section {
                         Button(action: {
@@ -209,6 +226,7 @@ struct WatchDogSettingsView: View {
         lightsEnabled = settingsManager.lightsEnabled
         loggingEnabled = settingsManager.loggingEnabled
         disableAlarmWhenConnected = settingsManager.disableAlarmWhenConnected
+        debugModeEnabled = settingsManager.debugModeEnabled
     }
     
     private func applySettings() {
@@ -234,7 +252,8 @@ struct WatchDogSettingsView: View {
             sens: sensitivity,
             lights: lightsEnabled,
             logging: loggingEnabled,
-            disableAlarmConnected: disableAlarmWhenConnected
+            disableAlarmConnected: disableAlarmWhenConnected,
+            debugMode: debugModeEnabled
         )
         
         // Send settings byte to WatchDog (armed state stays the same)
@@ -248,6 +267,7 @@ struct WatchDogSettingsView: View {
         print("  Lights: \(lightsEnabled ? "On" : "Off")")
         print("  Logging: \(loggingEnabled ? "On" : "Off")")
         print("  Disable Alarm When Connected: \(disableAlarmWhenConnected ? "Yes" : "No")")
+        print("  Debug Mode: \(debugModeEnabled ? "On" : "Off")")
         
         // Dismiss after applying
         dismiss()
