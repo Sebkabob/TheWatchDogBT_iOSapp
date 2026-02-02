@@ -108,7 +108,7 @@ struct DeviceControlView: View {
                             
                             // Voltage row with graph below
                             VStack(alignment: .leading, spacing: 2) {
-                                DebugInfoRow(label: "V", value: String(format: "%.2fV", bluetoothManager.debugVoltage))
+                                DebugInfoRow(label: "V", value: String(format: "%.3fV", bluetoothManager.debugVoltage))
                                 VoltageGraph(history: voltageHistory)
                                     .frame(height: 35)
                             }
@@ -273,13 +273,9 @@ struct DeviceControlView: View {
     private var batteryIcon: String {
         let level = bluetoothManager.batteryLevel
         
-        if level == 100 { return "battery.100" }
         if level >= 90 { return "battery.100" }
-        if level >= 75 { return "battery.75" }
         if level >= 60 { return "battery.75" }
-        if level >= 50 { return "battery.50" }
         if level >= 40 { return "battery.50" }
-        if level >= 25 { return "battery.25" }
         if level >= 10 { return "battery.25" }
         if level > 0 { return "battery.0" }
         return "battery.0"
