@@ -75,9 +75,9 @@ struct DeviceScanView: View {
                 }
             }
         }
-        .onChange(of: bluetoothManager.isBluetoothReady) { newValue in
-            print("🔵 Bluetooth ready changed to: \(newValue)")
-            if newValue && !bluetoothManager.isScanning {
+        .onChange(of: bluetoothManager.isBluetoothReady) {
+            print("🔵 Bluetooth ready changed to: \(bluetoothManager.isBluetoothReady)")
+            if bluetoothManager.isBluetoothReady && !bluetoothManager.isScanning {
                 print("🔵 Starting scan because Bluetooth became ready")
                 bluetoothManager.startScanning()
             }

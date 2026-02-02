@@ -15,11 +15,12 @@ struct BondedDevicesListView: View {
     @State private var showAddDevice = false
     @State private var deviceToDelete: BondedDevice?
     @State private var showDeleteConfirmation = false
-    @State private var refreshTimer: Timer?
-    @State private var refreshTrigger = false
+    @State private var isRefreshing = false
+    @State private var navigationPath = NavigationPath()
+    @State private var connectingDeviceID: UUID?
     
     var body: some View {
-        NavigationView {
+        NavigationStack(path: $navigationPath) {
             ZStack {
                 if bondManager.bondedDevices.isEmpty {
                     // Empty state
@@ -55,30 +56,54 @@ struct BondedDevicesListView: View {
                     }
                 } else {
                     // Device list - sort by display name
-                    // Force refresh by using refreshTrigger in the id
                     List {
                         ForEach(bondManager.bondedDevices.sorted(by: { device1, device2 in
                             let name1 = nameManager.getDisplayName(deviceID: device1.id, advertisingName: device1.name)
                             let name2 = nameManager.getDisplayName(deviceID: device2.id, advertisingName: device2.name)
                             return name1 < name2
                         })) { device in
-                            BondedDeviceRow(
-                                device: device,
-                                displayName: nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name),
-                                displayIcon: iconManager.getDisplayIcon(deviceID: device.id),
-                                isConnected: bluetoothManager.connectedDevice?.id == device.id,
-                                onTap: {
-                                    connectToDevice(device)
-                                }
-                            )
-                            .id("\(device.id)-\(device.currentRSSI ?? -999)-\(refreshTrigger)")
+                            Button(action: {
+                                handleDeviceTap(device)
+                            }) {
+                                BondedDeviceRow(
+                                    device: device,
+                                    displayName: nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name),
+                                    displayIcon: iconManager.getDisplayIcon(deviceID: device.id),
+                                    isConnected: bluetoothManager.connectedDevice?.id == device.id
+                                )
+                            }
+                            .buttonStyle(PlainButtonStyle())
                         }
                         .onDelete { indexSet in
                             deleteDevices(at: indexSet)
                         }
                     }
                     .listStyle(.plain)
+                    .refreshable {
+                        await performRefresh()
+                    }
                 }
+                
+                // Connection overlay
+                if let deviceID = connectingDeviceID,
+                   bluetoothManager.connectedDevice?.id == deviceID && !bluetoothManager.hasReceivedInitialState {
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .scaleEffect(1.5)
+                        Text("Syncing with WatchDog...")
+                            .font(.headline)
+                        Text("Sniffing for information...")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(32)
+                    .background(Color(.systemBackground).opacity(0.95))
+                    .cornerRadius(16)
+                    .shadow(radius: 10)
+                }
+            }
+            .navigationDestination(for: UUID.self) { deviceID in
+                DeviceControlView(bluetoothManager: bluetoothManager, deviceID: deviceID)
             }
             .navigationTitle("My WatchDogs")
             .navigationBarTitleDisplayMode(.inline)
@@ -96,22 +121,38 @@ struct BondedDevicesListView: View {
                 AddNewDeviceView(bluetoothManager: bluetoothManager)
             }
             .onAppear {
-                // Start background scanning to update RSSI
-                bluetoothManager.startBackgroundScanning()
-                
-                // Start refresh timer
-                startRefreshTimer()
+                print("🏠 BondedDevicesListView: View appeared")
+                // Only start background scanning if NOT already fast scanning
+                if !bluetoothManager.isFastScanning {
+                    print("🔍 BondedDevicesListView: Starting background scan")
+                    bluetoothManager.startBackgroundScanning()
+                } else {
+                    print("⚡ BondedDevicesListView: Fast scan already active, not starting background scan")
+                }
             }
             .onDisappear {
-                bluetoothManager.stopBackgroundScanning()
-                
-                // Stop refresh timer
-                stopRefreshTimer()
+                print("👋 BondedDevicesListView: View disappeared")
+                // Only stop background scanning if we're actually in background mode
+                if bluetoothManager.isBackgroundScanning {
+                    print("🛑 BondedDevicesListView: Stopping background scan")
+                    bluetoothManager.stopBackgroundScanning()
+                }
             }
-            .onChange(of: bluetoothManager.isBluetoothReady) { newValue in
-                if newValue && !bluetoothManager.isScanning {
-                    print("🔵 Bluetooth ready - starting background scan")
+            .onChange(of: bluetoothManager.isBluetoothReady) {
+                print("🔵 BondedDevicesListView: Bluetooth ready changed to \(bluetoothManager.isBluetoothReady)")
+                if bluetoothManager.isBluetoothReady && !bluetoothManager.isScanning && !bluetoothManager.isFastScanning {
+                    print("🔍 BondedDevicesListView: Bluetooth ready - starting background scan")
                     bluetoothManager.startBackgroundScanning()
+                }
+            }
+            .onChange(of: bluetoothManager.hasReceivedInitialState) {
+                // Navigate to device control view once we have initial state
+                if let deviceID = connectingDeviceID,
+                   bluetoothManager.connectedDevice?.id == deviceID,
+                   bluetoothManager.hasReceivedInitialState {
+                    print("✅ BondedDevicesListView: Got initial state, navigating to device view")
+                    navigationPath.append(deviceID)
+                    connectingDeviceID = nil
                 }
             }
             .alert("Forget WatchDog?", isPresented: $showDeleteConfirmation) {
@@ -130,22 +171,48 @@ struct BondedDevicesListView: View {
                 }
             }
         }
-        .navigationViewStyle(StackNavigationViewStyle())
     }
     
-    private func startRefreshTimer() {
-        // Schedule timer to refresh UI every second
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            // Toggle refresh trigger to force view updates
-            refreshTrigger.toggle()
+    private func handleDeviceTap(_ device: BondedDevice) {
+        let isConnected = bluetoothManager.connectedDevice?.id == device.id
+        
+        if isConnected && bluetoothManager.hasReceivedInitialState {
+            // Already connected and synced - navigate immediately
+            print("➡️ BondedDevicesListView: Device already connected, navigating")
+            navigationPath.append(device.id)
+        } else if isConnected && !bluetoothManager.hasReceivedInitialState {
+            // Connected but waiting for state - show overlay
+            print("⏳ BondedDevicesListView: Device connected, waiting for state")
+            connectingDeviceID = device.id
+        } else {
+            // Not connected - try to connect
+            if let discoveredDevice = bluetoothManager.discoveredDevices.first(where: { $0.id == device.id }) {
+                print("🔌 BondedDevicesListView: Connecting to device")
+                connectingDeviceID = device.id
+                bluetoothManager.connect(to: discoveredDevice)
+            } else {
+                // Device not in range - navigate anyway (will show disconnected state)
+                print("📵 BondedDevicesListView: Device not in range, navigating to disconnected view")
+                navigationPath.append(device.id)
+            }
         }
-        print("🔄 Started refresh timer for bonded devices list")
     }
     
-    private func stopRefreshTimer() {
-        refreshTimer?.invalidate()
-        refreshTimer = nil
-        print("🛑 Stopped refresh timer for bonded devices list")
+    private func performRefresh() async {
+        print("🔄 Pull to refresh triggered")
+        
+        // Stop and restart background scanning to force RSSI update
+        bluetoothManager.stopBackgroundScanning()
+        
+        // Small delay to ensure clean restart
+        try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+        
+        bluetoothManager.startBackgroundScanning()
+        
+        // Wait a bit for scan results
+        try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+        
+        print("✅ Refresh complete")
     }
     
     private func deleteDevices(at offsets: IndexSet) {
@@ -168,24 +235,13 @@ struct BondedDevicesListView: View {
         // Disconnect if currently connected
         if bluetoothManager.connectedDevice?.id == device.id,
            let connectedDevice = bluetoothManager.connectedDevice {
-            bluetoothManager.disconnect(from: connectedDevice)
+            bluetoothManager.disconnect(from: connectedDevice, intentional: true)
         }
         
         // Remove bond (custom name and icon persist intentionally)
         bondManager.removeBond(deviceID: device.id)
         
         deviceToDelete = nil
-    }
-    
-    private func connectToDevice(_ device: BondedDevice) {
-        // Find the peripheral in discovered devices
-        if let discoveredDevice = bluetoothManager.discoveredDevices.first(where: { $0.id == device.id }) {
-            bluetoothManager.connect(to: discoveredDevice)
-        } else {
-            let displayName = nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
-            print("⚠️ Device not in range: \(displayName)")
-            // Could show an alert here
-        }
     }
 }
 
@@ -194,7 +250,6 @@ struct BondedDeviceRow: View {
     let displayName: String
     let displayIcon: DeviceIcon
     let isConnected: Bool
-    let onTap: () -> Void
     
     @State private var isPressed = false
     
@@ -259,17 +314,10 @@ struct BondedDeviceRow: View {
         .padding(.vertical, 8)
         .contentShape(Rectangle())
         .background(isPressed ? Color.blue.opacity(0.1) : Color.clear)
-        .onTapGesture {
-            if !isConnected {
-                let generator = UIImpactFeedbackGenerator(style: .light)
-                generator.impactOccurred()
-                onTap()
-            }
-        }
         .simultaneousGesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { _ in
-                    if !isPressed && !isConnected {
+                    if !isPressed {
                         isPressed = true
                     }
                 }
