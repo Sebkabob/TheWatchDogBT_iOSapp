@@ -18,8 +18,9 @@ struct DeviceControlView: View {
     @State private var holdTimer: Timer?
     @State private var showMotionLogs = false
     
-    // Current consumption history for graph (last 10 seconds)
+    // History for graphs (last 30 seconds)
     @State private var currentHistory: [(date: Date, value: Double)] = []
+    @State private var voltageHistory: [(date: Date, value: Double)] = []
     @State private var graphUpdateTimer: Timer?
     
     private let lightHaptic = UIImpactFeedbackGenerator(style: .light)
@@ -105,15 +106,22 @@ struct DeviceControlView: View {
                             
                             Divider()
                             
-                            DebugInfoRow(label: "V", value: String(format: "%.2fV", bluetoothManager.debugVoltage))
-                            DebugInfoRow(label: "I", value: String(format: "%.0fmA", bluetoothManager.debugCurrentDraw))
+                            // Voltage row with graph below
+                            VStack(alignment: .leading, spacing: 2) {
+                                DebugInfoRow(label: "V", value: String(format: "%.2fV", bluetoothManager.debugVoltage))
+                                VoltageGraph(history: voltageHistory)
+                                    .frame(height: 35)
+                            }
+                            
+                            // Current row with graph below
+                            VStack(alignment: .leading, spacing: 2) {
+                                DebugInfoRow(label: "I", value: String(format: "%.0fmA", bluetoothManager.debugCurrentDraw))
+                                CurrentGraph(history: currentHistory)
+                                    .frame(height: 35)
+                            }
+                            
                             DebugInfoRow(label: "SOC", value: "\(bluetoothManager.batteryLevel)%")
                             DebugInfoRow(label: "Time", value: connectionTimeString)
-                            
-                            // Mini current consumption graph
-                            CurrentGraph(history: currentHistory)
-                                .frame(height: 45)
-                                .padding(.top, 4)
                         }
                         .padding(8)
                         .background(Color(.systemBackground).opacity(0.9))
@@ -204,9 +212,6 @@ struct DeviceControlView: View {
                 isLocked = newIsArmed
             }
         }
-        .onChange(of: bluetoothManager.debugCurrentDraw) { newCurrent in
-            updateCurrentHistory(newCurrent)
-        }
         .onChange(of: bluetoothManager.connectedDevice) { device in
             // Auto-dismiss if disconnected
             if device == nil {
@@ -288,8 +293,14 @@ struct DeviceControlView: View {
     }
     
     private func startGraphUpdates() {
+        // Add initial points
+        updateCurrentHistory(bluetoothManager.debugCurrentDraw)
+        updateVoltageHistory(bluetoothManager.debugVoltage)
+        
+        // Update graphs every 0.5 seconds
         graphUpdateTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-            cleanOldHistory()
+            self.updateCurrentHistory(self.bluetoothManager.debugCurrentDraw)
+            self.updateVoltageHistory(self.bluetoothManager.debugVoltage)
         }
     }
     
@@ -301,12 +312,18 @@ struct DeviceControlView: View {
     private func updateCurrentHistory(_ current: Double) {
         let now = Date()
         currentHistory.append((date: now, value: current))
-        cleanOldHistory()
+        cleanOldHistory(history: &currentHistory)
     }
     
-    private func cleanOldHistory() {
-        let cutoff = Date().addingTimeInterval(-10) // Keep last 10 seconds
-        currentHistory.removeAll { $0.date < cutoff }
+    private func updateVoltageHistory(_ voltage: Double) {
+        let now = Date()
+        voltageHistory.append((date: now, value: voltage))
+        cleanOldHistory(history: &voltageHistory)
+    }
+    
+    private func cleanOldHistory(history: inout [(date: Date, value: Double)]) {
+        let cutoff = Date().addingTimeInterval(-30) // Keep last 30 seconds
+        history.removeAll { $0.date < cutoff }
     }
 }
 
@@ -329,6 +346,79 @@ struct DebugInfoRow: View {
     }
 }
 
+struct VoltageGraph: View {
+    let history: [(date: Date, value: Double)]
+    
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let height = geometry.size.height
+            
+            // Fixed Y-axis range: 3.0V to 4.2V
+            let minY: Double = 3.0
+            let maxY: Double = 4.2
+            let rangeY = maxY - minY
+            
+            ZStack(alignment: .bottomLeading) {
+                // Background
+                Rectangle()
+                    .fill(Color(.systemGray6))
+                
+                // Grid lines
+                VStack(spacing: 0) {
+                    ForEach(0..<3) { _ in
+                        Divider()
+                            .background(Color.gray.opacity(0.3))
+                        Spacer()
+                    }
+                }
+                
+                // Graph line
+                if history.count > 1 {
+                    let now = Date()
+                    let timeRange: TimeInterval = 30 // 30 seconds
+                    
+                    Path { path in
+                        for (index, point) in history.enumerated() {
+                            // Clamp value to 3.0V - 4.2V
+                            let clampedValue = max(minY, min(maxY, point.value))
+                            
+                            let timeOffset = now.timeIntervalSince(point.date)
+                            let x = width - (CGFloat(timeOffset / timeRange) * width)
+                            let normalizedValue = (clampedValue - minY) / rangeY
+                            let y = height - (CGFloat(normalizedValue) * height)
+                            
+                            if index == 0 {
+                                path.move(to: CGPoint(x: x, y: y))
+                            } else {
+                                path.addLine(to: CGPoint(x: x, y: y))
+                            }
+                        }
+                    }
+                    .stroke(Color.purple, lineWidth: 1.5)
+                }
+                
+                // Y-axis labels
+                VStack(spacing: 0) {
+                    Text("4.2")
+                        .font(.system(size: 6))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text("3.6")
+                        .font(.system(size: 6))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text("3.0")
+                        .font(.system(size: 6))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.leading, 2)
+            }
+            .cornerRadius(4)
+        }
+    }
+}
+
 struct CurrentGraph: View {
     let history: [(date: Date, value: Double)]
     
@@ -347,7 +437,7 @@ struct CurrentGraph: View {
                 Rectangle()
                     .fill(Color(.systemGray6))
                 
-                // Grid lines (3 horizontal lines)
+                // Grid lines
                 VStack(spacing: 0) {
                     ForEach(0..<3) { _ in
                         Divider()
@@ -367,7 +457,7 @@ struct CurrentGraph: View {
                 // Graph line
                 if history.count > 1 {
                     let now = Date()
-                    let timeRange: TimeInterval = 10 // 10 seconds
+                    let timeRange: TimeInterval = 30 // 30 seconds
                     
                     Path { path in
                         for (index, point) in history.enumerated() {
@@ -389,18 +479,18 @@ struct CurrentGraph: View {
                     .stroke(lineColor, lineWidth: 1.5)
                 }
                 
-                // Y-axis labels (max, zero, min)
+                // Y-axis labels
                 VStack(spacing: 0) {
                     Text("+300")
-                        .font(.system(size: 7))
+                        .font(.system(size: 6))
                         .foregroundColor(.secondary)
                     Spacer()
                     Text("0")
-                        .font(.system(size: 7))
+                        .font(.system(size: 6))
                         .foregroundColor(.secondary)
                     Spacer()
                     Text("-300")
-                        .font(.system(size: 7))
+                        .font(.system(size: 6))
                         .foregroundColor(.secondary)
                 }
                 .padding(.leading, 2)
