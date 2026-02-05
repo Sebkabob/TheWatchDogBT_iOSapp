@@ -18,10 +18,15 @@ struct DeviceControlView: View {
     @State private var holdTimer: Timer?
     @State private var showMotionLogs = false
     
-    // History for graphs (last 30 seconds)
+    // History for graphs (last 3 minutes)
     @State private var currentHistory: [(date: Date, value: Double)] = []
     @State private var voltageHistory: [(date: Date, value: Double)] = []
+    @State private var socHistory: [(date: Date, value: Double)] = []
     @State private var graphUpdateTimer: Timer?
+    
+    // Track min/max SOC for dynamic range
+    @State private var minSOC: Double = 100.0
+    @State private var maxSOC: Double = 0.0
     
     private let lightHaptic = UIImpactFeedbackGenerator(style: .light)
     private let heavyHaptic = UIImpactFeedbackGenerator(style: .heavy)
@@ -71,6 +76,13 @@ struct DeviceControlView: View {
                 // Right: Battery indicator
                 if bluetoothManager.batteryLevel >= 0 {
                     HStack(spacing: 4) {
+                        // Show charging bolt if charging
+                        if bluetoothManager.isCharging {
+                            Image(systemName: "bolt.fill")
+                                .foregroundColor(.yellow)
+                                .font(.caption)
+                        }
+                        
                         Image(systemName: batteryIcon)
                             .foregroundColor(batteryColor)
                         Text("\(bluetoothManager.batteryLevel)%")
@@ -120,7 +132,13 @@ struct DeviceControlView: View {
                                     .frame(height: 35)
                             }
                             
-                            DebugInfoRow(label: "SOC", value: "\(bluetoothManager.batteryLevel)%")
+                            // SOC row with graph below
+                            VStack(alignment: .leading, spacing: 2) {
+                                DebugInfoRow(label: "SOC", value: "\(bluetoothManager.batteryLevel)%")
+                                SOCGraph(history: socHistory, minSOC: minSOC, maxSOC: maxSOC)
+                                    .frame(height: 35)
+                            }
+                            
                             DebugInfoRow(label: "Time", value: connectionTimeString)
                         }
                         .padding(8)
@@ -292,17 +310,23 @@ struct DeviceControlView: View {
         // Add initial points
         updateCurrentHistory(bluetoothManager.debugCurrentDraw)
         updateVoltageHistory(bluetoothManager.debugVoltage)
+        updateSOCHistory(Double(bluetoothManager.batteryLevel))
         
         // Update graphs every 0.5 seconds
         graphUpdateTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
             self.updateCurrentHistory(self.bluetoothManager.debugCurrentDraw)
             self.updateVoltageHistory(self.bluetoothManager.debugVoltage)
+            self.updateSOCHistory(Double(self.bluetoothManager.batteryLevel))
         }
     }
     
     private func stopGraphUpdates() {
         graphUpdateTimer?.invalidate()
         graphUpdateTimer = nil
+        
+        // Reset SOC min/max for next session
+        minSOC = 100.0
+        maxSOC = 0.0
     }
     
     private func updateCurrentHistory(_ current: Double) {
@@ -317,8 +341,22 @@ struct DeviceControlView: View {
         cleanOldHistory(history: &voltageHistory)
     }
     
+    private func updateSOCHistory(_ soc: Double) {
+        let now = Date()
+        socHistory.append((date: now, value: soc))
+        cleanOldHistory(history: &socHistory)
+        
+        // Update min/max SOC
+        if soc < minSOC {
+            minSOC = soc
+        }
+        if soc > maxSOC {
+            maxSOC = soc
+        }
+    }
+    
     private func cleanOldHistory(history: inout [(date: Date, value: Double)]) {
-        let cutoff = Date().addingTimeInterval(-30) // Keep last 30 seconds
+        let cutoff = Date().addingTimeInterval(-180) // Keep last 3 minutes (180 seconds)
         history.removeAll { $0.date < cutoff }
     }
 }
@@ -350,9 +388,16 @@ struct VoltageGraph: View {
             let width = geometry.size.width
             let height = geometry.size.height
             
-            // Fixed Y-axis range: 3.0V to 4.2V
-            let minY: Double = 3.0
-            let maxY: Double = 4.2
+            // Calculate dynamic Y-axis range from data (excluding first 2 seconds)
+            let now = Date()
+            let validHistory = history.filter { now.timeIntervalSince($0.date) >= 2.0 }
+            
+            let dataMin = validHistory.map { $0.value }.min() ?? 3.7
+            let dataMax = validHistory.map { $0.value }.max() ?? 4.2
+            
+            // Dynamic Y-axis range: add ±0.1V, capped at 2.5V-4.2V
+            let minY = max(2.5, dataMin - 0.1)
+            let maxY = min(4.2, dataMax + 0.1)
             let rangeY = maxY - minY
             
             ZStack(alignment: .bottomLeading) {
@@ -370,18 +415,21 @@ struct VoltageGraph: View {
                 }
                 
                 // Graph line
-                if history.count > 1 {
-                    let now = Date()
-                    let timeRange: TimeInterval = 30 // 30 seconds
+                if validHistory.count > 1 {
+                    let maxTimeRange: TimeInterval = 180 // 3 minutes max
+                    
+                    // Calculate actual time range based on oldest valid data point
+                    let oldestTime = validHistory.first?.date ?? now
+                    let actualTimeRange = min(now.timeIntervalSince(oldestTime), maxTimeRange)
                     
                     Path { path in
-                        for (index, point) in history.enumerated() {
-                            // Clamp value to 3.0V - 4.2V
+                        for (index, point) in validHistory.enumerated() {
+                            // Clamp value to min-max range
                             let clampedValue = max(minY, min(maxY, point.value))
                             
                             let timeOffset = now.timeIntervalSince(point.date)
-                            let x = width - (CGFloat(timeOffset / timeRange) * width)
-                            let normalizedValue = (clampedValue - minY) / rangeY
+                            let x = width - (CGFloat(timeOffset / actualTimeRange) * width)
+                            let normalizedValue = rangeY > 0 ? (clampedValue - minY) / rangeY : 0.5
                             let y = height - (CGFloat(normalizedValue) * height)
                             
                             if index == 0 {
@@ -394,17 +442,17 @@ struct VoltageGraph: View {
                     .stroke(Color.purple, lineWidth: 1.5)
                 }
                 
-                // Y-axis labels
+                // Y-axis labels - show dynamic range
                 VStack(spacing: 0) {
-                    Text("4.2")
+                    Text(String(format: "%.1f", maxY))
                         .font(.system(size: 6))
                         .foregroundColor(.secondary)
                     Spacer()
-                    Text("3.6")
+                    Text(String(format: "%.1f", (minY + maxY) / 2))
                         .font(.system(size: 6))
                         .foregroundColor(.secondary)
                     Spacer()
-                    Text("3.0")
+                    Text(String(format: "%.1f", minY))
                         .font(.system(size: 6))
                         .foregroundColor(.secondary)
                 }
@@ -423,9 +471,16 @@ struct CurrentGraph: View {
             let width = geometry.size.width
             let height = geometry.size.height
             
-            // Fixed Y-axis range: -300mA to +300mA
-            let minY: Double = -300
-            let maxY: Double = 300
+            // Calculate dynamic Y-axis range from data (excluding first 2 seconds)
+            let now = Date()
+            let validHistory = history.filter { now.timeIntervalSince($0.date) >= 2.0 }
+            
+            let dataMin = validHistory.map { $0.value }.min() ?? -50
+            let dataMax = validHistory.map { $0.value }.max() ?? 50
+            
+            // Dynamic Y-axis range: add ±10mA, capped at -300mA to +300mA
+            let minY = max(-300, dataMin - 10)
+            let maxY = min(300, dataMax + 10)
             let rangeY = maxY - minY
             
             ZStack(alignment: .bottomLeading) {
@@ -442,27 +497,32 @@ struct CurrentGraph: View {
                     }
                 }
                 
-                // Zero line (middle of graph)
-                let zeroY = height - (CGFloat((0 - minY) / rangeY) * height)
-                Path { path in
-                    path.move(to: CGPoint(x: 0, y: zeroY))
-                    path.addLine(to: CGPoint(x: width, y: zeroY))
+                // Zero line (if 0 is within range)
+                if minY <= 0 && maxY >= 0 {
+                    let zeroY = height - (CGFloat((0 - minY) / rangeY) * height)
+                    Path { path in
+                        path.move(to: CGPoint(x: 0, y: zeroY))
+                        path.addLine(to: CGPoint(x: width, y: zeroY))
+                    }
+                    .stroke(Color.gray.opacity(0.5), lineWidth: 1)
                 }
-                .stroke(Color.gray.opacity(0.5), lineWidth: 1)
                 
                 // Graph line
-                if history.count > 1 {
-                    let now = Date()
-                    let timeRange: TimeInterval = 30 // 30 seconds
+                if validHistory.count > 1 {
+                    let maxTimeRange: TimeInterval = 180 // 3 minutes max
+                    
+                    // Calculate actual time range based on oldest valid data point
+                    let oldestTime = validHistory.first?.date ?? now
+                    let actualTimeRange = min(now.timeIntervalSince(oldestTime), maxTimeRange)
                     
                     Path { path in
-                        for (index, point) in history.enumerated() {
-                            // Clamp value to ±300mA
+                        for (index, point) in validHistory.enumerated() {
+                            // Clamp value to min-max range
                             let clampedValue = max(minY, min(maxY, point.value))
                             
                             let timeOffset = now.timeIntervalSince(point.date)
-                            let x = width - (CGFloat(timeOffset / timeRange) * width)
-                            let normalizedValue = (clampedValue - minY) / rangeY
+                            let x = width - (CGFloat(timeOffset / actualTimeRange) * width)
+                            let normalizedValue = rangeY > 0 ? (clampedValue - minY) / rangeY : 0.5
                             let y = height - (CGFloat(normalizedValue) * height)
                             
                             if index == 0 {
@@ -475,17 +535,17 @@ struct CurrentGraph: View {
                     .stroke(lineColor, lineWidth: 1.5)
                 }
                 
-                // Y-axis labels
+                // Y-axis labels - show dynamic range
                 VStack(spacing: 0) {
-                    Text("+300")
+                    Text(String(format: "%.0f", maxY))
                         .font(.system(size: 6))
                         .foregroundColor(.secondary)
                     Spacer()
-                    Text("0")
+                    Text(String(format: "%.0f", (minY + maxY) / 2))
                         .font(.system(size: 6))
                         .foregroundColor(.secondary)
                     Spacer()
-                    Text("-300")
+                    Text(String(format: "%.0f", minY))
                         .font(.system(size: 6))
                         .foregroundColor(.secondary)
                 }
@@ -499,6 +559,91 @@ struct CurrentGraph: View {
     private var lineColor: Color {
         guard let lastValue = history.last?.value else { return .blue }
         return lastValue < 0 ? .green : .blue  // Negative = charging (green), Positive = discharging (blue)
+    }
+}
+
+struct SOCGraph: View {
+    let history: [(date: Date, value: Double)]
+    let minSOC: Double
+    let maxSOC: Double
+    
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let height = geometry.size.height
+            
+            // Calculate dynamic Y-axis range from data (excluding first 2 seconds)
+            let now = Date()
+            let validHistory = history.filter { now.timeIntervalSince($0.date) >= 2.0 }
+            
+            let dataMin = validHistory.map { $0.value }.min() ?? minSOC
+            let dataMax = validHistory.map { $0.value }.max() ?? maxSOC
+            
+            // Dynamic Y-axis range: add ±2%, capped at 0-100
+            let minY = max(0, dataMin - 2)
+            let maxY = min(100, dataMax + 2)
+            let rangeY = maxY - minY
+            
+            ZStack(alignment: .bottomLeading) {
+                // Background
+                Rectangle()
+                    .fill(Color(.systemGray6))
+                
+                // Grid lines
+                VStack(spacing: 0) {
+                    ForEach(0..<3) { _ in
+                        Divider()
+                            .background(Color.gray.opacity(0.3))
+                        Spacer()
+                    }
+                }
+                
+                // Graph line
+                if validHistory.count > 1 {
+                    let maxTimeRange: TimeInterval = 180 // 3 minutes max
+                    
+                    // Calculate actual time range based on oldest valid data point
+                    let oldestTime = validHistory.first?.date ?? now
+                    let actualTimeRange = min(now.timeIntervalSince(oldestTime), maxTimeRange)
+                    
+                    Path { path in
+                        for (index, point) in validHistory.enumerated() {
+                            // Clamp value to min-max range
+                            let clampedValue = max(minY, min(maxY, point.value))
+                            
+                            let timeOffset = now.timeIntervalSince(point.date)
+                            let x = width - (CGFloat(timeOffset / actualTimeRange) * width)
+                            let normalizedValue = rangeY > 0 ? (clampedValue - minY) / rangeY : 0.5
+                            let y = height - (CGFloat(normalizedValue) * height)
+                            
+                            if index == 0 {
+                                path.move(to: CGPoint(x: x, y: y))
+                            } else {
+                                path.addLine(to: CGPoint(x: x, y: y))
+                            }
+                        }
+                    }
+                    .stroke(Color.green, lineWidth: 1.5)
+                }
+                
+                // Y-axis labels - show dynamic range
+                VStack(spacing: 0) {
+                    Text("\(Int(maxY))")
+                        .font(.system(size: 6))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text("\(Int((minY + maxY) / 2))")
+                        .font(.system(size: 6))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text("\(Int(minY))")
+                        .font(.system(size: 6))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.leading, 2)
+            }
+            .cornerRadius(4)
+        }
     }
 }
 
