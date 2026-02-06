@@ -19,7 +19,6 @@ struct BondedDevicesListView: View {
     @State private var navigationPath = NavigationPath()
     @State private var connectingDeviceID: UUID?
     
-    // Helper to get sorted devices
     private var sortedDevices: [BondedDevice] {
         bondManager.bondedDevices.sorted { device1, device2 in
             let name1 = nameManager.getDisplayName(deviceID: device1.id, advertisingName: device1.name)
@@ -32,7 +31,6 @@ struct BondedDevicesListView: View {
         NavigationStack(path: $navigationPath) {
             ZStack {
                 if bondManager.bondedDevices.isEmpty {
-                    // Empty state
                     VStack(spacing: 20) {
                         Image(systemName: "dog")
                             .font(.system(size: 80))
@@ -64,7 +62,6 @@ struct BondedDevicesListView: View {
                         .padding(.top, 20)
                     }
                 } else {
-                    // Device list - sort by display name
                     List {
                         ForEach(sortedDevices) { device in
                             Button(action: {
@@ -89,7 +86,7 @@ struct BondedDevicesListView: View {
                     }
                 }
                 
-                // Connection overlay
+                // Connection overlay (only for in-range devices being connected)
                 if let deviceID = connectingDeviceID,
                    bluetoothManager.connectedDevice?.id == deviceID && !bluetoothManager.hasReceivedInitialState {
                     VStack(spacing: 16) {
@@ -108,7 +105,7 @@ struct BondedDevicesListView: View {
                 }
             }
             .navigationDestination(for: UUID.self) { deviceID in
-                DeviceControlView(bluetoothManager: bluetoothManager)
+                DeviceControlView(bluetoothManager: bluetoothManager, deviceID: deviceID)
             }
             .navigationTitle("My WatchDogs")
             .navigationBarTitleDisplayMode(.inline)
@@ -127,7 +124,9 @@ struct BondedDevicesListView: View {
             }
             .onAppear {
                 print("🏠 BondedDevicesListView: View appeared")
-                // Start background scanning
+                // Clear suppress flag when returning to list
+                bluetoothManager.suppressAutoReconnect = false
+                
                 if !bluetoothManager.isScanning {
                     print("🔍 BondedDevicesListView: Starting background scan")
                     bluetoothManager.startBackgroundScanning()
@@ -146,6 +145,7 @@ struct BondedDevicesListView: View {
             }
             .onChange(of: bluetoothManager.hasReceivedInitialState) { newValue in
                 // Navigate to device control view once we have initial state
+                // Only if we initiated a connection from this view (connectingDeviceID is set)
                 if let deviceID = connectingDeviceID,
                    bluetoothManager.connectedDevice?.id == deviceID,
                    newValue {
@@ -184,13 +184,15 @@ struct BondedDevicesListView: View {
             print("⏳ BondedDevicesListView: Device connected, waiting for state")
             connectingDeviceID = device.id
         } else {
-            // Not connected - try to connect if in range, otherwise navigate to disconnected view
+            // Not connected
             if let discoveredDevice = bluetoothManager.discoveredDevices.first(where: { $0.id == device.id }) {
-                print("🔌 BondedDevicesListView: Connecting to device")
+                // Device in range - connect first, then navigate after sync
+                print("🔌 BondedDevicesListView: Connecting to in-range device")
                 connectingDeviceID = device.id
                 bluetoothManager.connect(to: discoveredDevice)
             } else {
-                // Device not in range - navigate to disconnected view (user wants to see motion logs)
+                // Device NOT in range - navigate directly to disconnected view
+                // Do NOT set connectingDeviceID so hasReceivedInitialState won't trigger a second navigation
                 print("📵 BondedDevicesListView: Device not in range, navigating to disconnected view")
                 navigationPath.append(device.id)
             }
@@ -199,18 +201,10 @@ struct BondedDevicesListView: View {
     
     private func performRefresh() async {
         print("🔄 Pull to refresh triggered")
-        
-        // Stop and restart background scanning to force RSSI update
         bluetoothManager.stopBackgroundScanning()
-        
-        // Small delay to ensure clean restart
-        try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
-        
+        try? await Task.sleep(nanoseconds: 500_000_000)
         bluetoothManager.startBackgroundScanning()
-        
-        // Wait a bit for scan results
-        try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
-        
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
         print("✅ Refresh complete")
     }
     
@@ -225,15 +219,12 @@ struct BondedDevicesListView: View {
         let displayName = nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
         print("🗑️ Forgetting device: \(displayName)")
         
-        // Disconnect if currently connected
         if bluetoothManager.connectedDevice?.id == device.id,
            let connectedDevice = bluetoothManager.connectedDevice {
             bluetoothManager.disconnect(from: connectedDevice)
         }
         
-        // Remove bond (custom name and icon persist intentionally)
         bondManager.removeBond(deviceID: device.id)
-        
         deviceToDelete = nil
     }
 }
@@ -246,24 +237,19 @@ struct BondedDeviceRow: View {
     
     @State private var isPressed = false
     
-    // Get the appropriate icon name based on connection state and fill variant availability
     private var iconName: String {
-        // Use .fill variant when connected IF it has one
         if isConnected && displayIcon.hasFillVariant {
             return "\(displayIcon.rawValue).fill"
         }
         return displayIcon.rawValue
     }
     
-    // ALL icons change color - green when connected, blue when not
     private var iconColor: Color {
         return isConnected ? .green : .blue
     }
     
     var body: some View {
         HStack(spacing: 12) {
-            // Device icon - ALL icons change color (green when connected)
-            // Icons with .fill also get filled when connected
             Image(systemName: iconName)
                 .font(.title2)
                 .foregroundColor(iconColor)
@@ -291,7 +277,6 @@ struct BondedDeviceRow: View {
             
             Spacer()
             
-            // Signal strength or out of range indicator
             if device.isInRange, let rssi = device.currentRSSI {
                 SignalStrengthIndicator(rssi: rssi)
             } else {
@@ -310,9 +295,7 @@ struct BondedDeviceRow: View {
         .simultaneousGesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { _ in
-                    if !isPressed {
-                        isPressed = true
-                    }
+                    if !isPressed { isPressed = true }
                 }
                 .onEnded { _ in
                     isPressed = false
@@ -334,7 +317,6 @@ struct OutOfRangeIndicator: View {
             }
             .frame(height: 13)
             
-            // X overlay
             Image(systemName: "xmark")
                 .font(.system(size: 10, weight: .bold))
                 .foregroundColor(.red)
