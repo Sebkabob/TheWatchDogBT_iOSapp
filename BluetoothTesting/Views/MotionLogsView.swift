@@ -13,9 +13,8 @@ struct MotionLogsView: View {
     @State private var selectedDate: Date
     
     init() {
-        // Initialize with most recent event date or today
-        let mostRecentDate = MotionLogManager.shared.getMostRecentEventDate() ?? Date()
-        _selectedDate = State(initialValue: mostRecentDate)
+        // Initialize with today's date
+        _selectedDate = State(initialValue: Date())
     }
     
     private var filteredEvents: [MotionEvent] {

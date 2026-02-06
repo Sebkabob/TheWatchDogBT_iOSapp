@@ -16,8 +16,16 @@ struct BondedDevice: Identifiable, Codable {
     
     // Runtime properties (not stored)
     var currentRSSI: Int?
+    
+    // Check if device is in range based on RSSI and last seen time
     var isInRange: Bool {
-        guard let rssi = currentRSSI else { return false }
+        guard let rssi = currentRSSI, let lastSeenTime = lastSeen else { return false }
+        
+        // Device is out of range if we haven't seen it in 3 seconds
+        let timeSinceLastSeen = Date().timeIntervalSince(lastSeenTime)
+        guard timeSinceLastSeen <= 3.0 else { return false }
+        
+        // Also check RSSI threshold
         return rssi > -95
     }
     

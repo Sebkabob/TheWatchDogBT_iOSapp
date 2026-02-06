@@ -13,13 +13,13 @@ struct SignalStrengthIndicator: View {
     // Calculate signal strength (0-4 bars based on RSSI)
     var signalStrength: Int {
         switch rssi {
-        case -65...0:
+        case -70...0:
             return 4  // Excellent
-        case -80 ..< -65:
+        case -85 ..< -70:
             return 3  // Good
-        case -90 ..< -80:
+        case -95 ..< -85:
             return 2  // Fair
-        case -95 ..< -90:
+        case -105 ..< -95:
             return 1  // Poor
         default:
             return 0  // Very poor

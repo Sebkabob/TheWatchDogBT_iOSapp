@@ -354,7 +354,10 @@ struct NameYourWatchDogSheet: View {
                 VStack(spacing: 12) {
                     Button(action: {
                         dismiss()
-                        onSave()
+                        // Add delay to allow sheet to fully dismiss before pairing
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                            onSave()
+                        }
                     }) {
                         Text("Save Name & Pair")
                             .font(.headline)

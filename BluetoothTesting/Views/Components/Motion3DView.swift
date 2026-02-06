@@ -19,6 +19,7 @@ struct Motion3DView: View {
     let usdzFileName = "WatchDogBTCase_Final"
     var isLocked: Bool = false
     var bluetoothManager: BluetoothManager
+    var allowSettingsTap: Bool = true
     
     var body: some View {
         ZStack {
@@ -52,7 +53,9 @@ struct Motion3DView: View {
                     }
                     .onEnded { value in
                         if !isDragging && abs(value.translation.width) < 10 && abs(value.translation.height) < 10 {
-                            showSettings = true
+                            if allowSettingsTap {
+                                showSettings = true
+                            }
                         }
                         
                         isDragging = false

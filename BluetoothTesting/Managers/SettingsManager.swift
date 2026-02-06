@@ -18,6 +18,7 @@ class SettingsManager: ObservableObject {
     @Published var loggingEnabled: Bool = false
     @Published var disableAlarmWhenConnected: Bool = false
     @Published var deviceName: String = "WatchDog"
+    @Published var debugModeEnabled: Bool = false
     
     // UserDefaults keys
     private let armedKey = "watchdog_armed"
@@ -27,6 +28,7 @@ class SettingsManager: ObservableObject {
     private let loggingKey = "watchdog_logging"
     private let disableAlarmWhenConnectedKey = "watchdog_disable_alarm_connected"
     private let deviceNameKey = "watchdog_device_name"
+    private let debugModeKey = "watchdog_debug_mode"
     
     private init() {
         loadSettings()
@@ -121,6 +123,7 @@ class SettingsManager: ObservableObject {
         UserDefaults.standard.set(loggingEnabled, forKey: loggingKey)
         UserDefaults.standard.set(disableAlarmWhenConnected, forKey: disableAlarmWhenConnectedKey)
         UserDefaults.standard.set(deviceName, forKey: deviceNameKey)
+        UserDefaults.standard.set(debugModeEnabled, forKey: debugModeKey)
     }
     
     private func loadSettings() {
@@ -129,6 +132,13 @@ class SettingsManager: ObservableObject {
         loggingEnabled = UserDefaults.standard.bool(forKey: loggingKey)
         disableAlarmWhenConnected = UserDefaults.standard.bool(forKey: disableAlarmWhenConnectedKey)
         deviceName = UserDefaults.standard.string(forKey: deviceNameKey) ?? "WatchDog"
+        
+        // Debug mode defaults to OFF
+        if UserDefaults.standard.object(forKey: debugModeKey) != nil {
+            debugModeEnabled = UserDefaults.standard.bool(forKey: debugModeKey)
+        } else {
+            debugModeEnabled = false
+        }
         
         if let alarmString = UserDefaults.standard.string(forKey: alarmTypeKey),
            let alarm = AlarmType(rawValue: alarmString) {
@@ -144,7 +154,7 @@ class SettingsManager: ObservableObject {
     /// Call this when user manually changes settings
     func updateSettings(name: String? = nil, armed: Bool? = nil, alarm: AlarmType? = nil,
                        sens: SensitivityLevel? = nil, lights: Bool? = nil, logging: Bool? = nil,
-                       disableAlarmConnected: Bool? = nil) {
+                       disableAlarmConnected: Bool? = nil, debugMode: Bool? = nil) {
         if let name = name { deviceName = name }
         if let armed = armed { isArmed = armed }
         if let alarm = alarm { alarmType = alarm }
@@ -152,6 +162,7 @@ class SettingsManager: ObservableObject {
         if let lights = lights { lightsEnabled = lights }
         if let logging = logging { loggingEnabled = logging }
         if let disableAlarmConnected = disableAlarmConnected { disableAlarmWhenConnected = disableAlarmConnected }
+        if let debugMode = debugMode { debugModeEnabled = debugMode }
         
         saveSettings()
     }
