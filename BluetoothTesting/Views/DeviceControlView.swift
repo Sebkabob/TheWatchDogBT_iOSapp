@@ -111,7 +111,7 @@ struct DeviceControlView: View {
                         Spacer()
                         
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("DEBUG")
+                            Text("BATTERY STATS")
                                 .font(.system(size: 9))
                                 .fontWeight(.bold)
                                 .foregroundColor(.orange)
@@ -120,14 +120,14 @@ struct DeviceControlView: View {
                             
                             // Voltage row with graph below
                             VStack(alignment: .leading, spacing: 2) {
-                                DebugInfoRow(label: "V", value: String(format: "%.3fV", bluetoothManager.debugVoltage))
+                                DebugInfoRow(label: "Voltage", value: String(format: "%.3fV", bluetoothManager.debugVoltage))
                                 VoltageGraph(history: voltageHistory)
                                     .frame(height: 35)
                             }
                             
                             // Current row with graph below
                             VStack(alignment: .leading, spacing: 2) {
-                                DebugInfoRow(label: "I", value: String(format: "%.0fmA", bluetoothManager.debugCurrentDraw))
+                                DebugInfoRow(label: "Current", value: String(format: "%.0fmA", bluetoothManager.debugCurrentDraw))
                                 CurrentGraph(history: currentHistory)
                                     .frame(height: 35)
                             }
@@ -139,7 +139,7 @@ struct DeviceControlView: View {
                                     .frame(height: 35)
                             }
                             
-                            DebugInfoRow(label: "Time", value: connectionTimeString)
+                            DebugInfoRow(label: "Connected", value: connectionTimeString)
                         }
                         .padding(8)
                         .background(Color(.systemBackground).opacity(0.9))
@@ -509,7 +509,7 @@ struct CurrentGraph: View {
                 
                 // Graph line
                 if validHistory.count > 1 {
-                    let maxTimeRange: TimeInterval = 180 // 3 minutes max
+                    let maxTimeRange: TimeInterval = 90 // 1.5 minutes max
                     
                     // Calculate actual time range based on oldest valid data point
                     let oldestTime = validHistory.first?.date ?? now
@@ -558,7 +558,7 @@ struct CurrentGraph: View {
     // Determine line color based on most recent value
     private var lineColor: Color {
         guard let lastValue = history.last?.value else { return .blue }
-        return lastValue < 0 ? .green : .blue  // Negative = charging (green), Positive = discharging (blue)
+        return lastValue > 0 ? .green : .blue  // Positive = charging (green), Negative = discharging (blue)
     }
 }
 
