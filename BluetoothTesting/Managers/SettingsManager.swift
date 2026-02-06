@@ -132,7 +132,13 @@ class SettingsManager: ObservableObject {
         loggingEnabled = UserDefaults.standard.bool(forKey: loggingKey)
         disableAlarmWhenConnected = UserDefaults.standard.bool(forKey: disableAlarmWhenConnectedKey)
         deviceName = UserDefaults.standard.string(forKey: deviceNameKey) ?? "WatchDog"
-        debugModeEnabled = UserDefaults.standard.bool(forKey: debugModeKey)
+        
+        // Debug mode defaults to OFF
+        if UserDefaults.standard.object(forKey: debugModeKey) != nil {
+            debugModeEnabled = UserDefaults.standard.bool(forKey: debugModeKey)
+        } else {
+            debugModeEnabled = false
+        }
         
         if let alarmString = UserDefaults.standard.string(forKey: alarmTypeKey),
            let alarm = AlarmType(rawValue: alarmString) {

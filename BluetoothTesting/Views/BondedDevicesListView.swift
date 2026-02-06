@@ -184,13 +184,13 @@ struct BondedDevicesListView: View {
             print("⏳ BondedDevicesListView: Device connected, waiting for state")
             connectingDeviceID = device.id
         } else {
-            // Not connected - try to connect
+            // Not connected - try to connect if in range, otherwise navigate to disconnected view
             if let discoveredDevice = bluetoothManager.discoveredDevices.first(where: { $0.id == device.id }) {
                 print("🔌 BondedDevicesListView: Connecting to device")
                 connectingDeviceID = device.id
                 bluetoothManager.connect(to: discoveredDevice)
             } else {
-                // Device not in range - navigate anyway (will show disconnected state)
+                // Device not in range - navigate to disconnected view (user wants to see motion logs)
                 print("📵 BondedDevicesListView: Device not in range, navigating to disconnected view")
                 navigationPath.append(device.id)
             }

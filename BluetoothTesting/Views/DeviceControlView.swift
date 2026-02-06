@@ -18,6 +18,27 @@ struct DeviceControlView: View {
     @State private var holdTimer: Timer?
     @State private var showMotionLogs = false
     
+    // Track the device ID we're viewing (persists even when disconnected)
+    @State private var targetDeviceID: UUID?
+    
+    // Track whether the user intentionally disconnected
+    @State private var userInitiatedDisconnect = false
+    
+    // Track whether we started connected (to avoid showing "not in range" flash)
+    @State private var startedConnected = false
+    
+    // Track whether device is connected for UI state
+    private var isDeviceConnected: Bool {
+        guard let targetID = targetDeviceID else { return false }
+        return bluetoothManager.connectedDevice?.id == targetID
+    }
+    
+    // Track model visibility with animation
+    @State private var showModel = false
+    
+    // Track whether to show the "not in range" text (hidden initially if we started connected)
+    @State private var showDisconnectedText = false
+    
     // History for graphs (last 3 minutes)
     @State private var currentHistory: [(date: Date, value: Double)] = []
     @State private var voltageHistory: [(date: Date, value: Double)] = []
@@ -31,10 +52,17 @@ struct DeviceControlView: View {
     private let lightHaptic = UIImpactFeedbackGenerator(style: .light)
     private let heavyHaptic = UIImpactFeedbackGenerator(style: .heavy)
     
-    // Get display name for connected device
+    // Get display name for the target device
     private var displayName: String {
-        guard let device = bluetoothManager.connectedDevice else { return "WatchDog" }
-        return nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
+        guard let targetID = targetDeviceID else { return "WatchDog" }
+        if let device = bluetoothManager.connectedDevice, device.id == targetID {
+            return nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
+        }
+        // Fallback to bond manager for disconnected devices
+        if let bond = BondManager.shared.getBond(deviceID: targetID) {
+            return nameManager.getDisplayName(deviceID: targetID, advertisingName: bond.name)
+        }
+        return "WatchDog"
     }
     
     private var connectionTimeString: String {
@@ -50,6 +78,21 @@ struct DeviceControlView: View {
         }
     }
     
+    private var statusText: String {
+        if !isDeviceConnected {
+            return ""
+        }
+        return bluetoothManager.deviceStateText
+    }
+    
+    private var statusColor: Color {
+        if !isDeviceConnected {
+            return .gray
+        }
+        let isArmed = (bluetoothManager.deviceState & 0x01) != 0
+        return isArmed ? .red : .green
+    }
+    
     var body: some View {
         VStack(spacing: 0) {
             // Device State Display at the top - Horizontal Layout
@@ -60,21 +103,21 @@ struct DeviceControlView: View {
                     .foregroundColor(.primary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 
-                // Center: Lock state
+                // Center: Connection/Lock state
                 HStack(spacing: 8) {
                     Circle()
-                        .fill(stateColor)
+                        .fill(statusColor)
                         .frame(width: 12, height: 12)
                     
-                    Text(bluetoothManager.deviceStateText)
+                    Text(statusText)
                         .font(.title3)
                         .fontWeight(.bold)
-                        .foregroundColor(stateColor)
+                        .foregroundColor(statusColor)
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
                 
                 // Right: Battery indicator
-                if bluetoothManager.batteryLevel >= 0 {
+                if isDeviceConnected && bluetoothManager.batteryLevel >= 0 {
                     HStack(spacing: 4) {
                         // Show charging bolt if charging
                         if bluetoothManager.isCharging {
@@ -101,12 +144,30 @@ struct DeviceControlView: View {
             
             // 3D Model Section with Debug Info
             ZStack(alignment: .leading) {
-                // 3D Model - Centered
-                Motion3DView(isLocked: isLocked, bluetoothManager: bluetoothManager)
+                if showModel && isDeviceConnected {
+                    // 3D Model - Centered
+                    Motion3DView(isLocked: isLocked, bluetoothManager: bluetoothManager)
+                        .frame(maxWidth: .infinity)
+                        .transition(.opacity)
+                } else if showDisconnectedText {
+                    // Disconnected placeholder - only show after we know we're disconnected
+                    VStack {
+                        Spacer()
+                        Text("Device not in range")
+                            .font(.title3)
+                            .foregroundColor(.gray)
+                        Spacer()
+                    }
                     .frame(maxWidth: .infinity)
+                    .transition(.opacity)
+                } else {
+                    // Empty/black state (initial load when starting connected)
+                    Color.clear
+                        .frame(maxWidth: .infinity)
+                }
                 
-                // Debug Info Box - Left side
-                if settingsManager.debugModeEnabled {
+                // Debug Info Box - Left side (only when connected and debug enabled)
+                if isDeviceConnected && settingsManager.debugModeEnabled {
                     VStack(alignment: .leading, spacing: 0) {
                         Spacer()
                         
@@ -153,16 +214,20 @@ struct DeviceControlView: View {
                     }
                 }
             }
+            .animation(.easeInOut(duration: 1.0), value: showModel && isDeviceConnected)
+            .animation(.easeInOut(duration: 0.5), value: showDisconnectedText)
             
             // Bottom Control Section - Fixed, not scrollable
             VStack(spacing: 12) {
                 // Single Lock/Unlock button
                 LockButton(
                     isLocked: $isLocked,
-                    holdProgress: holdProgress
+                    holdProgress: holdProgress,
+                    isDisabled: !isDeviceConnected
                 )
                 .padding(.horizontal, 20)
                 .gesture(
+                    isDeviceConnected ?
                     DragGesture(minimumDistance: 0)
                         .onChanged { _ in
                             if !isHolding {
@@ -172,27 +237,50 @@ struct DeviceControlView: View {
                         .onEnded { _ in
                             stopHolding()
                         }
+                    : nil
                 )
                 
-                // Disconnect and Motion Logs buttons side by side
+                // Bottom buttons
                 HStack(spacing: 12) {
-                    // Disconnect button (left, red)
-                    Button(action: {
-                        if let device = bluetoothManager.connectedDevice {
-                            bluetoothManager.disconnect(from: device)
+                    if isDeviceConnected {
+                        // Disconnect button (left, red)
+                        Button(action: {
+                            if let device = bluetoothManager.connectedDevice {
+                                userInitiatedDisconnect = true
+                                bluetoothManager.stopReconnecting()
+                                bluetoothManager.disconnect(from: device)
+                                dismiss()
+                            }
+                        }) {
+                            HStack {
+                                Image(systemName: "xmark.circle.fill")
+                                Text("Disconnect")
+                            }
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color.red.opacity(0.8))
+                            .cornerRadius(10)
+                        }
+                    } else {
+                        // Back button (left, gray)
+                        Button(action: {
+                            userInitiatedDisconnect = true
+                            bluetoothManager.stopReconnecting()
                             dismiss()
+                        }) {
+                            HStack {
+                                Image(systemName: "chevron.left")
+                                Text("Back")
+                            }
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color(.systemGray5))
+                            .cornerRadius(10)
                         }
-                    }) {
-                        HStack {
-                            Image(systemName: "xmark.circle.fill")
-                            Text("Disconnect")
-                        }
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.red.opacity(0.8))
-                        .cornerRadius(10)
                     }
                     
                     // Motion Logs button (right, light gray)
@@ -218,12 +306,40 @@ struct DeviceControlView: View {
         .navigationBarBackButtonHidden(true)
         .statusBar(hidden: true)
         .onAppear {
+            // Capture the device ID on appear
+            if targetDeviceID == nil {
+                targetDeviceID = bluetoothManager.connectedDevice?.id
+            }
+            
+            userInitiatedDisconnect = false
             isLocked = settingsManager.isArmed
-            print("🎬 View appeared - initial state: isLocked=\(isLocked)")
-            startGraphUpdates()
+            startedConnected = isDeviceConnected
+            
+            print("🎬 View appeared - initial state: isLocked=\(isLocked), connected=\(isDeviceConnected)")
+            
+            if isDeviceConnected {
+                // Started connected - fade model in from black (no "not in range" flash)
+                showDisconnectedText = false
+                showModel = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    withAnimation(.easeInOut(duration: 1.0)) {
+                        showModel = true
+                    }
+                }
+                startGraphUpdates()
+            } else {
+                // Started disconnected - show "not in range" immediately
+                showModel = false
+                showDisconnectedText = true
+                // Start reconnection attempts if we have a target device
+                if let targetID = targetDeviceID {
+                    bluetoothManager.startReconnecting(to: targetID)
+                }
+            }
         }
         .onDisappear {
             stopGraphUpdates()
+            bluetoothManager.stopReconnecting()
         }
         .onChange(of: settingsManager.isArmed) { newIsArmed in
             if isLocked != newIsArmed {
@@ -231,19 +347,44 @@ struct DeviceControlView: View {
             }
         }
         .onChange(of: bluetoothManager.connectedDevice) { device in
-            // Auto-dismiss if disconnected
-            if device == nil {
-                dismiss()
+            // Ignore changes if user intentionally disconnected
+            guard !userInitiatedDisconnect else { return }
+            
+            if let device = device, device.id == targetDeviceID {
+                // Device reconnected - fade in model, hide disconnected text
+                print("🔄 Device reconnected, fading in model")
+                showDisconnectedText = false
+                withAnimation(.easeInOut(duration: 1.0)) {
+                    showModel = true
+                }
+                startGraphUpdates()
+            } else if device == nil && targetDeviceID != nil {
+                // Device disconnected while viewing - fade out and start reconnecting
+                print("📵 Device disconnected, fading out model")
+                withAnimation(.easeInOut(duration: 1.0)) {
+                    showModel = false
+                }
+                // Show "not in range" after the fade out completes
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    if !self.isDeviceConnected && !self.userInitiatedDisconnect {
+                        withAnimation(.easeInOut(duration: 0.5)) {
+                            showDisconnectedText = true
+                        }
+                    }
+                }
+                stopGraphUpdates()
+                
+                // Start reconnection attempts
+                if let targetID = targetDeviceID {
+                    bluetoothManager.startReconnecting(to: targetID)
+                }
             }
         }
     }
     
-    private var stateColor: Color {
-        let isArmed = (bluetoothManager.deviceState & 0x01) != 0
-        return isArmed ? .red : .green
-    }
-    
     private func startHolding() {
+        guard isDeviceConnected else { return }
+        
         isHolding = true
         holdProgress = 0.0
         
@@ -273,6 +414,8 @@ struct DeviceControlView: View {
     }
     
     private func completeHold() {
+        guard isDeviceConnected else { return }
+        
         heavyHaptic.impactOccurred(intensity: 1.0)
         
         settingsManager.updateSettings(armed: !isLocked)
@@ -307,6 +450,9 @@ struct DeviceControlView: View {
     }
     
     private func startGraphUpdates() {
+        // Stop any existing timer first
+        stopGraphUpdates()
+        
         // Add initial points
         updateCurrentHistory(bluetoothManager.debugCurrentDraw)
         updateVoltageHistory(bluetoothManager.debugVoltage)
@@ -388,24 +534,20 @@ struct VoltageGraph: View {
             let width = geometry.size.width
             let height = geometry.size.height
             
-            // Calculate dynamic Y-axis range from data (excluding first 2 seconds)
             let now = Date()
             let validHistory = history.filter { now.timeIntervalSince($0.date) >= 2.0 }
             
             let dataMin = validHistory.map { $0.value }.min() ?? 3.7
             let dataMax = validHistory.map { $0.value }.max() ?? 4.2
             
-            // Dynamic Y-axis range: add ±0.1V, capped at 2.5V-4.2V
             let minY = max(2.5, dataMin - 0.1)
             let maxY = min(4.2, dataMax + 0.1)
             let rangeY = maxY - minY
             
             ZStack(alignment: .bottomLeading) {
-                // Background
                 Rectangle()
                     .fill(Color(.systemGray6))
                 
-                // Grid lines
                 VStack(spacing: 0) {
                     ForEach(0..<3) { _ in
                         Divider()
@@ -414,19 +556,14 @@ struct VoltageGraph: View {
                     }
                 }
                 
-                // Graph line
                 if validHistory.count > 1 {
-                    let maxTimeRange: TimeInterval = 180 // 3 minutes max
-                    
-                    // Calculate actual time range based on oldest valid data point
+                    let maxTimeRange: TimeInterval = 180
                     let oldestTime = validHistory.first?.date ?? now
                     let actualTimeRange = min(now.timeIntervalSince(oldestTime), maxTimeRange)
                     
                     Path { path in
                         for (index, point) in validHistory.enumerated() {
-                            // Clamp value to min-max range
                             let clampedValue = max(minY, min(maxY, point.value))
-                            
                             let timeOffset = now.timeIntervalSince(point.date)
                             let x = width - (CGFloat(timeOffset / actualTimeRange) * width)
                             let normalizedValue = rangeY > 0 ? (clampedValue - minY) / rangeY : 0.5
@@ -442,7 +579,6 @@ struct VoltageGraph: View {
                     .stroke(Color.purple, lineWidth: 1.5)
                 }
                 
-                // Y-axis labels - show dynamic range
                 VStack(spacing: 0) {
                     Text(String(format: "%.1f", maxY))
                         .font(.system(size: 6))
@@ -471,24 +607,20 @@ struct CurrentGraph: View {
             let width = geometry.size.width
             let height = geometry.size.height
             
-            // Calculate dynamic Y-axis range from data (excluding first 2 seconds)
             let now = Date()
             let validHistory = history.filter { now.timeIntervalSince($0.date) >= 2.0 }
             
             let dataMin = validHistory.map { $0.value }.min() ?? -50
             let dataMax = validHistory.map { $0.value }.max() ?? 50
             
-            // Dynamic Y-axis range: add ±10mA, capped at -300mA to +300mA
             let minY = max(-300, dataMin - 10)
             let maxY = min(300, dataMax + 10)
             let rangeY = maxY - minY
             
             ZStack(alignment: .bottomLeading) {
-                // Background
                 Rectangle()
                     .fill(Color(.systemGray6))
                 
-                // Grid lines
                 VStack(spacing: 0) {
                     ForEach(0..<3) { _ in
                         Divider()
@@ -497,7 +629,6 @@ struct CurrentGraph: View {
                     }
                 }
                 
-                // Zero line (if 0 is within range)
                 if minY <= 0 && maxY >= 0 {
                     let zeroY = height - (CGFloat((0 - minY) / rangeY) * height)
                     Path { path in
@@ -507,19 +638,14 @@ struct CurrentGraph: View {
                     .stroke(Color.gray.opacity(0.5), lineWidth: 1)
                 }
                 
-                // Graph line
                 if validHistory.count > 1 {
-                    let maxTimeRange: TimeInterval = 90 // 1.5 minutes max
-                    
-                    // Calculate actual time range based on oldest valid data point
+                    let maxTimeRange: TimeInterval = 90
                     let oldestTime = validHistory.first?.date ?? now
                     let actualTimeRange = min(now.timeIntervalSince(oldestTime), maxTimeRange)
                     
                     Path { path in
                         for (index, point) in validHistory.enumerated() {
-                            // Clamp value to min-max range
                             let clampedValue = max(minY, min(maxY, point.value))
-                            
                             let timeOffset = now.timeIntervalSince(point.date)
                             let x = width - (CGFloat(timeOffset / actualTimeRange) * width)
                             let normalizedValue = rangeY > 0 ? (clampedValue - minY) / rangeY : 0.5
@@ -535,7 +661,6 @@ struct CurrentGraph: View {
                     .stroke(lineColor, lineWidth: 1.5)
                 }
                 
-                // Y-axis labels - show dynamic range
                 VStack(spacing: 0) {
                     Text(String(format: "%.0f", maxY))
                         .font(.system(size: 6))
@@ -555,10 +680,9 @@ struct CurrentGraph: View {
         }
     }
     
-    // Determine line color based on most recent value
     private var lineColor: Color {
         guard let lastValue = history.last?.value else { return .blue }
-        return lastValue > 0 ? .green : .blue  // Positive = charging (green), Negative = discharging (blue)
+        return lastValue > 0 ? .green : .blue
     }
 }
 
@@ -572,24 +696,20 @@ struct SOCGraph: View {
             let width = geometry.size.width
             let height = geometry.size.height
             
-            // Calculate dynamic Y-axis range from data (excluding first 2 seconds)
             let now = Date()
             let validHistory = history.filter { now.timeIntervalSince($0.date) >= 2.0 }
             
             let dataMin = validHistory.map { $0.value }.min() ?? minSOC
             let dataMax = validHistory.map { $0.value }.max() ?? maxSOC
             
-            // Dynamic Y-axis range: add ±2%, capped at 0-100
             let minY = max(0, dataMin - 2)
             let maxY = min(100, dataMax + 2)
             let rangeY = maxY - minY
             
             ZStack(alignment: .bottomLeading) {
-                // Background
                 Rectangle()
                     .fill(Color(.systemGray6))
                 
-                // Grid lines
                 VStack(spacing: 0) {
                     ForEach(0..<3) { _ in
                         Divider()
@@ -598,19 +718,14 @@ struct SOCGraph: View {
                     }
                 }
                 
-                // Graph line
                 if validHistory.count > 1 {
-                    let maxTimeRange: TimeInterval = 180 // 3 minutes max
-                    
-                    // Calculate actual time range based on oldest valid data point
+                    let maxTimeRange: TimeInterval = 180
                     let oldestTime = validHistory.first?.date ?? now
                     let actualTimeRange = min(now.timeIntervalSince(oldestTime), maxTimeRange)
                     
                     Path { path in
                         for (index, point) in validHistory.enumerated() {
-                            // Clamp value to min-max range
                             let clampedValue = max(minY, min(maxY, point.value))
-                            
                             let timeOffset = now.timeIntervalSince(point.date)
                             let x = width - (CGFloat(timeOffset / actualTimeRange) * width)
                             let normalizedValue = rangeY > 0 ? (clampedValue - minY) / rangeY : 0.5
@@ -626,7 +741,6 @@ struct SOCGraph: View {
                     .stroke(Color.green, lineWidth: 1.5)
                 }
                 
-                // Y-axis labels - show dynamic range
                 VStack(spacing: 0) {
                     Text("\(Int(maxY))")
                         .font(.system(size: 6))
