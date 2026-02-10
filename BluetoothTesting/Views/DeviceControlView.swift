@@ -150,9 +150,19 @@ struct DeviceControlView: View {
                     // Disconnected placeholder
                     VStack {
                         Spacer()
-                        Text("Device not in range")
-                            .font(.title3)
-                            .foregroundColor(.gray)
+                        if bluetoothManager.isAttemptingReconnect {
+                            VStack(spacing: 12) {
+                                ProgressView()
+                                    .scaleEffect(1.2)
+                                Text("Reconnecting...")
+                                    .font(.title3)
+                                    .foregroundColor(.gray)
+                            }
+                        } else {
+                            Text("Device not in range")
+                                .font(.title3)
+                                .foregroundColor(.gray)
+                        }
                         Spacer()
                     }
                     .frame(maxWidth: .infinity)
@@ -240,6 +250,8 @@ struct DeviceControlView: View {
                                 userInitiatedDisconnect = true
                                 bluetoothManager.stopReconnecting()
                                 bluetoothManager.disconnect(from: device)
+                                // Save nav state back to list since user is leaving
+                                NavigationStateManager.shared.saveDeviceList()
                                 dismiss()
                             }
                         }) {
@@ -258,6 +270,8 @@ struct DeviceControlView: View {
                         Button(action: {
                             userInitiatedDisconnect = true
                             bluetoothManager.stopReconnecting()
+                            // Save nav state back to list since user is leaving
+                            NavigationStateManager.shared.saveDeviceList()
                             dismiss()
                         }) {
                             HStack {
@@ -299,6 +313,9 @@ struct DeviceControlView: View {
             isLocked = settingsManager.isArmed
             startedConnected = isDeviceConnected
             
+            // Save nav state: we're on a device control view
+            NavigationStateManager.shared.saveDeviceControl(deviceID: deviceID)
+            
             print("🎬 View appeared - deviceID=\(deviceID.uuidString.prefix(8)), connected=\(isDeviceConnected)")
             
             if isDeviceConnected {
@@ -312,7 +329,7 @@ struct DeviceControlView: View {
                 }
                 startGraphUpdates()
             } else {
-                // Started disconnected - show "not in range" immediately
+                // Started disconnected - show "not in range" immediately and auto-reconnect
                 showModel = false
                 showDisconnectedText = true
                 // Start reconnection attempts

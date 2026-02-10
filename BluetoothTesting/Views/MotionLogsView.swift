@@ -12,9 +12,9 @@ struct MotionLogsView: View {
     @StateObject private var motionLogManager = MotionLogManager.shared
     @State private var selectedDate: Date
     @State private var refreshID = UUID()
+    @State private var showMonthYearPicker = false
     
     init() {
-        // Initialize with today's date
         _selectedDate = State(initialValue: Date())
     }
     
@@ -28,7 +28,10 @@ struct MotionLogsView: View {
             VStack(spacing: 0) {
                 CalendarView(
                     selectedDate: $selectedDate,
-                    eventsPerDay: getEventsPerDay()
+                    eventsPerDay: getEventsPerDay(),
+                    onMonthTapped: {
+                        showMonthYearPicker = true
+                    }
                 )
                 .padding(.horizontal)
                 .padding(.top, 16)
@@ -92,8 +95,14 @@ struct MotionLogsView: View {
                 }
             }
         }
+        .sheet(isPresented: $showMonthYearPicker) {
+            MonthYearPickerSheet(
+                selectedDate: $selectedDate,
+                eventsPerMonth: getEventsPerMonth()
+            )
+            .presentationDetents([.medium])
+        }
         .onReceive(motionLogManager.$motionEvents) { _ in
-            // Force UI refresh when motion events change
             refreshID = UUID()
         }
     }
@@ -131,12 +140,176 @@ struct MotionLogsView: View {
         
         return eventsPerDay
     }
+    
+    /// Returns event counts keyed by the first day of each month
+    private func getEventsPerMonth() -> [Date: Int] {
+        var eventsPerMonth: [Date: Int] = [:]
+        let calendar = Calendar.current
+        
+        for event in motionLogManager.motionEvents {
+            let components = calendar.dateComponents([.year, .month], from: event.timestamp)
+            if let monthStart = calendar.date(from: components) {
+                eventsPerMonth[monthStart, default: 0] += 1
+            }
+        }
+        
+        return eventsPerMonth
+    }
+}
+
+// MARK: - Month/Year Picker Sheet
+struct MonthYearPickerSheet: View {
+    @Environment(\.dismiss) var dismiss
+    @Binding var selectedDate: Date
+    let eventsPerMonth: [Date: Int]
+    
+    @State private var selectedMonth: Int
+    @State private var selectedYear: Int
+    
+    private let calendar = Calendar.current
+    private let months = Calendar.current.monthSymbols
+    
+    // Year range: 5 years back to current year
+    private var years: [Int] {
+        let currentYear = calendar.component(.year, from: Date())
+        return Array((currentYear - 5)...currentYear)
+    }
+    
+    init(selectedDate: Binding<Date>, eventsPerMonth: [Date: Int]) {
+        self._selectedDate = selectedDate
+        self.eventsPerMonth = eventsPerMonth
+        let cal = Calendar.current
+        _selectedMonth = State(initialValue: cal.component(.month, from: selectedDate.wrappedValue))
+        _selectedYear = State(initialValue: cal.component(.year, from: selectedDate.wrappedValue))
+    }
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 16) {
+                // Event count for selected month
+                let count = eventCountForSelection()
+                if count > 0 {
+                    Text("\(count) event\(count == 1 ? "" : "s") in \(months[selectedMonth - 1]) \(String(selectedYear))")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .padding(.top, 8)
+                } else {
+                    Text("No events in \(months[selectedMonth - 1]) \(String(selectedYear))")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .padding(.top, 8)
+                }
+                
+                // Two side-by-side wheels
+                HStack(spacing: 0) {
+                    // Month picker
+                    Picker("Month", selection: $selectedMonth) {
+                        ForEach(1...12, id: \.self) { month in
+                            let monthName = months[month - 1]
+                            let count = eventCountFor(month: month, year: selectedYear)
+                            HStack {
+                                Text(monthName)
+                                if count > 0 {
+                                    Text("(\(count))")
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            .tag(month)
+                        }
+                    }
+                    .pickerStyle(.wheel)
+                    .frame(maxWidth: .infinity)
+                    .clipped()
+                    
+                    // Year picker
+                    Picker("Year", selection: $selectedYear) {
+                        ForEach(years, id: \.self) { year in
+                            let count = eventCountFor(year: year)
+                            HStack {
+                                Text(String(year))
+                                if count > 0 {
+                                    Text("(\(count))")
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            .tag(year)
+                        }
+                    }
+                    .pickerStyle(.wheel)
+                    .frame(maxWidth: .infinity)
+                    .clipped()
+                }
+                .padding(.horizontal)
+                
+                Spacer()
+            }
+            .navigationTitle("Jump to Month")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Go") {
+                        applySelection()
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+        }
+    }
+    
+    private func applySelection() {
+        var components = DateComponents()
+        components.year = selectedYear
+        components.month = selectedMonth
+        components.day = 1
+        
+        if let newDate = calendar.date(from: components) {
+            // If the selected month/year is the current month, jump to today
+            let now = Date()
+            let currentMonth = calendar.component(.month, from: now)
+            let currentYear = calendar.component(.year, from: now)
+            
+            if selectedMonth == currentMonth && selectedYear == currentYear {
+                selectedDate = now
+            } else {
+                selectedDate = newDate
+            }
+        }
+    }
+    
+    private func eventCountForSelection() -> Int {
+        return eventCountFor(month: selectedMonth, year: selectedYear)
+    }
+    
+    private func eventCountFor(month: Int, year: Int) -> Int {
+        var components = DateComponents()
+        components.year = year
+        components.month = month
+        if let monthStart = calendar.date(from: components) {
+            return eventsPerMonth[monthStart] ?? 0
+        }
+        return 0
+    }
+    
+    private func eventCountFor(year: Int) -> Int {
+        var total = 0
+        for month in 1...12 {
+            total += eventCountFor(month: month, year: year)
+        }
+        return total
+    }
 }
 
 // MARK: - Calendar View
 struct CalendarView: View {
     @Binding var selectedDate: Date
     let eventsPerDay: [Date: Int]
+    var onMonthTapped: (() -> Void)? = nil
     
     @State private var currentMonth: Date = Date()
     
@@ -158,8 +331,19 @@ struct CalendarView: View {
                 
                 Spacer()
                 
-                Text(dateFormatter.string(from: currentMonth))
-                    .font(.headline)
+                // Tappable month/year label
+                Button(action: {
+                    onMonthTapped?()
+                }) {
+                    HStack(spacing: 4) {
+                        Text(dateFormatter.string(from: currentMonth))
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                        Image(systemName: "chevron.down")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
                 
                 Spacer()
                 
@@ -196,7 +380,6 @@ struct CalendarView: View {
                             }
                         }
                     } else {
-                        // Empty cell for padding
                         Color.clear
                             .frame(height: 44)
                     }
@@ -204,6 +387,14 @@ struct CalendarView: View {
             }
         }
         .padding(.vertical, 8)
+        // Sync currentMonth when selectedDate changes (e.g. from picker)
+        .onChange(of: selectedDate) { newDate in
+            let selectedMonthStart = calendar.dateInterval(of: .month, for: newDate)?.start
+            let currentMonthStart = calendar.dateInterval(of: .month, for: currentMonth)?.start
+            if selectedMonthStart != currentMonthStart {
+                currentMonth = newDate
+            }
+        }
     }
     
     private func getDaysInMonth() -> [Date?] {
@@ -214,11 +405,9 @@ struct CalendarView: View {
         
         var days: [Date?] = []
         
-        // Add empty cells for days before month starts
         let emptyCells = (firstWeekday - calendar.firstWeekday + 7) % 7
         days.append(contentsOf: Array(repeating: nil, count: emptyCells))
         
-        // Add all days in month
         var currentDate = monthInterval.start
         while currentDate < monthInterval.end {
             days.append(currentDate)
@@ -310,13 +499,11 @@ struct MotionEventRow: View {
     
     var body: some View {
         HStack(spacing: 12) {
-            // Icon
             Image(systemName: event.eventType.icon)
                 .font(.title3)
                 .foregroundColor(iconColor)
                 .frame(width: 30)
             
-            // Event details
             VStack(alignment: .leading, spacing: 4) {
                 Text(event.eventType.displayName)
                     .font(.headline)
@@ -328,7 +515,6 @@ struct MotionEventRow: View {
             
             Spacer()
             
-            // Alarm indicator
             if event.alarmSounded {
                 HStack(spacing: 4) {
                     Image(systemName: "speaker.wave.2.fill")
