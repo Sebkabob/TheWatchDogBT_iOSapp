@@ -59,7 +59,6 @@ class BluetoothManager: NSObject, ObservableObject {
     private var shouldStartScanningWhenReady = false
     
     // Reconnection support
-    private var reconnectTimer: Timer?
     private var reconnectTargetDeviceID: UUID?
     @Published var isAttemptingReconnect = false
     
@@ -322,12 +321,9 @@ class BluetoothManager: NSObject, ObservableObject {
             let motionType = data[9]
             
             // Build date from firmware RTC timestamp
-            // If firmware RTC is not set, year/month/day will be 0/0/0 or 0/1/1
-            // In that case, use the current iOS time instead
             var timestamp: Date
             
             if year == 0 && month <= 1 && day <= 1 {
-                // Firmware RTC not set — use current time as best approximation
                 timestamp = Date()
                 print("⚠️ Firmware RTC not set (year=0), using current iOS time for event")
             } else {
@@ -362,13 +358,11 @@ class BluetoothManager: NSObject, ObservableObject {
                 // Request next event
                 let nextIndex = index + 1
                 if nextIndex < UInt16(self.pendingEventCount) {
-                    // Small delay to avoid overwhelming the BLE link
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                         self.requestMotionEvent(at: nextIndex)
                     }
                 } else {
                     print("✅ All \(self.pendingEventCount) motion events synced")
-                    // Clear the log on the firmware after successful sync
                     self.clearMotionLog()
                     self.isSyncingMotionLogs = false
                 }
@@ -414,21 +408,26 @@ class BluetoothManager: NSObject, ObservableObject {
         guard isBackgroundScanning else { return }
         
         isBackgroundScanning = false
-        stopScanning()
+        
+        // Don't stop scanning if we're reconnecting
+        if !isAttemptingReconnect {
+            stopScanning()
+        }
         print("🛑 Stopped background scanning")
     }
     
     // MARK: - Reconnection Support
     
     func startReconnecting(to deviceID: UUID) {
-        guard reconnectTimer == nil else {
-            print("⚠️ Already attempting reconnection")
-            return
-        }
-        
         // Don't reconnect if user explicitly disconnected
         guard !suppressAutoReconnect else {
             print("⚠️ Auto-reconnect suppressed (user disconnected)")
+            return
+        }
+        
+        // Don't start if already reconnecting to this device
+        if isAttemptingReconnect && reconnectTargetDeviceID == deviceID {
+            print("⚠️ Already attempting reconnection to this device")
             return
         }
         
@@ -440,63 +439,80 @@ class BluetoothManager: NSObject, ObservableObject {
         
         print("🔄 Starting reconnection attempts for \(deviceID.uuidString.prefix(8))")
         
-        // Start scanning if not already
-        if !isScanning {
-            guard isBluetoothReady else {
-                shouldStartScanningWhenReady = true
-                return
-            }
-            
-            centralManager.scanForPeripherals(
-                withServices: [targetServiceUUID],
-                options: [
-                    CBCentralManagerScanOptionAllowDuplicatesKey: true,
-                    CBCentralManagerScanOptionSolicitedServiceUUIDsKey: [targetServiceUUID]
-                ]
-            )
-            
-            DispatchQueue.main.async {
-                self.isScanning = true
-            }
-        }
-        
-        // Check every 0.5 seconds for the device
-        DispatchQueue.main.async {
-            self.reconnectTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-                self?.attemptReconnect()
-            }
-        }
+        // Ensure scanning is active — this is critical for reconnection.
+        // The scan with AllowDuplicates will fire didDiscover every time
+        // the device advertises (~1/sec), and we connect immediately from there.
+        ensureScanningForReconnect()
     }
     
     func stopReconnecting() {
+        let wasReconnecting = isAttemptingReconnect
+        
         DispatchQueue.main.async {
-            self.reconnectTimer?.invalidate()
-            self.reconnectTimer = nil
             self.reconnectTargetDeviceID = nil
             self.isAttemptingReconnect = false
         }
-        print("🛑 Stopped reconnection attempts")
+        
+        if wasReconnecting {
+            print("🛑 Stopped reconnection attempts")
+        }
     }
     
-    private func attemptReconnect() {
-        guard let targetID = reconnectTargetDeviceID else { return }
-        
-        // Don't attempt if suppressed, already connected, or connecting
-        if suppressAutoReconnect || connectedDevice != nil || isConnecting {
+    /// Ensure BLE scanning is active for reconnection purposes.
+    /// If already scanning, this is a no-op. If not, starts a scan.
+    private func ensureScanningForReconnect() {
+        guard isBluetoothReady else {
+            shouldStartScanningWhenReady = true
+            print("⚠️ Bluetooth not ready, will scan when ready for reconnect")
             return
         }
         
-        // Check if the target device has been discovered
-        if let discoveredDevice = discoveredDevices.first(where: { $0.id == targetID }) {
-            print("🔄 Found target device, attempting reconnect...")
-            connect(to: discoveredDevice)
+        if isScanning {
+            print("🔍 Already scanning — reconnect will use existing scan")
+            return
         }
+        
+        // Start scanning specifically for reconnection
+        centralManager.scanForPeripherals(
+            withServices: [targetServiceUUID],
+            options: [
+                CBCentralManagerScanOptionAllowDuplicatesKey: true,
+                CBCentralManagerScanOptionSolicitedServiceUUIDsKey: [targetServiceUUID]
+            ]
+        )
+        
+        DispatchQueue.main.async {
+            self.isScanning = true
+        }
+        
+        print("🔍 Started scanning for reconnection target")
+    }
+    
+    /// Called from didDiscover — if we're reconnecting and this is our target, connect immediately.
+    /// This is the KEY change: we don't poll on a timer, we react instantly to advertisement.
+    private func tryImmediateReconnect(device: BluetoothDevice) {
+        guard isAttemptingReconnect,
+              let targetID = reconnectTargetDeviceID,
+              device.id == targetID,
+              !suppressAutoReconnect,
+              connectedDevice == nil,
+              !isConnecting else {
+            return
+        }
+        
+        print("🔄 Target device discovered during reconnect — connecting immediately!")
+        connect(to: device)
     }
     
     private func removeStaleDevices() {
         let now = Date()
         DispatchQueue.main.async {
             self.discoveredDevices.removeAll { device in
+                // Don't remove the reconnect target device — we need its peripheral reference
+                if self.isAttemptingReconnect && device.id == self.reconnectTargetDeviceID {
+                    return false
+                }
+                
                 guard let lastUpdate = self.lastRSSIUpdate[device.id] else {
                     return true
                 }
@@ -537,6 +553,10 @@ extension BluetoothManager: CBCentralManagerDelegate {
                     print("🔄 Bluetooth ready - starting pending scan")
                     self.startScanning()
                 }
+                // If we were reconnecting, make sure scan resumes
+                if self.isAttemptingReconnect {
+                    self.ensureScanningForReconnect()
+                }
             case .poweredOff:
                 print("❌ Bluetooth powered off")
             case .unauthorized:
@@ -564,9 +584,15 @@ extension BluetoothManager: CBCentralManagerDelegate {
         let deviceID = peripheral.identifier
         let now = Date()
         
-        if let lastUpdate = lastRSSIUpdate[deviceID] {
-            if now.timeIntervalSince(lastUpdate) < rssiUpdateInterval {
-                return
+        // During reconnection, skip the RSSI throttle for our target device
+        // so we can react to every single advertisement immediately
+        let isReconnectTarget = isAttemptingReconnect && deviceID == reconnectTargetDeviceID
+        
+        if !isReconnectTarget {
+            if let lastUpdate = lastRSSIUpdate[deviceID] {
+                if now.timeIntervalSince(lastUpdate) < rssiUpdateInterval {
+                    return
+                }
             }
         }
         
@@ -597,6 +623,9 @@ extension BluetoothManager: CBCentralManagerDelegate {
                     bondManager.updateDeviceName(deviceID: deviceID, name: name)
                 }
             }
+            
+            // IMMEDIATE reconnection: if this is our target device, connect right now
+            self.tryImmediateReconnect(device: device)
         }
     }
     
@@ -685,6 +714,12 @@ extension BluetoothManager: CBCentralManagerDelegate {
             self.connectionTimer = nil
             self.isConnecting = false
             self.pendingConnectionDevice = nil
+            
+            // If we're reconnecting, we should keep trying — the scan is still active
+            // and the next advertisement will trigger another attempt
+            if self.isAttemptingReconnect {
+                print("🔄 Connection failed but still reconnecting — will retry on next advertisement")
+            }
         }
     }
 }
@@ -744,7 +779,6 @@ extension BluetoothManager: CBPeripheralDelegate {
         }
         
         // After characteristics are discovered, trigger motion log sync after a delay
-        // to allow the initial status notification to come through first
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
             guard let self = self, self.connectedDevice != nil else { return }
             print("📋 Auto-syncing motion logs after connection...")
@@ -785,7 +819,6 @@ extension BluetoothManager: CBPeripheralDelegate {
         // ─── Check if this is a motion alert (0xFF) ───
         if firstByte == MOTION_ALERT_MARKER {
             print("🚨 Motion alert received from device!")
-            // Extract battery if present
             if data.count >= 2 {
                 let batteryByte = data[1]
                 let charging = (batteryByte & 0x80) != 0
@@ -795,7 +828,6 @@ extension BluetoothManager: CBPeripheralDelegate {
                     self.isCharging = charging
                 }
             }
-            // Trigger a motion log sync to pull the new event
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 self?.requestMotionLogCount()
             }
@@ -809,7 +841,6 @@ extension BluetoothManager: CBPeripheralDelegate {
         }
         
         // ─── Otherwise it's a regular status update ───
-        // Byte 0: deviceState settings byte
         let settingsByte = firstByte
         
         DispatchQueue.main.async {
@@ -822,7 +853,7 @@ extension BluetoothManager: CBPeripheralDelegate {
             print("📥 Received device state: 0x\(String(format: "%02X", settingsByte)) - \(self.deviceStateText) (was: 0x\(String(format: "%02X", oldState)))")
         }
         
-        // Byte 1: battery level (bit 7 = charging flag, bits 0-6 = SOC %)
+        // Byte 1: battery level
         if data.count >= 2 {
             let batteryByte = data[1]
             let charging = (batteryByte & 0x80) != 0
@@ -835,7 +866,7 @@ extension BluetoothManager: CBPeripheralDelegate {
             }
         }
         
-        // Bytes 2-5: debug data (current draw + voltage)
+        // Bytes 2-5: debug data
         if data.count >= 6 {
             let currentLow = UInt16(data[2])
             let currentHigh = UInt16(data[3])
