@@ -9,8 +9,9 @@ import SwiftUI
 
 struct MotionLogsView: View {
     @Environment(\.dismiss) var dismiss
-    @ObservedObject private var motionLogManager = MotionLogManager.shared
+    @StateObject private var motionLogManager = MotionLogManager.shared
     @State private var selectedDate: Date
+    @State private var refreshID = UUID()
     
     init() {
         // Initialize with today's date
@@ -73,6 +74,7 @@ struct MotionLogsView: View {
                 .listStyle(.insetGrouped)
             }
         }
+        .id(refreshID)
         .navigationTitle("Motion Logs")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -89,6 +91,10 @@ struct MotionLogsView: View {
                     }
                 }
             }
+        }
+        .onReceive(motionLogManager.$motionEvents) { _ in
+            // Force UI refresh when motion events change
+            refreshID = UUID()
         }
     }
     

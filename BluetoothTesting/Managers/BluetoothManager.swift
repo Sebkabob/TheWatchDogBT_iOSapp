@@ -25,6 +25,10 @@ class BluetoothManager: NSObject, ObservableObject {
     @Published var connectionStartTime: Date?
     @Published var connectionDuration: TimeInterval = 0
     
+    // Motion log sync state
+    @Published var pendingEventCount: Int = 0
+    @Published var isSyncingMotionLogs: Bool = false
+    
     private let settingsManager = SettingsManager.shared
     
     private var centralManager: CBCentralManager!
@@ -61,6 +65,19 @@ class BluetoothManager: NSObject, ObservableObject {
     
     // Flag to suppress auto-reconnect after user-initiated disconnect
     var suppressAutoReconnect = false
+    
+    // Motion log response opcodes (must match firmware definitions)
+    private let RESP_LOG_COUNT: UInt8       = 0xE0
+    private let RESP_EVENT_DATA: UInt8      = 0xE1
+    private let RESP_NO_MORE_EVENTS: UInt8  = 0xE2
+    private let RESP_LOG_CLEARED: UInt8     = 0xE3
+    private let MOTION_ALERT_MARKER: UInt8  = 0xFF
+    
+    // Motion log command opcodes
+    private let CMD_REQUEST_LOG_COUNT: UInt8 = 0xF0
+    private let CMD_REQUEST_EVENT: UInt8     = 0xF1
+    private let CMD_CLEAR_LOG: UInt8         = 0xF2
+    private let CMD_ACK_EVENT: UInt8         = 0xF3
     
     var deviceStateText: String {
         let isArmed = (deviceState & 0x01) != 0
@@ -201,6 +218,8 @@ class BluetoothManager: NSObject, ObservableObject {
             self.debugVoltage = 0.0
             self.connectionStartTime = nil
             self.connectionDuration = 0
+            self.pendingEventCount = 0
+            self.isSyncingMotionLogs = false
         }
     }
     
@@ -225,6 +244,157 @@ class BluetoothManager: NSObject, ObservableObject {
         let data = Data([settingsByte])
         sendData(data)
         print("📤 Sent settings byte: 0x\(String(format: "%02X", settingsByte))")
+    }
+    
+    // MARK: - Motion Log Sync
+    
+    /// Request the total count of motion events stored on firmware
+    func requestMotionLogCount() {
+        guard connectedDevice != nil else {
+            print("❌ Cannot request motion log count - not connected")
+            return
+        }
+        
+        DispatchQueue.main.async {
+            self.isSyncingMotionLogs = true
+        }
+        
+        let data = Data([CMD_REQUEST_LOG_COUNT])
+        sendData(data)
+        print("📤 Requested motion log count")
+    }
+    
+    /// Request a specific motion event by index
+    func requestMotionEvent(at index: UInt16) {
+        let data = Data([CMD_REQUEST_EVENT, UInt8((index >> 8) & 0xFF), UInt8(index & 0xFF)])
+        sendData(data)
+        print("📤 Requested motion event at index \(index)")
+    }
+    
+    /// Tell firmware to clear its motion log
+    func clearMotionLog() {
+        let data = Data([CMD_CLEAR_LOG])
+        sendData(data)
+        print("📤 Requested motion log clear")
+    }
+    
+    /// Handle incoming motion log response packets from firmware
+    private func handleMotionLogResponse(data: Data) {
+        guard data.count >= 1 else { return }
+        
+        let responseType = data[0]
+        
+        switch responseType {
+        case RESP_LOG_COUNT:
+            // Format: [0xE0] [countHigh] [countLow]
+            guard data.count >= 3 else {
+                print("❌ RESP_LOG_COUNT packet too short: \(data.count) bytes")
+                return
+            }
+            let count = (UInt16(data[1]) << 8) | UInt16(data[2])
+            print("📥 Motion log count: \(count)")
+            
+            DispatchQueue.main.async {
+                self.pendingEventCount = Int(count)
+                
+                if count > 0 {
+                    // Start requesting events one by one, starting at index 0
+                    self.requestMotionEvent(at: 0)
+                } else {
+                    print("✅ No motion events to sync")
+                    self.isSyncingMotionLogs = false
+                }
+            }
+            
+        case RESP_EVENT_DATA:
+            // Format: [0xE1] [indexHigh] [indexLow] [year] [month] [day] [hour] [minute] [second] [motionType] [battery]
+            guard data.count >= 10 else {
+                print("❌ RESP_EVENT_DATA packet too short: \(data.count) bytes")
+                return
+            }
+            let index = (UInt16(data[1]) << 8) | UInt16(data[2])
+            let year = data[3]
+            let month = data[4]
+            let day = data[5]
+            let hour = data[6]
+            let minute = data[7]
+            let second = data[8]
+            let motionType = data[9]
+            
+            // Build date from firmware RTC timestamp
+            // If firmware RTC is not set, year/month/day will be 0/0/0 or 0/1/1
+            // In that case, use the current iOS time instead
+            var timestamp: Date
+            
+            if year == 0 && month <= 1 && day <= 1 {
+                // Firmware RTC not set — use current time as best approximation
+                timestamp = Date()
+                print("⚠️ Firmware RTC not set (year=0), using current iOS time for event")
+            } else {
+                var components = DateComponents()
+                components.year = 2000 + Int(year)
+                components.month = max(1, Int(month))
+                components.day = max(1, Int(day))
+                components.hour = Int(hour)
+                components.minute = Int(minute)
+                components.second = Int(second)
+                
+                let calendar = Calendar.current
+                timestamp = calendar.date(from: components) ?? Date()
+            }
+            
+            // Convert firmware motion type to iOS event type
+            let config = MotionTypeConfig.convert(firmwareType: motionType)
+            let event = MotionEvent(
+                timestamp: timestamp,
+                eventType: config.eventType,
+                alarmSounded: config.alarmSounded
+            )
+            
+            DispatchQueue.main.async {
+                MotionLogManager.shared.addMotionEvent(event)
+                print("📥 Motion event \(index): \(event.eventType.displayName) at \(timestamp)")
+                
+                // Acknowledge receipt
+                let ackData = Data([self.CMD_ACK_EVENT, UInt8((index >> 8) & 0xFF), UInt8(index & 0xFF)])
+                self.sendData(ackData)
+                
+                // Request next event
+                let nextIndex = index + 1
+                if nextIndex < UInt16(self.pendingEventCount) {
+                    // Small delay to avoid overwhelming the BLE link
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        self.requestMotionEvent(at: nextIndex)
+                    }
+                } else {
+                    print("✅ All \(self.pendingEventCount) motion events synced")
+                    // Clear the log on the firmware after successful sync
+                    self.clearMotionLog()
+                    self.isSyncingMotionLogs = false
+                }
+            }
+            
+        case RESP_NO_MORE_EVENTS:
+            if data.count >= 3 {
+                let index = (UInt16(data[1]) << 8) | UInt16(data[2])
+                print("📥 No more motion events (requested index \(index))")
+            } else {
+                print("📥 No more motion events")
+            }
+            DispatchQueue.main.async {
+                self.isSyncingMotionLogs = false
+            }
+            
+        case RESP_LOG_CLEARED:
+            print("📥 Motion log cleared on device")
+            DispatchQueue.main.async {
+                self.pendingEventCount = 0
+                self.isSyncingMotionLogs = false
+            }
+            
+        default:
+            print("⚠️ Unknown motion log response: 0x\(String(format: "%02X", responseType))")
+        }
     }
     
     // MARK: - Background Scanning for Bonded Devices
@@ -499,6 +669,8 @@ extension BluetoothManager: CBCentralManagerDelegate {
             self.debugVoltage = 0.0
             self.connectionStartTime = nil
             self.connectionDuration = 0
+            self.pendingEventCount = 0
+            self.isSyncingMotionLogs = false
             
             self.connectionDurationTimer?.invalidate()
             self.connectionDurationTimer = nil
@@ -570,6 +742,14 @@ extension BluetoothManager: CBPeripheralDelegate {
                 peripheral.readValue(for: characteristic)
             }
         }
+        
+        // After characteristics are discovered, trigger motion log sync after a delay
+        // to allow the initial status notification to come through first
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+            guard let self = self, self.connectedDevice != nil else { return }
+            print("📋 Auto-syncing motion logs after connection...")
+            self.requestMotionLogCount()
+        }
     }
     
     func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
@@ -598,20 +778,51 @@ extension BluetoothManager: CBPeripheralDelegate {
         
         print("📦 Received \(data.count) bytes: \(data.map { String(format: "%02X", $0) }.joined(separator: " "))")
         
-        if data.count >= 1 {
-            let settingsByte = data[0]
-            
-            DispatchQueue.main.async {
-                let oldState = self.deviceState
-                self.deviceState = settingsByte
-                self.hasReceivedInitialState = true
-                
-                self.settingsManager.decodeSettings(from: settingsByte)
-                
-                print("📥 Received device state: 0x\(String(format: "%02X", settingsByte)) - \(self.deviceStateText) (was: 0x\(String(format: "%02X", oldState)))")
+        guard data.count >= 1 else { return }
+        
+        let firstByte = data[0]
+        
+        // ─── Check if this is a motion alert (0xFF) ───
+        if firstByte == MOTION_ALERT_MARKER {
+            print("🚨 Motion alert received from device!")
+            // Extract battery if present
+            if data.count >= 2 {
+                let batteryByte = data[1]
+                let charging = (batteryByte & 0x80) != 0
+                let battery = Int(batteryByte & 0x7F)
+                DispatchQueue.main.async {
+                    self.batteryLevel = battery
+                    self.isCharging = charging
+                }
             }
+            // Trigger a motion log sync to pull the new event
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.requestMotionLogCount()
+            }
+            return
         }
         
+        // ─── Check if this is a motion log response (0xE0–0xE3) ───
+        if firstByte >= 0xE0 && firstByte <= 0xE3 {
+            handleMotionLogResponse(data: data)
+            return
+        }
+        
+        // ─── Otherwise it's a regular status update ───
+        // Byte 0: deviceState settings byte
+        let settingsByte = firstByte
+        
+        DispatchQueue.main.async {
+            let oldState = self.deviceState
+            self.deviceState = settingsByte
+            self.hasReceivedInitialState = true
+            
+            self.settingsManager.decodeSettings(from: settingsByte)
+            
+            print("📥 Received device state: 0x\(String(format: "%02X", settingsByte)) - \(self.deviceStateText) (was: 0x\(String(format: "%02X", oldState)))")
+        }
+        
+        // Byte 1: battery level (bit 7 = charging flag, bits 0-6 = SOC %)
         if data.count >= 2 {
             let batteryByte = data[1]
             let charging = (batteryByte & 0x80) != 0
@@ -624,6 +835,7 @@ extension BluetoothManager: CBPeripheralDelegate {
             }
         }
         
+        // Bytes 2-5: debug data (current draw + voltage)
         if data.count >= 6 {
             let currentLow = UInt16(data[2])
             let currentHigh = UInt16(data[3])

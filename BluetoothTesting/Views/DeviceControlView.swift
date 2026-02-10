@@ -78,7 +78,7 @@ struct DeviceControlView: View {
     
     private var statusText: String {
         if !isDeviceConnected {
-            return "Disconnected"
+            return "Unknown"
         }
         return bluetoothManager.deviceStateText
     }
