@@ -27,7 +27,7 @@ struct Motion3DView: View {
     
     @StateObject private var ledPulseManager = LEDPulseManager()
     
-    let usdzFileName = "WatchDogBTCase_Final"
+    let usdzFileName = "WatchDogBTCase_V2"
     var isLocked: Bool = false
     var bluetoothManager: BluetoothManager
     var allowSettingsTap: Bool = true

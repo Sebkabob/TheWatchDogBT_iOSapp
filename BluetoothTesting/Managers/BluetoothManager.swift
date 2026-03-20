@@ -49,7 +49,7 @@ class BluetoothManager: NSObject, ObservableObject {
     private var connectionDurationTimer: Timer?
     
     // Track if we're in the middle of connecting to prevent duplicate attempts
-    private var isConnecting = false
+    private(set) var isConnecting = false
     private var pendingConnectionDevice: UUID?
     
     // Background scanning for bonded devices list
@@ -64,6 +64,12 @@ class BluetoothManager: NSObject, ObservableObject {
     
     // Flag to suppress auto-reconnect after user-initiated disconnect
     var suppressAutoReconnect = false
+    
+    // Scan health monitoring — restarts scan if it silently dies
+    private var scanHealthTimer: Timer?
+    private var lastAdvertisementReceived: Date?
+    private let scanHealthCheckInterval: TimeInterval = 6.0   // check every 6s
+    private let scanStaleThreshold: TimeInterval = 10.0        // restart if no ads for 10s
     
     // Motion log response opcodes (must match firmware definitions)
     private let RESP_LOG_COUNT: UInt8       = 0xE0
@@ -121,6 +127,7 @@ class BluetoothManager: NSObject, ObservableObject {
         
         DispatchQueue.main.async {
             self.isScanning = true
+            self.lastAdvertisementReceived = Date()
         }
         
         print("✅ Started scanning for 0x183E devices")
@@ -130,6 +137,8 @@ class BluetoothManager: NSObject, ObservableObject {
                 self?.removeStaleDevices()
             }
         }
+        
+        startScanHealthMonitor()
     }
     
     func stopScanning() {
@@ -144,6 +153,9 @@ class BluetoothManager: NSObject, ObservableObject {
             self.staleDeviceTimer?.invalidate()
             self.staleDeviceTimer = nil
         }
+        
+        stopScanHealthMonitor()
+        
         print("🛑 Stopped scanning")
     }
     
@@ -416,6 +428,74 @@ class BluetoothManager: NSObject, ObservableObject {
         print("🛑 Stopped background scanning")
     }
     
+    // MARK: - Scan Health Monitoring
+    
+    private func startScanHealthMonitor() {
+        stopScanHealthMonitor()
+        
+        DispatchQueue.main.async {
+            self.scanHealthTimer = Timer.scheduledTimer(withTimeInterval: self.scanHealthCheckInterval, repeats: true) { [weak self] _ in
+                self?.checkScanHealth()
+            }
+        }
+        print("🏥 Scan health monitor started")
+    }
+    
+    private func stopScanHealthMonitor() {
+        DispatchQueue.main.async {
+            self.scanHealthTimer?.invalidate()
+            self.scanHealthTimer = nil
+        }
+    }
+    
+    private func checkScanHealth() {
+        // Only check if we expect to be scanning
+        guard isScanning || isBackgroundScanning else { return }
+        guard isBluetoothReady else { return }
+        // Don't restart scan while actively connected — we don't need advertisements
+        guard connectedDevice == nil else { return }
+        
+        // If we have bonded devices, we expect to see advertisements
+        let hasBondedDevices = !BondManager.shared.bondedDevices.isEmpty
+        guard hasBondedDevices else { return }
+        
+        if let lastAd = lastAdvertisementReceived {
+            let timeSinceLastAd = Date().timeIntervalSince(lastAd)
+            if timeSinceLastAd > scanStaleThreshold {
+                print("🏥 Scan health: No advertisements for \(String(format: "%.1f", timeSinceLastAd))s — restarting scan")
+                restartScan()
+            }
+        } else {
+            // Never received an advertisement since scan started — restart
+            print("🏥 Scan health: No advertisements ever received — restarting scan")
+            restartScan()
+        }
+    }
+    
+    /// Force-restart the BLE scan to recover from silent scan death
+    private func restartScan() {
+        guard isBluetoothReady else { return }
+        
+        centralManager.stopScan()
+        
+        // Small delay before restarting
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self = self, self.isBluetoothReady else { return }
+            
+            self.centralManager.scanForPeripherals(
+                withServices: [self.targetServiceUUID],
+                options: [
+                    CBCentralManagerScanOptionAllowDuplicatesKey: true,
+                    CBCentralManagerScanOptionSolicitedServiceUUIDsKey: [self.targetServiceUUID]
+                ]
+            )
+            
+            self.isScanning = true
+            self.lastAdvertisementReceived = Date()
+            print("🏥 Scan restarted successfully")
+        }
+    }
+    
     // MARK: - Reconnection Support
     
     func startReconnecting(to deviceID: UUID) {
@@ -483,7 +563,10 @@ class BluetoothManager: NSObject, ObservableObject {
         
         DispatchQueue.main.async {
             self.isScanning = true
+            self.lastAdvertisementReceived = Date()
         }
+        
+        startScanHealthMonitor()
         
         print("🔍 Started scanning for reconnection target")
     }
@@ -584,11 +667,18 @@ extension BluetoothManager: CBCentralManagerDelegate {
         let deviceID = peripheral.identifier
         let now = Date()
         
+        // Track that we received an advertisement (for scan health monitoring)
+        lastAdvertisementReceived = now
+        
         // During reconnection, skip the RSSI throttle for our target device
         // so we can react to every single advertisement immediately
         let isReconnectTarget = isAttemptingReconnect && deviceID == reconnectTargetDeviceID
         
-        if !isReconnectTarget {
+        // Skip RSSI throttle for bonded devices — they must always update lastSeen
+        // so the UI shows them as "in range" without delay
+        let isBondedDevice = BondManager.shared.isBonded(deviceID: deviceID)
+        
+        if !isReconnectTarget && !isBondedDevice {
             if let lastUpdate = lastRSSIUpdate[deviceID] {
                 if now.timeIntervalSince(lastUpdate) < rssiUpdateInterval {
                     return
