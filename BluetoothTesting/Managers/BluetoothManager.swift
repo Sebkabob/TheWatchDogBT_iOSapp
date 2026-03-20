@@ -40,7 +40,7 @@ class BluetoothManager: NSObject, ObservableObject {
     private var lastRSSIUpdate: [UUID: Date] = [:]
     private let rssiUpdateInterval: TimeInterval = 1.0
     
-    private let deviceTimeout: TimeInterval = 5.0
+    private let deviceTimeout: TimeInterval = 8.0
     private var staleDeviceTimer: Timer?
     
     private var connectionTimer: Timer?
