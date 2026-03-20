@@ -26,8 +26,9 @@ struct DevicePageView: View {
     // Track model visibility with animation
     @State private var showModel = false
     
-    // Track whether to show the "not in range" text
-    @State private var showDisconnectedText = false
+    // Local "connecting" state — set immediately on button press for instant feedback.
+    // Cleared when connection succeeds or fails.
+    @State private var isConnectingThisDevice = false
     
     // Debug graph history (last 3 minutes)
     @State private var currentHistory: [(date: Date, value: Double)] = []
@@ -48,9 +49,10 @@ struct DevicePageView: View {
     }
     
     /// Whether this device is currently seen via BLE advertisements OR is connected.
-    /// Connected devices stop advertising, so we must treat connected == in range.
+    /// Connected devices stop advertising, so connected == in range.
     private var isDeviceInRange: Bool {
         if isDeviceConnected { return true }
+        if isConnectingThisDevice { return true }
         // Check bond manager for recent advertisement
         if let bond = bondManager.getBond(deviceID: deviceID), bond.isInRange {
             return true
@@ -61,10 +63,8 @@ struct DevicePageView: View {
     
     /// Whether the connect button should be enabled
     private var canConnect: Bool {
-        // Can connect if: device is in range, NOT already connected to this device,
-        // and not currently in the middle of connecting
         if isDeviceConnected { return false }
-        if bluetoothManager.isConnecting { return false }
+        if isConnectingThisDevice { return false }
         return isDeviceInRange
     }
     
@@ -108,7 +108,6 @@ struct DevicePageView: View {
     }
     
     // MARK: - Body
-    // Layout matches original DeviceControlView exactly
     
     var body: some View {
         VStack(spacing: 0) {
@@ -160,41 +159,35 @@ struct DevicePageView: View {
             
             // MARK: 3D Model Section with Debug Info
             ZStack(alignment: .leading) {
-                if showModel && isDeviceConnected {
-                    // 3D Model - Centered (tapping opens settings)
-                    Motion3DView(
-                        isLocked: isLocked,
-                        bluetoothManager: bluetoothManager,
-                        allowSettingsTap: true,
-                        targetDeviceID: deviceID
-                    )
-                    .frame(maxWidth: .infinity)
-                    .transition(.opacity)
-                } else if showDisconnectedText {
-                    // Disconnected placeholder
+                if isDeviceInRange {
+                    // Device is in range (connected or just advertising) — show 3D model
+                    if showModel {
+                        Motion3DView(
+                            isLocked: isLocked,
+                            bluetoothManager: bluetoothManager,
+                            // Only allow settings tap when connected
+                            allowSettingsTap: isDeviceConnected,
+                            targetDeviceID: deviceID
+                        )
+                        .frame(maxWidth: .infinity)
+                        // Dim the model slightly when not connected to hint it's a preview
+                        .opacity(isDeviceConnected ? 1.0 : 0.6)
+                        .transition(.opacity)
+                    } else {
+                        Color.clear
+                            .frame(maxWidth: .infinity)
+                    }
+                } else {
+                    // Device is NOT in range — show placeholder
                     VStack {
                         Spacer()
-                        if bluetoothManager.isAttemptingReconnect {
-                            VStack(spacing: 12) {
-                                ProgressView()
-                                    .scaleEffect(1.2)
-                                Text("Reconnecting...")
-                                    .font(.title3)
-                                    .foregroundColor(.gray)
-                            }
-                        } else {
-                            Text("Device not in range")
-                                .font(.title3)
-                                .foregroundColor(.gray)
-                        }
+                        Text("Device not in range")
+                            .font(.title3)
+                            .foregroundColor(.gray)
                         Spacer()
                     }
                     .frame(maxWidth: .infinity)
                     .transition(.opacity)
-                } else {
-                    // Empty state (initial load, before fade-in)
-                    Color.clear
-                        .frame(maxWidth: .infinity)
                 }
                 
                 // Debug Info Box - Left side (only when connected and debug enabled)
@@ -242,8 +235,9 @@ struct DevicePageView: View {
                     }
                 }
             }
-            .animation(.easeInOut(duration: 1.0), value: showModel && isDeviceConnected)
-            .animation(.easeInOut(duration: 0.5), value: showDisconnectedText)
+            .animation(.easeInOut(duration: 0.5), value: isDeviceInRange)
+            .animation(.easeInOut(duration: 1.0), value: showModel)
+            .animation(.easeInOut(duration: 0.3), value: isDeviceConnected)
             
             // MARK: Bottom Control Section
             VStack(spacing: 12) {
@@ -286,20 +280,31 @@ struct DevicePageView: View {
                             .background(Color.red.opacity(0.8))
                             .cornerRadius(10)
                         }
+                    } else if isConnectingThisDevice {
+                        // Connecting state — shown immediately on button press
+                        Button(action: { }) {
+                            HStack {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                    .scaleEffect(0.8)
+                                Text("Connecting...")
+                            }
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color.orange)
+                            .cornerRadius(10)
+                        }
+                        .disabled(true)
                     } else {
                         // Connect button (green when in range, grey when not)
                         Button(action: {
                             connectDevice()
                         }) {
                             HStack {
-                                if bluetoothManager.isConnecting {
-                                    ProgressView()
-                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                        .scaleEffect(0.8)
-                                } else {
-                                    Image(systemName: "antenna.radiowaves.left.and.right")
-                                }
-                                Text(bluetoothManager.isConnecting ? "Connecting..." : "Connect")
+                                Image(systemName: "antenna.radiowaves.left.and.right")
+                                Text("Connect")
                             }
                             .font(.headline)
                             .foregroundColor(.white)
@@ -343,20 +348,11 @@ struct DevicePageView: View {
             
             print("🎬 DevicePageView appeared - deviceID=\(deviceID.uuidString.prefix(8)), connected=\(isDeviceConnected), inRange=\(isDeviceInRange)")
             
+            // Always try to show model if in range
+            updateModelVisibility()
+            
             if isDeviceConnected {
-                // Connected - fade model in
-                showDisconnectedText = false
-                showModel = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    withAnimation(.easeInOut(duration: 1.0)) {
-                        showModel = true
-                    }
-                }
                 startGraphUpdates()
-            } else {
-                // Not connected - show disconnected state immediately
-                showModel = false
-                showDisconnectedText = true
             }
         }
         .onDisappear {
@@ -369,27 +365,47 @@ struct DevicePageView: View {
         }
         .onChange(of: isDeviceConnected) { connected in
             if connected {
-                // Device connected - fade in model
+                // Connection succeeded — clear the connecting flag
+                isConnectingThisDevice = false
                 print("🔄 Device connected, fading in model")
-                showDisconnectedText = false
                 withAnimation(.easeInOut(duration: 1.0)) {
                     showModel = true
                 }
                 startGraphUpdates()
             } else {
-                // Device disconnected - fade out and show disconnected text
-                print("📵 Device disconnected, fading out model")
-                withAnimation(.easeInOut(duration: 1.0)) {
-                    showModel = false
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    if !self.isDeviceConnected {
-                        withAnimation(.easeInOut(duration: 0.5)) {
-                            showDisconnectedText = true
-                        }
-                    }
-                }
+                // Device disconnected
+                isConnectingThisDevice = false
+                print("📵 Device disconnected")
+                updateModelVisibility()
                 stopGraphUpdates()
+            }
+        }
+        // Watch for changes in range status to update model
+        .onChange(of: bluetoothManager.discoveredDevices.count) { _ in
+            updateModelVisibility()
+        }
+        // If the BLE manager's isConnecting goes false and we're still
+        // showing connecting state, it means connection failed
+        .onChange(of: bluetoothManager.isConnecting) { connecting in
+            if !connecting && isConnectingThisDevice && !isDeviceConnected {
+                // Connection attempt finished without success
+                print("⚠️ Connection attempt ended without success")
+                isConnectingThisDevice = false
+            }
+        }
+    }
+    
+    // MARK: - Model Visibility
+    
+    private func updateModelVisibility() {
+        let shouldShow = isDeviceInRange
+        if shouldShow && !showModel {
+            withAnimation(.easeInOut(duration: 1.0)) {
+                showModel = true
+            }
+        } else if !shouldShow && showModel {
+            withAnimation(.easeInOut(duration: 0.5)) {
+                showModel = false
             }
         }
     }
@@ -399,12 +415,15 @@ struct DevicePageView: View {
     private func connectDevice() {
         guard canConnect else { return }
         
+        // Set local connecting state IMMEDIATELY for instant UI feedback
+        isConnectingThisDevice = true
+        
         // If connected to another device, disconnect first
         if let currentDevice = bluetoothManager.connectedDevice, currentDevice.id != deviceID {
             print("🔌 Disconnecting from \(currentDevice.name) before connecting to new device")
             bluetoothManager.disconnect(from: currentDevice)
             
-            // Small delay to let disconnect complete before connecting
+            // Delay to let disconnect complete
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 self.performConnect()
             }
@@ -423,13 +442,27 @@ struct DevicePageView: View {
             bluetoothManager.connect(to: device)
         } else {
             print("⚠️ Device not found in discovered devices, cannot connect")
+            isConnectingThisDevice = false
         }
     }
     
     private func disconnectDevice() {
         if let device = bluetoothManager.connectedDevice, device.id == deviceID {
             print("🔌 User disconnecting from \(device.name)")
+            // Do NOT set suppressAutoReconnect here — MainAppView.ensureScanningActive()
+            // will clear it anyway, and we need scanning to continue so the device
+            // shows as "in range" after disconnecting.
             bluetoothManager.disconnect(from: device)
+            
+            // Explicitly restart scanning after a short delay to ensure
+            // advertisements are picked up again immediately
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                self.bluetoothManager.suppressAutoReconnect = false
+                if self.bluetoothManager.isBluetoothReady && !self.bluetoothManager.isScanning {
+                    print("🔍 Restarting scan after disconnect")
+                    self.bluetoothManager.startBackgroundScanning()
+                }
+            }
         }
     }
     

@@ -18,6 +18,9 @@ struct MainAppView: View {
     // Flag to prevent duplicate setup
     @State private var hasInitialized = false
     
+    // Periodic scan health check timer
+    @State private var scanWatchdogTimer: Timer?
+    
     // Pages layout:
     // Index 0: Add Device page
     // Index 1..N: Device pages (sorted by dateAdded, oldest first)
@@ -75,8 +78,9 @@ struct MainAppView: View {
             hasInitialized = true
             
             // Start aggressive background scanning immediately.
-            // This must stay active at all times so device pages can see
+            // This must stay active at ALL times so device pages can see
             // which devices are in range via BLE advertisements.
+            bluetoothManager.suppressAutoReconnect = false
             bluetoothManager.startBackgroundScanning()
             
             // Navigate to last interacted device, or Add page if no devices
@@ -87,9 +91,17 @@ struct MainAppView: View {
                 currentPage = page
             } else if let firstDevice = sortedDevices.first,
                       let page = pageIndex(for: firstDevice.id) {
-                // Default to first device if no last interacted
                 currentPage = page
             }
+            
+            // Start a periodic watchdog that ensures scanning is ALWAYS alive.
+            // This catches any edge case where scanning dies (after disconnect,
+            // Bluetooth state changes, etc.)
+            startScanWatchdog()
+        }
+        .onDisappear {
+            scanWatchdogTimer?.invalidate()
+            scanWatchdogTimer = nil
         }
         .onChange(of: currentPage) { newPage in
             // Save the current device as last interacted
@@ -99,9 +111,6 @@ struct MainAppView: View {
                 NavigationStateManager.shared.saveDeviceList()
             }
             
-            // Ensure scanning is always active when navigating between pages.
-            // After a disconnect, suppressAutoReconnect may be true and scanning
-            // may have stopped — restart it so other device pages see advertisements.
             ensureScanningActive()
         }
         // When Bluetooth becomes ready, make sure we're scanning
@@ -125,18 +134,33 @@ struct MainAppView: View {
         }
     }
     
-    /// Ensure BLE scanning is always running. This is critical because:
-    /// - Device pages need fresh advertisements to show "in range" status
-    /// - After disconnect, suppressAutoReconnect=true can prevent scanning restart
-    /// - The pager needs all devices' RSSI to be up to date
+    /// Ensure BLE scanning is always running.
     private func ensureScanningActive() {
         // Always clear suppress flag — in the pager model, the user controls
         // connect/disconnect explicitly via buttons, not via auto-reconnect
         bluetoothManager.suppressAutoReconnect = false
         
-        if bluetoothManager.isBluetoothReady && !bluetoothManager.isScanning {
+        guard bluetoothManager.isBluetoothReady else { return }
+        
+        if !bluetoothManager.isScanning {
             print("🔍 MainAppView: Restarting background scan")
             bluetoothManager.startBackgroundScanning()
+        }
+    }
+    
+    /// Periodic watchdog that checks every 3 seconds if scanning is still alive.
+    /// If scanning has died for any reason, it restarts it.
+    private func startScanWatchdog() {
+        scanWatchdogTimer?.invalidate()
+        scanWatchdogTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { _ in
+            // Only restart if Bluetooth is ready and we're not scanning
+            // Don't restart if we're currently connected (we don't need ads while connected,
+            // but it's fine to keep scanning — CoreBluetooth handles this)
+            if bluetoothManager.isBluetoothReady && !bluetoothManager.isScanning {
+                print("🐕 Scan watchdog: scanning was dead, restarting!")
+                bluetoothManager.suppressAutoReconnect = false
+                bluetoothManager.startBackgroundScanning()
+            }
         }
     }
 }
