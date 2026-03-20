@@ -31,6 +31,8 @@ struct Motion3DView: View {
     var isLocked: Bool = false
     var bluetoothManager: BluetoothManager
     var allowSettingsTap: Bool = true
+    /// Device ID to pass to settings when opened (used when tapping 3D model)
+    var targetDeviceID: UUID? = nil
     
     // Sensitivity and physics
     private let dragSensitivity: Double = 0.008
@@ -98,7 +100,10 @@ struct Motion3DView: View {
             )
         }
         .sheet(isPresented: $showSettings) {
-            WatchDogSettingsView(bluetoothManager: bluetoothManager)
+            WatchDogSettingsView(
+                bluetoothManager: bluetoothManager,
+                targetDeviceID: targetDeviceID
+            )
         }
         .onAppear {
             if isLocked {
