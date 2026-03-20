@@ -151,14 +151,14 @@ struct BondedDevicesListView: View {
             print("👋 BondedDevicesListView: View disappeared")
             bluetoothManager.stopBackgroundScanning()
         }
-        .onChange(of: bluetoothManager.isBluetoothReady) { newValue in
+        .onChange(of: bluetoothManager.isBluetoothReady) { _, newValue in
             print("🔵 BondedDevicesListView: Bluetooth ready changed to \(newValue)")
             if newValue && !bluetoothManager.isScanning {
                 print("🔍 BondedDevicesListView: Bluetooth ready - starting background scan")
                 bluetoothManager.startBackgroundScanning()
             }
         }
-        .onChange(of: bluetoothManager.hasReceivedInitialState) { newValue in
+        .onChange(of: bluetoothManager.hasReceivedInitialState) { _, newValue in
             // Navigate to device control view once we have initial state
             // Only if we initiated a connection from this view (connectingDeviceID is set)
             if let deviceID = connectingDeviceID,
@@ -171,10 +171,10 @@ struct BondedDevicesListView: View {
                 connectingDeviceID = nil
             }
         }
-        .onChange(of: bluetoothManager.connectedDevice) { device in
+        .onChange(of: bluetoothManager.connectedDevice) { _, device in
             // If we were waiting for a connection and it failed (device became nil),
             // clear the overlay
-            if let waitingFor = connectingDeviceID, device == nil {
+            if connectingDeviceID != nil && device == nil {
                 // Check if we're still supposed to be connecting
                 // (connection dropped before initial state)
                 if !bluetoothManager.isConnecting {

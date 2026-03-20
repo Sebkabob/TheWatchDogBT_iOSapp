@@ -388,7 +388,7 @@ struct CalendarView: View {
         }
         .padding(.vertical, 8)
         // Sync currentMonth when selectedDate changes (e.g. from picker)
-        .onChange(of: selectedDate) { newDate in
+        .onChange(of: selectedDate) { _, newDate in
             let selectedMonthStart = calendar.dateInterval(of: .month, for: newDate)?.start
             let currentMonthStart = calendar.dateInterval(of: .month, for: currentMonth)?.start
             if selectedMonthStart != currentMonthStart {

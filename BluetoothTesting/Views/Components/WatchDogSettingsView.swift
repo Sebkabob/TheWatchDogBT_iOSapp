@@ -53,7 +53,7 @@ struct WatchDogSettingsView: View {
                     // WatchDog Name Section
                     Section(header: Text("Device Name")) {
                         TextField("WatchDog Name", text: $watchDogName)
-                            .onChange(of: watchDogName) { newValue in
+                            .onChange(of: watchDogName) { _, newValue in
                                 if newValue.count > maxNameLength {
                                     watchDogName = String(newValue.prefix(maxNameLength))
                                 }

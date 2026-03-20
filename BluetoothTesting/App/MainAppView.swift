@@ -103,7 +103,7 @@ struct MainAppView: View {
             scanWatchdogTimer?.invalidate()
             scanWatchdogTimer = nil
         }
-        .onChange(of: currentPage) { newPage in
+        .onChange(of: currentPage) { _, newPage in
             // Save the current device as last interacted
             if let devID = deviceID(for: newPage) {
                 NavigationStateManager.shared.saveDeviceControl(deviceID: devID)
@@ -114,13 +114,13 @@ struct MainAppView: View {
             ensureScanningActive()
         }
         // When Bluetooth becomes ready, make sure we're scanning
-        .onChange(of: bluetoothManager.isBluetoothReady) { ready in
+        .onChange(of: bluetoothManager.isBluetoothReady) { _, ready in
             if ready {
                 ensureScanningActive()
             }
         }
         // When a new device is bonded, the sortedDevices array changes
-        .onChange(of: bondManager.bondedDevices.count) { newCount in
+        .onChange(of: bondManager.bondedDevices.count) { _, newCount in
             // If devices were added and we're on the Add page, jump to the newest device
             if currentPage == 0 && !sortedDevices.isEmpty {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {

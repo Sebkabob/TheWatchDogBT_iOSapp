@@ -248,19 +248,18 @@ struct DevicePageView: View {
                     isDisabled: !isDeviceConnected
                 )
                 .padding(.horizontal, 20)
-                .gesture(
-                    isDeviceConnected ?
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { _ in
-                            if !isHolding {
-                                startHolding()
-                            }
-                        }
-                        .onEnded { _ in
+                .onLongPressGesture(minimumDuration: 1.0, pressing: { isPressing in
+                    if isDeviceConnected {
+                        if isPressing {
+                            startHolding()
+                        } else {
                             stopHolding()
                         }
-                    : nil
-                )
+                    }
+                }, perform: {
+                    // This fires when the full duration is reached
+                    // completeHold() is already called by the fill timer
+                })
                 
                 // Bottom buttons row
                 HStack(spacing: 12) {
@@ -358,12 +357,12 @@ struct DevicePageView: View {
         .onDisappear {
             stopGraphUpdates()
         }
-        .onChange(of: settingsManager.isArmed) { newIsArmed in
+        .onChange(of: settingsManager.isArmed) { _, newIsArmed in
             if isLocked != newIsArmed {
                 isLocked = newIsArmed
             }
         }
-        .onChange(of: isDeviceConnected) { connected in
+        .onChange(of: isDeviceConnected) { _, connected in
             if connected {
                 // Connection succeeded — clear the connecting flag
                 isConnectingThisDevice = false
@@ -381,12 +380,12 @@ struct DevicePageView: View {
             }
         }
         // Watch for changes in range status to update model
-        .onChange(of: bluetoothManager.discoveredDevices.count) { _ in
+        .onChange(of: bluetoothManager.discoveredDevices.count) { _, _ in
             updateModelVisibility()
         }
         // If the BLE manager's isConnecting goes false and we're still
         // showing connecting state, it means connection failed
-        .onChange(of: bluetoothManager.isConnecting) { connecting in
+        .onChange(of: bluetoothManager.isConnecting) { _, connecting in
             if !connecting && isConnectingThisDevice && !isDeviceConnected {
                 // Connection attempt finished without success
                 print("⚠️ Connection attempt ended without success")
@@ -470,6 +469,7 @@ struct DevicePageView: View {
     
     private func startHolding() {
         guard isDeviceConnected else { return }
+        guard !isHolding else { return }
         
         isHolding = true
         holdProgress = 0.0
@@ -478,18 +478,30 @@ struct DevicePageView: View {
         heavyHaptic.prepare()
         lightHaptic.impactOccurred()
         
-        withAnimation(.linear(duration: 1.0)) {
-            holdProgress = 1.0
-        }
+        // Drive the fill bar with a repeating timer (~60fps)
+        // This avoids relying on withAnimation which can be disrupted by the TabView
+        let totalDuration: Double = 1.0
+        let interval: Double = 1.0 / 60.0
+        let increment: CGFloat = CGFloat(interval / totalDuration)
         
-        holdTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { _ in
+        holdTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { timer in
             if self.isHolding {
-                self.completeHold()
+                self.holdProgress += increment
+                if self.holdProgress >= 1.0 {
+                    self.holdProgress = 1.0
+                    timer.invalidate()
+                    self.holdTimer = nil
+                    self.completeHold()
+                }
+            } else {
+                timer.invalidate()
+                self.holdTimer = nil
             }
         }
     }
     
     private func stopHolding() {
+        guard isHolding else { return }
         isHolding = false
         holdTimer?.invalidate()
         holdTimer = nil

@@ -340,12 +340,12 @@ struct DeviceControlView: View {
             stopGraphUpdates()
             bluetoothManager.stopReconnecting()
         }
-        .onChange(of: settingsManager.isArmed) { newIsArmed in
+        .onChange(of: settingsManager.isArmed) { _, newIsArmed in
             if isLocked != newIsArmed {
                 isLocked = newIsArmed
             }
         }
-        .onChange(of: bluetoothManager.connectedDevice) { device in
+        .onChange(of: bluetoothManager.connectedDevice) { _, device in
             guard !userInitiatedDisconnect else { return }
             
             if let device = device, device.id == deviceID {
