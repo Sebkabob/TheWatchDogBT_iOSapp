@@ -113,7 +113,7 @@ struct AddNewDeviceView: View {
             .onDisappear {
                 bluetoothManager.stopScanning()
             }
-            .onChange(of: bluetoothManager.connectedDevice) { connectedDevice in
+            .onChange(of: bluetoothManager.connectedDevice) { _, connectedDevice in
                 // Add bond IMMEDIATELY when connection succeeds
                 if let deviceID = connectingDeviceID,
                    let connected = connectedDevice,
@@ -335,7 +335,7 @@ struct NameYourWatchDogSheet: View {
                     TextField("WatchDog Name", text: $deviceName)
                         .textFieldStyle(.roundedBorder)
                         .padding(.horizontal, 32)
-                        .onChange(of: deviceName) { newValue in
+                        .onChange(of: deviceName) { _, newValue in
                             if newValue.count > maxNameLength {
                                 deviceName = String(newValue.prefix(maxNameLength))
                             }

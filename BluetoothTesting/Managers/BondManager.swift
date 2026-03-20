@@ -18,7 +18,7 @@ class BondManager: ObservableObject {
     
     // Timer to check for stale devices
     private var staleCheckTimer: Timer?
-    private let staleTimeout: TimeInterval = 3.0  // 3 seconds
+    private let staleTimeout: TimeInterval = 8.0  // 8 seconds — prefer showing "in range" over false "out of range"
     
     private init() {
         loadBonds()
@@ -99,8 +99,8 @@ class BondManager: ObservableObject {
     // MARK: - Stale Device Check
     
     private func startStaleDeviceCheck() {
-        // Check every second for devices that haven't been seen in 3 seconds
-        staleCheckTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        // Check every 2 seconds for devices that haven't been seen in 8 seconds
+        staleCheckTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             self?.checkForStaleDevices()
         }
         print("🔄 Started stale device check timer")
@@ -116,7 +116,7 @@ class BondManager: ObservableObject {
                let lastSeen = bondedDevices[index].lastSeen {
                 let timeSinceLastSeen = now.timeIntervalSince(lastSeen)
                 
-                // Clear RSSI if not seen in 3 seconds
+                // Clear RSSI if not seen in staleTimeout seconds
                 if timeSinceLastSeen > staleTimeout {
                     print("🕐 Device went out of range: \(bondedDevices[index].name) (last seen \(String(format: "%.1f", timeSinceLastSeen))s ago)")
                     bondedDevices[index].currentRSSI = nil

@@ -6,26 +6,48 @@
 //
 
 import SwiftUI
-import CoreMotion
 
 struct Motion3DView: View {
-    @StateObject private var motionManager = MotionManager()
-    @State private var dragRotation: SIMD3<Double> = SIMD3<Double>(0, 0, 0)
-    @State private var isDragging = false
+    // Drag rotation state
+    @State private var currentRotationX: Double = 0  // pitch (up/down)
+    @State private var currentRotationY: Double = 0  // yaw (left/right)
+    @State private var dragStartRotationX: Double = 0
+    @State private var dragStartRotationY: Double = 0
+    
+    // Momentum / inertia
+    @State private var velocityX: Double = 0
+    @State private var velocityY: Double = 0
+    @State private var lastDragTranslation: CGSize = .zero
     @State private var decayTimer: Timer?
+    
+    // Tap detection
+    @State private var dragStartTime: Date = Date()
+    @State private var dragTotalDistance: CGFloat = 0
     @State private var showSettings = false
+    
     @StateObject private var ledPulseManager = LEDPulseManager()
     
-    let usdzFileName = "WatchDogBTCase_Final"
+    let usdzFileName = "WatchDogBTCase_V2"
     var isLocked: Bool = false
     var bluetoothManager: BluetoothManager
     var allowSettingsTap: Bool = true
+    /// Device ID to pass to settings when opened (used when tapping 3D model)
+    var targetDeviceID: UUID? = nil
+    
+    // Sensitivity and physics
+    private let dragSensitivity: Double = 0.008
+    private let maxPitch: Double = 1.2       // limit vertical tilt
+    private let decayFactor: Double = 0.95   // momentum decay per frame
+    private let minVelocity: Double = 0.0005 // stop threshold
+    // Tap thresholds
+    private let tapMaxDuration: TimeInterval = 0.25
+    private let tapMaxDistance: CGFloat = 8
     
     var body: some View {
         ZStack {
             SceneView3D(
-                rotation: motionManager.rotation,
-                dragRotation: dragRotation,
+                rotation: SIMD3<Double>(currentRotationX, 0, 0),
+                dragRotation: SIMD3<Double>(0, currentRotationY, 0),
                 usdzFileName: usdzFileName,
                 ledIntensity: isLocked ? ledPulseManager.pulseIntensity : 0.0
             )
@@ -33,71 +55,62 @@ struct Motion3DView: View {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
-                        if abs(value.translation.width) > 10 || abs(value.translation.height) > 10 {
-                            isDragging = true
+                        if dragTotalDistance == 0 && lastDragTranslation == .zero {
+                            // Drag just started
+                            dragStartTime = Date()
+                            dragTotalDistance = 0
+                            dragStartRotationX = currentRotationX
+                            dragStartRotationY = currentRotationY
                             decayTimer?.invalidate()
                             decayTimer = nil
-                            
-                            let dragSensitivity = 0.005
-                            dragRotation = SIMD3<Double>(
-                                Double(value.translation.height) * dragSensitivity,
-                                0,
-                                Double(value.translation.width) * dragSensitivity
-                            )
-                            
-                            // Only pause if motion is available
-                            if motionManager.isMotionAvailable {
-                                motionManager.pauseTracking()
-                            }
                         }
+                        
+                        let deltaW = value.translation.width - lastDragTranslation.width
+                        let deltaH = value.translation.height - lastDragTranslation.height
+                        dragTotalDistance += sqrt(deltaW * deltaW + deltaH * deltaH)
+                        
+                        // Update rotation
+                        currentRotationY = dragStartRotationY + Double(value.translation.width) * dragSensitivity
+                        let newPitch = dragStartRotationX + Double(value.translation.height) * dragSensitivity
+                        currentRotationX = max(-maxPitch, min(maxPitch, newPitch))
+                        
+                        // Track velocity for momentum
+                        velocityX = Double(deltaH) * dragSensitivity
+                        velocityY = Double(deltaW) * dragSensitivity
+                        
+                        lastDragTranslation = value.translation
                     }
                     .onEnded { value in
-                        if !isDragging && abs(value.translation.width) < 10 && abs(value.translation.height) < 10 {
+                        let dragDuration = Date().timeIntervalSince(dragStartTime)
+                        
+                        // Detect tap: short duration + small movement
+                        if dragDuration < tapMaxDuration && dragTotalDistance < tapMaxDistance {
                             if allowSettingsTap {
                                 showSettings = true
                             }
+                        } else {
+                            // Start momentum decay
+                            startMomentumDecay()
                         }
                         
-                        isDragging = false
-                        
-                        // Only resume if motion is available
-                        if motionManager.isMotionAvailable {
-                            motionManager.resumeTracking()
-                        }
-                        
-                        startDecay()
+                        // Reset tracking
+                        lastDragTranslation = .zero
+                        dragTotalDistance = 0
                     }
             )
-            
-            // Optional: Show indicator when motion is not available (Simulator)
-            if !motionManager.isMotionAvailable {
-                VStack {
-                    Spacer()
-                    HStack {
-                        Image(systemName: "hand.draw")
-                            .font(.caption)
-                        Text("Drag to rotate")
-                            .font(.caption)
-                    }
-                    .padding(8)
-                    .background(Color.black.opacity(0.6))
-                    .foregroundColor(.white)
-                    .cornerRadius(8)
-                    .padding(.bottom, 100)
-                }
-            }
         }
         .sheet(isPresented: $showSettings) {
-            WatchDogSettingsView(bluetoothManager: bluetoothManager)
+            WatchDogSettingsView(
+                bluetoothManager: bluetoothManager,
+                targetDeviceID: targetDeviceID
+            )
         }
         .onAppear {
-            motionManager.startTracking()
             if isLocked {
                 ledPulseManager.startPulsing()
             }
         }
         .onDisappear {
-            motionManager.stopTracking()
             decayTimer?.invalidate()
             ledPulseManager.stopPulsing()
         }
@@ -110,18 +123,20 @@ struct Motion3DView: View {
         }
     }
     
-    private func startDecay() {
+    private func startMomentumDecay() {
         decayTimer?.invalidate()
         
-        decayTimer = Timer.scheduledTimer(withTimeInterval: 1.0/60.0, repeats: true) { timer in
-            let decayFactor = 0.92
+        decayTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { timer in
+            velocityX *= decayFactor
+            velocityY *= decayFactor
             
-            dragRotation.x *= decayFactor
-            dragRotation.y *= decayFactor
-            dragRotation.z *= decayFactor
+            currentRotationY += velocityY
+            let newPitch = currentRotationX + velocityX
+            currentRotationX = max(-maxPitch, min(maxPitch, newPitch))
             
-            if abs(dragRotation.x) < 0.001 && abs(dragRotation.z) < 0.001 {
-                dragRotation = SIMD3<Double>(0, 0, 0)
+            if abs(velocityX) < minVelocity && abs(velocityY) < minVelocity {
+                velocityX = 0
+                velocityY = 0
                 timer.invalidate()
                 decayTimer = nil
             }

@@ -15,6 +15,20 @@ struct WatchDogSettingsView: View {
     @ObservedObject private var iconManager = DeviceIconManager.shared
     @ObservedObject var bluetoothManager: BluetoothManager
     
+    /// Device ID — used when settings opened from 3D model tap.
+    /// Falls back to connected device if nil.
+    var targetDeviceID: UUID? = nil
+    
+    // Resolved device ID: passed-in target or connected device
+    private var resolvedDeviceID: UUID? {
+        targetDeviceID ?? bluetoothManager.connectedDevice?.id
+    }
+    
+    private var isConnected: Bool {
+        guard let devID = resolvedDeviceID else { return false }
+        return bluetoothManager.connectedDevice?.id == devID
+    }
+    
     // Local state for editing
     @State private var watchDogName: String = ""
     @State private var selectedIcon: DeviceIcon = .lockShield
@@ -39,7 +53,7 @@ struct WatchDogSettingsView: View {
                     // WatchDog Name Section
                     Section(header: Text("Device Name")) {
                         TextField("WatchDog Name", text: $watchDogName)
-                            .onChange(of: watchDogName) { newValue in
+                            .onChange(of: watchDogName) { _, newValue in
                                 if newValue.count > maxNameLength {
                                     watchDogName = String(newValue.prefix(maxNameLength))
                                 }
@@ -212,13 +226,17 @@ struct WatchDogSettingsView: View {
     }
     
     private func loadCurrentSettings() {
-        guard let device = bluetoothManager.connectedDevice else { return }
+        guard let deviceID = resolvedDeviceID else { return }
         
         // Load custom name or fall back to advertising name
-        watchDogName = nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
+        if let bond = bondManager.getBond(deviceID: deviceID) {
+            watchDogName = nameManager.getDisplayName(deviceID: deviceID, advertisingName: bond.name)
+        } else if let device = bluetoothManager.connectedDevice, device.id == deviceID {
+            watchDogName = nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
+        }
         
         // Load custom icon or use default
-        selectedIcon = iconManager.getDisplayIcon(deviceID: device.id)
+        selectedIcon = iconManager.getDisplayIcon(deviceID: deviceID)
         
         // Load other settings from SettingsManager
         sensitivity = settingsManager.sensitivity
@@ -230,23 +248,23 @@ struct WatchDogSettingsView: View {
     }
     
     private func applySettings() {
-        guard let device = bluetoothManager.connectedDevice else { return }
+        guard let deviceID = resolvedDeviceID else { return }
         
         // Save custom name (or remove if blank)
         let trimmedName = watchDogName.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedName.isEmpty {
-            // Remove custom name - will revert to advertising name
-            nameManager.removeCustomName(deviceID: device.id)
-            // Update display to show advertising name
-            watchDogName = device.name
+            nameManager.removeCustomName(deviceID: deviceID)
+            if let bond = bondManager.getBond(deviceID: deviceID) {
+                watchDogName = bond.name
+            }
         } else {
-            nameManager.setCustomName(deviceID: device.id, name: trimmedName)
+            nameManager.setCustomName(deviceID: deviceID, name: trimmedName)
         }
         
         // Save custom icon
-        iconManager.setCustomIcon(deviceID: device.id, icon: selectedIcon)
+        iconManager.setCustomIcon(deviceID: deviceID, icon: selectedIcon)
         
-        // Update settings manager (but NOT the device name in SettingsManager - that's separate)
+        // Update settings manager
         settingsManager.updateSettings(
             alarm: alarmType,
             sens: sensitivity,
@@ -256,11 +274,13 @@ struct WatchDogSettingsView: View {
             debugMode: debugModeEnabled
         )
         
-        // Send settings byte to WatchDog (armed state stays the same)
-        bluetoothManager.sendSettings()
+        // Send settings byte to WatchDog only if connected to this device
+        if isConnected {
+            bluetoothManager.sendSettings()
+        }
         
         print("📤 Settings applied:")
-        print("  Custom Name: \(nameManager.hasCustomName(deviceID: device.id) ? trimmedName : "(using advertising name)")")
+        print("  Custom Name: \(nameManager.hasCustomName(deviceID: deviceID) ? trimmedName : "(using advertising name)")")
         print("  Custom Icon: \(selectedIcon.displayName)")
         print("  Sensitivity: \(sensitivity.rawValue)")
         print("  Alarm Type: \(alarmType.rawValue)")
@@ -269,22 +289,22 @@ struct WatchDogSettingsView: View {
         print("  Disable Alarm When Connected: \(disableAlarmWhenConnected ? "Yes" : "No")")
         print("  Debug Mode: \(debugModeEnabled ? "On" : "Off")")
         
-        // Dismiss after applying
         dismiss()
     }
     
     private func forgetDevice() {
-        guard let device = bluetoothManager.connectedDevice else { return }
+        guard let deviceID = resolvedDeviceID else { return }
         
         print("🗑️ Forgetting device: \(watchDogName)")
         
+        // Disconnect if connected
+        if let device = bluetoothManager.connectedDevice, device.id == deviceID {
+            bluetoothManager.disconnect(from: device)
+        }
+        
         // Remove bond
-        bondManager.removeBond(deviceID: device.id)
+        bondManager.removeBond(deviceID: deviceID)
         
-        // Disconnect
-        bluetoothManager.disconnect(from: device)
-        
-        // Dismiss settings
         dismiss()
     }
 }
@@ -340,7 +360,7 @@ struct CompactIconButton: View {
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
                     .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 2)
-            )
+                )
         }
         .buttonStyle(PlainButtonStyle())
     }
@@ -354,18 +374,15 @@ struct AnimatedSegmentedControl<T: RawRepresentable & Hashable & CaseIterable>: 
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
-                // Background
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color(.systemGray5))
                 
-                // Sliding highlight
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.blue)
                     .frame(width: geometry.size.width / CGFloat(options.count))
                     .offset(x: CGFloat(selectedIndex) * (geometry.size.width / CGFloat(options.count)))
                     .animation(.spring(response: 0.25, dampingFraction: 0.8), value: selection)
                 
-                // Buttons
                 HStack(spacing: 0) {
                     ForEach(Array(options.enumerated()), id: \.element) { index, option in
                         Button(action: {

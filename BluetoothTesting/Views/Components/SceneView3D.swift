@@ -9,8 +9,8 @@ import SwiftUI
 import SceneKit
 
 struct SceneView3D: UIViewRepresentable {
-    let rotation: SIMD3<Double>
-    let dragRotation: SIMD3<Double>
+    let rotation: SIMD3<Double>      // x = pitch (up/down finger drag)
+    let dragRotation: SIMD3<Double>  // y = yaw (left/right finger drag)
     let usdzFileName: String
     let ledIntensity: Double
     
@@ -48,15 +48,11 @@ struct SceneView3D: UIViewRepresentable {
             searchForLED(in: model, coordinator: context.coordinator)
         }
         
-        let combinedRotation = SIMD3<Double>(
-            rotation.x + dragRotation.x,
-            rotation.z + dragRotation.y,
-            dragRotation.z
-        )
-        
+        // rotation.x = pitch (vertical tilt from finger drag)
+        // dragRotation.y = yaw (horizontal spin from finger drag)
         model.eulerAngles = SCNVector3(
-            Float(combinedRotation.x),
-            Float(rotation.z + dragRotation.z),
+            Float(rotation.x),       // pitch
+            Float(dragRotation.y),   // yaw
             0
         )
         
