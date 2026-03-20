@@ -180,7 +180,7 @@ class BluetoothManager: NSObject, ObservableObject {
         let options: [String: Any] = [
             CBConnectPeripheralOptionNotifyOnConnectionKey: true,
             CBConnectPeripheralOptionNotifyOnDisconnectionKey: true,
-            CBConnectPeripheralOptionNotifyOnNotificationKey: true,
+            CBConnectPeripheralOptionNotifyOnNotificationKey: false,
             CBConnectPeripheralOptionStartDelayKey: 0
         ]
         
