@@ -80,6 +80,8 @@ struct DeviceRow: View {
 }
 
 #Preview {
-    DeviceRow(device: BluetoothDevice(id: UUID(), name: "WatchDog", rssi: -65)) {}
+    // BluetoothDevice requires a live CBPeripheral — preview shows layout placeholder
+    Text("DeviceRow preview requires a live CBPeripheral")
+        .foregroundStyle(.secondary)
         .padding()
 }

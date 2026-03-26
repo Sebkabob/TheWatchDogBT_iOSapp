@@ -102,9 +102,7 @@ struct MotionLogsView: View {
             )
             .presentationDetents([.medium])
         }
-        .onReceive(motionLogManager.$motionEvents) { _ in
-            refreshID = UUID()
-        }
+        // @Observable automatically triggers view updates when motionEvents changes
     }
     
     private var selectedDateText: String {

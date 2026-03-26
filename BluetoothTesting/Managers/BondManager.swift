@@ -110,25 +110,19 @@ class BondManager {
     
     private func checkForStaleDevices() {
         let now = Date()
-        var needsUpdate = false
-        
+
         for index in bondedDevices.indices {
-            // If device has RSSI and lastSeen, check if it's stale
             if bondedDevices[index].currentRSSI != nil,
                let lastSeen = bondedDevices[index].lastSeen {
                 let timeSinceLastSeen = now.timeIntervalSince(lastSeen)
-                
-                // Clear RSSI if not seen in staleTimeout seconds
+
                 if timeSinceLastSeen > staleTimeout {
                     print("🕐 Device went out of range: \(bondedDevices[index].name) (last seen \(String(format: "%.1f", timeSinceLastSeen))s ago)")
                     bondedDevices[index].currentRSSI = nil
                     bondedDevices[index].lastSeen = nil
-                    needsUpdate = true
                 }
             }
         }
-        
-        // @Observable automatically propagates mutations above
     }
     
     deinit {
