@@ -54,3 +54,9 @@ struct LockButton: View {
         .shadow(radius: isDisabled ? 2 : 5)
     }
 }
+
+#Preview {
+    @Previewable @State var locked = true
+    LockButton(isLocked: $locked, holdProgress: 0.0)
+        .padding()
+}

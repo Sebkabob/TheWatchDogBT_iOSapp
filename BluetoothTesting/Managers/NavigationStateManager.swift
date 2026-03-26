@@ -6,17 +6,19 @@
 //
 
 import Foundation
+import Observation
 
-class NavigationStateManager: ObservableObject {
+@Observable
+class NavigationStateManager {
     static let shared = NavigationStateManager()
-    
+
     enum LastScreen: String, Codable {
         case deviceList
         case deviceControl
     }
-    
-    @Published var lastScreen: LastScreen = .deviceList
-    @Published var lastDeviceID: UUID?
+
+    var lastScreen: LastScreen = .deviceList
+    var lastDeviceID: UUID?
     
     private let lastScreenKey = "watchdog_last_screen"
     private let lastDeviceIDKey = "watchdog_last_device_id"

@@ -6,11 +6,13 @@
 //
 
 import Foundation
+import Observation
 
-class DeviceNameManager: ObservableObject {
+@Observable
+class DeviceNameManager {
     static let shared = DeviceNameManager()
-    
-    @Published private var customNames: [String: String] = [:] // UUID string -> custom name
+
+    private var customNames: [String: String] = [:] // UUID string -> custom name
     
     private let customNamesKey = "watchdog_custom_device_names"
     

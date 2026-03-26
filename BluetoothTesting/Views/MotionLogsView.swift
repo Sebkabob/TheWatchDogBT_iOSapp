@@ -9,7 +9,7 @@ import SwiftUI
 
 struct MotionLogsView: View {
     @Environment(\.dismiss) var dismiss
-    @StateObject private var motionLogManager = MotionLogManager.shared
+    private let motionLogManager = MotionLogManager.shared
     @State private var selectedDate: Date
     @State private var refreshID = UUID()
     @State private var showMonthYearPicker = false
@@ -184,7 +184,7 @@ struct MonthYearPickerSheet: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 16) {
                 // Event count for selected month
                 let count = eventCountForSelection()
@@ -545,7 +545,7 @@ struct MotionEventRow: View {
 }
 
 #Preview {
-    NavigationView {
+    NavigationStack {
         MotionLogsView()
     }
 }

@@ -6,19 +6,21 @@
 //
 
 import Foundation
+import Observation
 
-class SettingsManager: ObservableObject {
+@Observable
+class SettingsManager {
     static let shared = SettingsManager()
-    
-    // Published properties for UI binding
-    @Published var isArmed: Bool = false
-    @Published var alarmType: AlarmType = .normal
-    @Published var sensitivity: SensitivityLevel = .medium
-    @Published var lightsEnabled: Bool = true
-    @Published var loggingEnabled: Bool = false
-    @Published var disableAlarmWhenConnected: Bool = false
-    @Published var deviceName: String = "WatchDog"
-    @Published var debugModeEnabled: Bool = false
+
+    // Observable properties for UI binding
+    var isArmed: Bool = false
+    var alarmType: AlarmType = .normal
+    var sensitivity: SensitivityLevel = .medium
+    var lightsEnabled: Bool = true
+    var loggingEnabled: Bool = false
+    var disableAlarmWhenConnected: Bool = false
+    var deviceName: String = "WatchDog"
+    var debugModeEnabled: Bool = false
     
     // UserDefaults keys
     private let armedKey = "watchdog_armed"

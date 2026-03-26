@@ -8,10 +8,10 @@
 import SwiftUI
 
 struct DevicePageView: View {
-    @ObservedObject var bluetoothManager: BluetoothManager
-    @ObservedObject private var settingsManager = SettingsManager.shared
-    @ObservedObject private var nameManager = DeviceNameManager.shared
-    @ObservedObject private var bondManager = BondManager.shared
+    var bluetoothManager: BluetoothManager
+    private let settingsManager = SettingsManager.shared
+    private let nameManager = DeviceNameManager.shared
+    private let bondManager = BondManager.shared
     
     let deviceID: UUID
     
@@ -338,7 +338,7 @@ struct DevicePageView: View {
         }
         .statusBar(hidden: true)
         .sheet(isPresented: $showMotionLogs) {
-            NavigationView {
+            NavigationStack {
                 MotionLogsView()
             }
         }

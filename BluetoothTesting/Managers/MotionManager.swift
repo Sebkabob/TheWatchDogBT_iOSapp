@@ -6,11 +6,13 @@
 //
 
 import Foundation
+import Observation
 
 /// Simplified MotionManager that only tracks finger-drag rotation.
 /// CoreMotion / gyroscope tracking has been removed entirely.
-class MotionManager: ObservableObject {
-    @Published var rotation = SIMD3<Double>(0, 0, 0)
+@Observable
+class MotionManager {
+    var rotation = SIMD3<Double>(0, 0, 0)
     
     // No-op stubs kept so existing call sites compile without changes
     func startTracking() { }

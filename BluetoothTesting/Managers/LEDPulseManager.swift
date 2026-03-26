@@ -6,9 +6,11 @@
 //
 
 import Foundation
+import Observation
 
-class LEDPulseManager: ObservableObject {
-    @Published var pulseIntensity: Double = 0.0
+@Observable
+class LEDPulseManager {
+    var pulseIntensity: Double = 0.0
     
     private var timer: Timer?
     private var pulseValue: Double = 0.0

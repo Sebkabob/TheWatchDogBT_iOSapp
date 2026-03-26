@@ -8,11 +8,11 @@
 import SwiftUI
 
 struct BondedDevicesListView: View {
-    @ObservedObject var bluetoothManager: BluetoothManager
+    var bluetoothManager: BluetoothManager
     @Binding var navigationPath: NavigationPath
-    @ObservedObject private var bondManager = BondManager.shared
-    @ObservedObject private var nameManager = DeviceNameManager.shared
-    @ObservedObject private var iconManager = DeviceIconManager.shared
+    private let bondManager = BondManager.shared
+    private let nameManager = DeviceNameManager.shared
+    private let iconManager = DeviceIconManager.shared
     @State private var showAddDevice = false
     @State private var deviceToDelete: BondedDevice?
     @State private var showDeleteConfirmation = false

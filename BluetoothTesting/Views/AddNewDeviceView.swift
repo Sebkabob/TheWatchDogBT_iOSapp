@@ -9,9 +9,9 @@ import SwiftUI
 
 struct AddNewDeviceView: View {
     @Environment(\.dismiss) var dismiss
-    @ObservedObject var bluetoothManager: BluetoothManager
-    @ObservedObject private var bondManager = BondManager.shared
-    @ObservedObject private var nameManager = DeviceNameManager.shared
+    var bluetoothManager: BluetoothManager
+    private let bondManager = BondManager.shared
+    private let nameManager = DeviceNameManager.shared
     
     @State private var showSuccessAlert = false
     @State private var showErrorAlert = false
@@ -37,7 +37,7 @@ struct AddNewDeviceView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 20) {
                 // Status indicator
                 HStack {
@@ -310,7 +310,7 @@ struct NameYourWatchDogSheet: View {
     private let maxNameLength = 16
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 24) {
                 // Icon
                 Image(systemName: "tag.fill")

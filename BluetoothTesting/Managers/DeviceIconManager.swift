@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Observation
 
 enum DeviceIcon: String, Codable, CaseIterable {
     case dog = "dog"
@@ -72,10 +73,11 @@ enum DeviceIcon: String, Codable, CaseIterable {
     }
 }
 
-class DeviceIconManager: ObservableObject {
+@Observable
+class DeviceIconManager {
     static let shared = DeviceIconManager()
-    
-    @Published private var customIcons: [String: String] = [:] // UUID string -> icon rawValue
+
+    private var customIcons: [String: String] = [:] // UUID string -> icon rawValue
     
     private let customIconsKey = "watchdog_custom_device_icons"
     

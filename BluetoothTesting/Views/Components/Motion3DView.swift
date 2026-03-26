@@ -25,7 +25,7 @@ struct Motion3DView: View {
     @State private var dragTotalDistance: CGFloat = 0
     @State private var showSettings = false
     
-    @StateObject private var ledPulseManager = LEDPulseManager()
+    @State private var ledPulseManager = LEDPulseManager()
     
     let usdzFileName = "WatchDogBTCase_V2"
     var isLocked: Bool = false

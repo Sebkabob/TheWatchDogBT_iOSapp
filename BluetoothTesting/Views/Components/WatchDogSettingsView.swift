@@ -9,11 +9,11 @@ import SwiftUI
 
 struct WatchDogSettingsView: View {
     @Environment(\.dismiss) var dismiss
-    @ObservedObject private var settingsManager = SettingsManager.shared
-    @ObservedObject private var bondManager = BondManager.shared
-    @ObservedObject private var nameManager = DeviceNameManager.shared
-    @ObservedObject private var iconManager = DeviceIconManager.shared
-    @ObservedObject var bluetoothManager: BluetoothManager
+    private let settingsManager = SettingsManager.shared
+    private let bondManager = BondManager.shared
+    private let nameManager = DeviceNameManager.shared
+    private let iconManager = DeviceIconManager.shared
+    var bluetoothManager: BluetoothManager
     
     /// Device ID — used when settings opened from 3D model tap.
     /// Falls back to connected device if nil.
@@ -46,7 +46,7 @@ struct WatchDogSettingsView: View {
     private let maxNameLength = 16
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 0) {
                 // Settings content
                 Form {

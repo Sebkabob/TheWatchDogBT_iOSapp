@@ -9,9 +9,9 @@ import SwiftUI
 
 struct DeviceControlView: View {
     @Environment(\.dismiss) var dismiss
-    @ObservedObject var bluetoothManager: BluetoothManager
-    @ObservedObject private var settingsManager = SettingsManager.shared
-    @ObservedObject private var nameManager = DeviceNameManager.shared
+    var bluetoothManager: BluetoothManager
+    private let settingsManager = SettingsManager.shared
+    private let nameManager = DeviceNameManager.shared
     @State private var isLocked = true
     @State private var holdProgress: CGFloat = 0.0
     @State private var isHolding = false

@@ -6,11 +6,13 @@
 //
 
 import Foundation
+import Observation
 
-class MotionLogManager: ObservableObject {
+@Observable
+class MotionLogManager {
     static let shared = MotionLogManager()
-    
-    @Published var motionEvents: [MotionEvent] = []
+
+    var motionEvents: [MotionEvent] = []
     
     private let motionEventsKey = "watchdog_motion_events"
     

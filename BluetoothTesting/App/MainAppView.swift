@@ -8,9 +8,9 @@
 import SwiftUI
 
 struct MainAppView: View {
-    @StateObject private var bluetoothManager = BluetoothManager()
-    @StateObject private var navState = NavigationStateManager.shared
-    @ObservedObject private var bondManager = BondManager.shared
+    @State private var bluetoothManager = BluetoothManager()
+    private let navState = NavigationStateManager.shared
+    private let bondManager = BondManager.shared
     
     // Current page index in the pager
     @State private var currentPage: Int = 0
@@ -167,7 +167,7 @@ struct MainAppView: View {
 
 // MARK: - Add Device Page
 struct AddDevicePage: View {
-    @ObservedObject var bluetoothManager: BluetoothManager
+    var bluetoothManager: BluetoothManager
     @State private var showAddDevice = false
     
     var body: some View {

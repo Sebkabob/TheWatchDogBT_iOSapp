@@ -198,3 +198,13 @@ struct SceneView3D: UIViewRepresentable {
         var sceneView: SCNView?
     }
 }
+
+#Preview {
+    SceneView3D(
+        rotation: .zero,
+        dragRotation: .zero,
+        usdzFileName: "WatchDogBTCase_Final",
+        ledIntensity: 0.5
+    )
+    .frame(width: 300, height: 400)
+}

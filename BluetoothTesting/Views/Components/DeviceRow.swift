@@ -78,3 +78,8 @@ struct DeviceRow: View {
         .disabled(isConnecting)
     }
 }
+
+#Preview {
+    DeviceRow(device: BluetoothDevice(id: UUID(), name: "WatchDog", rssi: -65)) {}
+        .padding()
+}

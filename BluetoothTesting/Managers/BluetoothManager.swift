@@ -7,27 +7,29 @@
 
 import Foundation
 import CoreBluetooth
+import Observation
 
-class BluetoothManager: NSObject, ObservableObject {
-    @Published var discoveredDevices: [BluetoothDevice] = []
-    @Published var isScanning = false
-    @Published var isBluetoothReady = false
-    @Published var connectedDevice: BluetoothDevice?
-    @Published var lastSentData: String = ""
-    @Published var deviceState: UInt8 = 0
-    @Published var hasReceivedInitialState = false
-    @Published var batteryLevel: Int = -1
-    @Published var isCharging: Bool = false
-    
+@Observable
+class BluetoothManager: NSObject {
+    var discoveredDevices: [BluetoothDevice] = []
+    var isScanning = false
+    var isBluetoothReady = false
+    var connectedDevice: BluetoothDevice?
+    var lastSentData: String = ""
+    var deviceState: UInt8 = 0
+    var hasReceivedInitialState = false
+    var batteryLevel: Int = -1
+    var isCharging: Bool = false
+
     // Debug data
-    @Published var debugCurrentDraw: Double = 0.0  // mA
-    @Published var debugVoltage: Double = 0.0      // V
-    @Published var connectionStartTime: Date?
-    @Published var connectionDuration: TimeInterval = 0
-    
+    var debugCurrentDraw: Double = 0.0  // mA
+    var debugVoltage: Double = 0.0      // V
+    var connectionStartTime: Date?
+    var connectionDuration: TimeInterval = 0
+
     // Motion log sync state
-    @Published var pendingEventCount: Int = 0
-    @Published var isSyncingMotionLogs: Bool = false
+    var pendingEventCount: Int = 0
+    var isSyncingMotionLogs: Bool = false
     
     private let settingsManager = SettingsManager.shared
     
@@ -60,7 +62,7 @@ class BluetoothManager: NSObject, ObservableObject {
     
     // Reconnection support
     private var reconnectTargetDeviceID: UUID?
-    @Published var isAttemptingReconnect = false
+    var isAttemptingReconnect = false
     
     // Flag to suppress auto-reconnect after user-initiated disconnect
     var suppressAutoReconnect = false

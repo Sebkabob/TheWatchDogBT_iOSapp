@@ -7,11 +7,13 @@
 
 import Foundation
 import CoreBluetooth
+import Observation
 
-class BondManager: ObservableObject {
+@Observable
+class BondManager {
     static let shared = BondManager()
-    
-    @Published var bondedDevices: [BondedDevice] = []
+
+    var bondedDevices: [BondedDevice] = []
     
     private let bondsKey = "watchdog_bonded_devices"
     private let nameManager = DeviceNameManager.shared
@@ -126,10 +128,7 @@ class BondManager: ObservableObject {
             }
         }
         
-        // Force UI update if any devices became stale
-        if needsUpdate {
-            objectWillChange.send()
-        }
+        // @Observable automatically propagates mutations above
     }
     
     deinit {
