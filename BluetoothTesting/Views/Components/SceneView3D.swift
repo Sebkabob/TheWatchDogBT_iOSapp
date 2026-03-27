@@ -190,6 +190,8 @@ struct SceneView3D: UIViewRepresentable {
                 modelNode.scale = SCNVector3(0.07, 0.07, 0.07)
                 modelNode.position = SCNVector3(0, 0, 0)
 
+                applyPlasticMaterial(to: modelNode)
+
                 scene.rootNode.addChildNode(modelNode)
             } catch {
                 addFallbackCube(to: scene)
@@ -205,6 +207,171 @@ struct SceneView3D: UIViewRepresentable {
         scene.rootNode.addChildNode(cameraNode)
 
         return scene
+    }
+
+    // MARK: - Plastic Material
+
+    /// Applies a plastic-like finish to all materials in the node hierarchy.
+    /// Switches to physically-based shading with slight roughness and a subtle
+    /// procedural normal map so the surface looks like real injection-moulded plastic
+    /// instead of perfectly smooth CG.
+    private func applyPlasticMaterial(to node: SCNNode) {
+        let normalMap = generateGrainNormalMap(size: 512, scale: 6, strength: 0.6)
+        let roughnessMap = generateRoughnessMap(size: 512, scale: 6)
+
+        node.enumerateHierarchy { child, _ in
+            guard let geometry = child.geometry else { return }
+            if let name = child.name, name.uppercased().contains("LED") { return }
+
+            for material in geometry.materials {
+                material.lightingModel = .physicallyBased
+                material.roughness.contents = roughnessMap   // varied matte texture
+                material.metalness.contents = 0.0
+                material.fresnelExponent = 1.0
+
+                material.normal.contents = normalMap
+                material.normal.intensity = 0.8              // strong visible grain
+
+                // Tiling so the texture repeats and grain is fine
+                material.normal.wrapS = .repeat
+                material.normal.wrapT = .repeat
+                material.roughness.wrapS = .repeat
+                material.roughness.wrapT = .repeat
+                let tiling = SCNMatrix4MakeScale(4, 4, 1)    // tile 4x for finer grain
+                material.normal.contentsTransform = tiling
+                material.roughness.contentsTransform = tiling
+            }
+        }
+    }
+
+    /// Value noise with smooth interpolation — produces visible bumps at a controllable scale.
+    private func generateGrainNormalMap(size: Int, scale: Int, strength: Float) -> UIImage {
+        // Generate a grid of random values for value noise
+        let gridSize = scale + 1
+        var grid = [[Float]](repeating: [Float](repeating: 0, count: gridSize), count: gridSize)
+        for gy in 0..<gridSize {
+            for gx in 0..<gridSize {
+                grid[gy][gx] = Float.random(in: 0...1)
+            }
+        }
+
+        func smoothstep(_ t: Float) -> Float { t * t * (3 - 2 * t) }
+
+        func sampleNoise(x: Float, y: Float) -> Float {
+            let gx = x * Float(scale) / Float(size)
+            let gy = y * Float(scale) / Float(size)
+            let x0 = Int(gx) % scale
+            let y0 = Int(gy) % scale
+            let x1 = (x0 + 1) % gridSize
+            let y1 = (y0 + 1) % gridSize
+            let fx = smoothstep(gx - Float(Int(gx)))
+            let fy = smoothstep(gy - Float(Int(gy)))
+            let top = grid[y0][x0] * (1 - fx) + grid[y0][x1] * fx
+            let bot = grid[y1][x0] * (1 - fx) + grid[y1][x1] * fx
+            return top * (1 - fy) + bot * fy
+        }
+
+        // Build a height field, then derive normals from it
+        var heights = [Float](repeating: 0, count: size * size)
+        // Layer multiple octaves for richer detail
+        let octaves: [(scale: Int, weight: Float)] = [
+            (scale, 0.5), (scale * 3, 0.3), (scale * 7, 0.2)
+        ]
+        for oct in octaves {
+            var octGrid = [[Float]](repeating: [Float](repeating: 0, count: oct.scale + 1), count: oct.scale + 1)
+            for gy in 0...(oct.scale) { for gx in 0...(oct.scale) { octGrid[gy][gx] = Float.random(in: 0...1) } }
+
+            for y in 0..<size {
+                for x in 0..<size {
+                    let gx = Float(x) * Float(oct.scale) / Float(size)
+                    let gy = Float(y) * Float(oct.scale) / Float(size)
+                    let x0 = Int(gx) % oct.scale
+                    let y0 = Int(gy) % oct.scale
+                    let x1 = (x0 + 1) % (oct.scale + 1)
+                    let y1 = (y0 + 1) % (oct.scale + 1)
+                    let fx = smoothstep(gx - Float(Int(gx)))
+                    let fy = smoothstep(gy - Float(Int(gy)))
+                    let top = octGrid[y0][x0] * (1 - fx) + octGrid[y0][x1] * fx
+                    let bot = octGrid[y1][x0] * (1 - fx) + octGrid[y1][x1] * fx
+                    heights[y * size + x] += (top * (1 - fy) + bot * fy) * oct.weight
+                }
+            }
+        }
+
+        // Convert height field to normal map via finite differences
+        var pixels = [UInt8](repeating: 0, count: size * size * 4)
+        for y in 0..<size {
+            for x in 0..<size {
+                let left  = heights[y * size + ((x - 1 + size) % size)]
+                let right = heights[y * size + ((x + 1) % size)]
+                let up    = heights[((y - 1 + size) % size) * size + x]
+                let down  = heights[((y + 1) % size) * size + x]
+
+                let dx = (left - right) * strength
+                let dy = (up - down) * strength
+
+                let i = (y * size + x) * 4
+                pixels[i]     = UInt8(clamping: Int(128.0 + dx * 127.0))
+                pixels[i + 1] = UInt8(clamping: Int(128.0 + dy * 127.0))
+                pixels[i + 2] = 255
+                pixels[i + 3] = 255
+            }
+        }
+
+        return imageFromPixels(pixels, width: size, height: size)
+    }
+
+    /// Roughness map with variation so some spots are slightly shinier than others — like real moulded plastic.
+    private func generateRoughnessMap(size: Int, scale: Int) -> UIImage {
+        var pixels = [UInt8](repeating: 0, count: size * size * 4)
+        // Simple value noise for roughness variation
+        let gridSize = scale + 1
+        var grid = [[Float]](repeating: [Float](repeating: 0, count: gridSize), count: gridSize)
+        for gy in 0..<gridSize { for gx in 0..<gridSize { grid[gy][gx] = Float.random(in: 0...1) } }
+
+        func smoothstep(_ t: Float) -> Float { t * t * (3 - 2 * t) }
+
+        for y in 0..<size {
+            for x in 0..<size {
+                let gx = Float(x) * Float(scale) / Float(size)
+                let gy = Float(y) * Float(scale) / Float(size)
+                let x0 = Int(gx) % scale
+                let y0 = Int(gy) % scale
+                let x1 = (x0 + 1) % gridSize
+                let y1 = (y0 + 1) % gridSize
+                let fx = smoothstep(gx - Float(Int(gx)))
+                let fy = smoothstep(gy - Float(Int(gy)))
+                let top = grid[y0][x0] * (1 - fx) + grid[y0][x1] * fx
+                let bot = grid[y1][x0] * (1 - fx) + grid[y1][x1] * fx
+                let noise = top * (1 - fy) + bot * fy
+
+                // Roughness between 0.7 and 0.95 — all matte, but varies
+                let roughness = UInt8(clamping: Int((0.7 + noise * 0.25) * 255.0))
+                let i = (y * size + x) * 4
+                pixels[i]     = roughness
+                pixels[i + 1] = roughness
+                pixels[i + 2] = roughness
+                pixels[i + 3] = 255
+            }
+        }
+
+        return imageFromPixels(pixels, width: size, height: size)
+    }
+
+    private func imageFromPixels(_ pixels: [UInt8], width: Int, height: Int) -> UIImage {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
+        let provider = CGDataProvider(data: Data(pixels) as CFData)!
+        let cgImage = CGImage(
+            width: width, height: height,
+            bitsPerComponent: 8, bitsPerPixel: 32,
+            bytesPerRow: width * 4,
+            space: colorSpace, bitmapInfo: bitmapInfo,
+            provider: provider,
+            decode: nil, shouldInterpolate: true,
+            intent: .defaultIntent
+        )!
+        return UIImage(cgImage: cgImage)
     }
 
     private func addFallbackCube(to scene: SCNScene) {
