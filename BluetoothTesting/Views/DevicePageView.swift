@@ -30,6 +30,9 @@ struct DevicePageView: View {
     // Local "connecting" state — set immediately on button press for instant feedback.
     // Cleared when connection succeeds or fails.
     @State private var isConnectingThisDevice = false
+
+    // Ping animation state
+    @State private var isPinging = false
     
     // Debug graph history (last 3 minutes)
     @State private var currentHistory: [(date: Date, value: Double)] = []
@@ -191,6 +194,52 @@ struct DevicePageView: View {
                     .transition(.opacity)
                 }
                 
+                // Ping (Find Device) button - Right side, only when connected
+                if isDeviceConnected {
+                    VStack {
+                        Spacer()
+
+                        Button {
+                            triggerPing()
+                        } label: {
+                            ZStack {
+                                // Ripple rings that expand outward when pinging
+                                ForEach(0..<3, id: \.self) { i in
+                                    Circle()
+                                        .stroke(Color.accentColor, lineWidth: 1.5)
+                                        .frame(width: 44, height: 44)
+                                        .scaleEffect(isPinging ? 1.8 + CGFloat(i) * 0.5 : 1.0)
+                                        .opacity(isPinging ? 0.0 : 0.6)
+                                        .animation(
+                                            isPinging
+                                                ? .easeOut(duration: 0.9).delay(Double(i) * 0.12)
+                                                : .easeIn(duration: 0.2),
+                                            value: isPinging
+                                        )
+                                }
+
+                                Circle()
+                                    .fill(.ultraThinMaterial)
+                                    .frame(width: 44, height: 44)
+                                    .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
+
+                                Image(systemName: isPinging ? "speaker.wave.3.fill" : "speaker.wave.2.fill")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundStyle(Color.accentColor)
+                                    .contentTransition(.symbolEffect(.replace))
+                                    .symbolEffect(.bounce, value: isPinging)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.trailing, 16)
+                        .padding(.bottom, 200)
+
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                }
+
                 // Debug Info Box - Left side (only when connected and debug enabled)
                 if isDeviceConnected && settingsManager.debugModeEnabled {
                     VStack(alignment: .leading, spacing: 0) {
@@ -537,6 +586,20 @@ struct DevicePageView: View {
         }
     }
     
+    // MARK: - Ping
+
+    private func triggerPing() {
+        guard isDeviceConnected, !isPinging else { return }
+
+        lightHaptic.impactOccurred()
+        bluetoothManager.sendPing()
+
+        isPinging = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            isPinging = false
+        }
+    }
+
     // MARK: - Battery
     
     private var batteryIcon: String {

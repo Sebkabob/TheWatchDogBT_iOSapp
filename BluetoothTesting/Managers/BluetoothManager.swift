@@ -85,6 +85,9 @@ class BluetoothManager: NSObject {
     private let CMD_REQUEST_EVENT: UInt8     = 0xF1
     private let CMD_CLEAR_LOG: UInt8         = 0xF2
     private let CMD_ACK_EVENT: UInt8         = 0xF3
+
+    // Ping command opcode
+    private let CMD_PING: UInt8 = 0xFA
     
     var deviceStateText: String {
         let isArmed = (deviceState & 0x01) != 0
@@ -259,6 +262,18 @@ class BluetoothManager: NSObject {
         print("📤 Sent settings byte: 0x\(String(format: "%02X", settingsByte))")
     }
     
+    // MARK: - Ping / Find Device
+
+    func sendPing() {
+        guard connectedDevice != nil else {
+            print("❌ Cannot send ping - not connected")
+            return
+        }
+        let data = Data([CMD_PING, 0x01]) // bit 0 = play sound
+        sendData(data)
+        print("🔔 Sent ping (play sound)")
+    }
+
     // MARK: - Motion Log Sync
     
     /// Request the total count of motion events stored on firmware
