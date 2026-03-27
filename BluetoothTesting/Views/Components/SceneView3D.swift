@@ -22,15 +22,49 @@ struct SceneView3D: UIViewRepresentable {
     func makeUIView(context: Context) -> SCNView {
         let sceneView = SCNView()
         sceneView.scene = createScene()
-        sceneView.autoenablesDefaultLighting = true
+        sceneView.autoenablesDefaultLighting = false
         sceneView.allowsCameraControl = false
         sceneView.backgroundColor = .clear
 
+        let root = sceneView.scene!.rootNode
+
+        // Low ambient so shadows stay dramatic
         let ambientLight = SCNNode()
         ambientLight.light = SCNLight()
         ambientLight.light?.type = .ambient
-        ambientLight.light?.intensity = 20
-        sceneView.scene?.rootNode.addChildNode(ambientLight)
+        ambientLight.light?.intensity = 150
+        ambientLight.light?.color = UIColor(white: 0.6, alpha: 1.0)
+        root.addChildNode(ambientLight)
+
+        // Key light — strong, from upper-right side
+        let keyLight = SCNNode()
+        keyLight.light = SCNLight()
+        keyLight.light?.type = .directional
+        keyLight.light?.intensity = 1200
+        keyLight.light?.color = UIColor(white: 0.95, alpha: 1.0)
+        keyLight.light?.castsShadow = true
+        keyLight.light?.shadowRadius = 3
+        keyLight.light?.shadowSampleCount = 8
+        keyLight.eulerAngles = SCNVector3(-0.5, 0.8, 0)
+        root.addChildNode(keyLight)
+
+        // Fill light — softer, from lower-left to reveal detail without flattening
+        let fillLight = SCNNode()
+        fillLight.light = SCNLight()
+        fillLight.light?.type = .directional
+        fillLight.light?.intensity = 400
+        fillLight.light?.color = UIColor(red: 0.85, green: 0.9, blue: 1.0, alpha: 1.0)
+        fillLight.eulerAngles = SCNVector3(0.3, -0.7, 0)
+        root.addChildNode(fillLight)
+
+        // Rim light — from behind to outline edges
+        let rimLight = SCNNode()
+        rimLight.light = SCNLight()
+        rimLight.light?.type = .directional
+        rimLight.light?.intensity = 600
+        rimLight.light?.color = UIColor(white: 0.9, alpha: 1.0)
+        rimLight.eulerAngles = SCNVector3(-0.2, Float.pi, 0)
+        root.addChildNode(rimLight)
 
         context.coordinator.modelNode = sceneView.scene?.rootNode.childNode(withName: "model", recursively: true)
 
@@ -215,22 +249,21 @@ struct SceneView3D: UIViewRepresentable {
         private var dragStartRotationY: Double = 0
         private var lastTranslation: CGPoint = .zero
 
-        // Momentum
+        // Spring animation
         private var velocityX: Double = 0
         private var velocityY: Double = 0
-        private var decayTimer: Timer?
+        private var springTimer: Timer?
 
         private let dragSensitivity: Double = 0.008
-        private let maxPitch: Double = 1.2
-        private let decayFactor: Double = 0.95
-        private let minVelocity: Double = 0.0005
+        private let stiffness: Double = 2.0
+        private let damping: Double = 0.82
 
         init(parent: SceneView3D) {
             self.parent = parent
         }
 
         deinit {
-            decayTimer?.invalidate()
+            springTimer?.invalidate()
         }
 
         // Only begin gesture if the touch lands on actual 3D geometry
@@ -249,8 +282,8 @@ struct SceneView3D: UIViewRepresentable {
                 dragStartRotationX = parent.rotationX
                 dragStartRotationY = parent.rotationY
                 lastTranslation = .zero
-                decayTimer?.invalidate()
-                decayTimer = nil
+                springTimer?.invalidate()
+                springTimer = nil
 
             case .changed:
                 let translation = gesture.translation(in: sceneView)
@@ -258,15 +291,14 @@ struct SceneView3D: UIViewRepresentable {
                 let deltaH = translation.y - lastTranslation.y
 
                 parent.rotationY = dragStartRotationY + Double(translation.x) * dragSensitivity
-                let newPitch = dragStartRotationX + Double(translation.y) * dragSensitivity
-                parent.rotationX = max(-maxPitch, min(maxPitch, newPitch))
+                parent.rotationX = dragStartRotationX + Double(translation.y) * dragSensitivity
 
                 velocityX = Double(deltaH) * dragSensitivity
                 velocityY = Double(deltaW) * dragSensitivity
                 lastTranslation = translation
 
             case .ended, .cancelled:
-                startMomentumDecay()
+                startSpringBack()
 
             default:
                 break
@@ -277,24 +309,33 @@ struct SceneView3D: UIViewRepresentable {
             parent.onTap?()
         }
 
-        private func startMomentumDecay() {
-            decayTimer?.invalidate()
+        private func startSpringBack() {
+            springTimer?.invalidate()
 
-            decayTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
+            let dt = 1.0 / 60.0
+
+            springTimer = Timer.scheduledTimer(withTimeInterval: dt, repeats: true) { [weak self] timer in
                 guard let self else { timer.invalidate(); return }
 
-                self.velocityX *= self.decayFactor
-                self.velocityY *= self.decayFactor
+                // Critically damped spring — smooth return, no oscillation
+                let accelX = -self.stiffness * self.parent.rotationX
+                let accelY = -self.stiffness * self.parent.rotationY
 
+                self.velocityX = (self.velocityX + accelX * dt) * self.damping
+                self.velocityY = (self.velocityY + accelY * dt) * self.damping
+
+                self.parent.rotationX += self.velocityX
                 self.parent.rotationY += self.velocityY
-                let newPitch = self.parent.rotationX + self.velocityX
-                self.parent.rotationX = max(-self.maxPitch, min(self.maxPitch, newPitch))
 
-                if abs(self.velocityX) < self.minVelocity && abs(self.velocityY) < self.minVelocity {
+                // Stop when close enough to origin and barely moving
+                if abs(self.parent.rotationX) < 0.001 && abs(self.parent.rotationY) < 0.001
+                    && abs(self.velocityX) < 0.001 && abs(self.velocityY) < 0.001 {
+                    self.parent.rotationX = 0
+                    self.parent.rotationY = 0
                     self.velocityX = 0
                     self.velocityY = 0
                     timer.invalidate()
-                    self.decayTimer = nil
+                    self.springTimer = nil
                 }
             }
         }
