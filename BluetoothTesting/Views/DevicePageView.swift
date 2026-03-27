@@ -14,7 +14,8 @@ struct DevicePageView: View {
     private let bondManager = BondManager.shared
     
     let deviceID: UUID
-    
+    var onOverviewRequest: (() -> Void)? = nil
+
     @State private var isLocked = true
     @State private var holdProgress: CGFloat = 0.0
     @State private var isHolding = false
@@ -238,7 +239,14 @@ struct DevicePageView: View {
             .animation(.easeInOut(duration: 0.5), value: isDeviceInRange)
             .animation(.easeInOut(duration: 1.0), value: showModel)
             .animation(.easeInOut(duration: 0.3), value: isDeviceConnected)
-            
+            .contentShape(Rectangle())
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.5)
+                    .onEnded { _ in
+                        onOverviewRequest?()
+                    }
+            )
+
             // MARK: Bottom Control Section
             VStack(spacing: 12) {
                 // Lock button

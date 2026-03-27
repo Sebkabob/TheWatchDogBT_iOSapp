@@ -56,10 +56,10 @@ struct AddNewDeviceView: View {
                     VStack(spacing: 10) {
                         ProgressView()
                             .scaleEffect(1.5)
-                        Text("Looking for WatchDogs...")
+                        Text("Sniffing for WatchDogs...")
                             .foregroundColor(.secondary)
                             .padding()
-                        Text("Make sure your WatchDog is powered on")
+                        Text("Make sure your WatchDog is nearby")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }

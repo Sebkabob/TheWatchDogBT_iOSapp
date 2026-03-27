@@ -20,6 +20,10 @@ struct MainAppView: View {
     
     // Periodic scan health check timer
     @State private var scanWatchdogTimer: Timer?
+
+    // Overview mode (long press to zoom out)
+    @State private var isOverviewMode = false
+    @State private var deviceToRemove: UUID?
     
     // Pages layout:
     // Index 0: Add Device page
@@ -53,26 +57,46 @@ struct MainAppView: View {
     }
     
     var body: some View {
-        TabView(selection: $currentPage) {
-            // MARK: - Add Device Page (index 0)
-            AddDevicePage(bluetoothManager: bluetoothManager)
-                .tag(0)
-            
-            // MARK: - Device Pages (index 1..N)
-            ForEach(Array(sortedDevices.enumerated()), id: \.element.id) { index, device in
-                DevicePageView(
-                    bluetoothManager: bluetoothManager,
-                    deviceID: device.id
-                )
-                .tag(1 + index)
+        ZStack {
+            // MARK: - Normal TabView Pager
+            TabView(selection: $currentPage) {
+                // MARK: Add Device Page (index 0)
+                AddDevicePage(bluetoothManager: bluetoothManager)
+                    .tag(0)
+
+                // MARK: Device Pages (index 1..N)
+                ForEach(Array(sortedDevices.enumerated()), id: \.element.id) { index, device in
+                    DevicePageView(
+                        bluetoothManager: bluetoothManager,
+                        deviceID: device.id,
+                        onOverviewRequest: { enterOverviewMode() }
+                    )
+                    .tag(1 + index)
+                }
+
+                // MARK: About Page (last index)
+                AboutPage()
+                    .tag(1 + sortedDevices.count)
             }
-            
-            // MARK: - About Page (last index)
-            AboutPage()
-                .tag(1 + sortedDevices.count)
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .ignoresSafeArea()
+            .scaleEffect(isOverviewMode ? 0.85 : 1.0)
+            .opacity(isOverviewMode ? 0 : 1)
+            .allowsHitTesting(!isOverviewMode)
+
+            // MARK: - Overview Grid
+            if isOverviewMode {
+                DeviceOverviewGrid(
+                    bluetoothManager: bluetoothManager,
+                    devices: sortedDevices,
+                    onSelectDevice: { selectDeviceFromOverview($0) },
+                    onRemoveDevice: { deviceToRemove = $0 },
+                    onDismiss: { dismissOverviewMode() }
+                )
+                .transition(.opacity)
+            }
         }
-        .tabViewStyle(.page(indexDisplayMode: .never))
-        .ignoresSafeArea()
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: isOverviewMode)
         .onAppear {
             guard !hasInitialized else { return }
             hasInitialized = true
@@ -132,6 +156,23 @@ struct MainAppView: View {
                 currentPage = max(0, totalPages - 1)
             }
         }
+        .alert("Remove WatchDog?", isPresented: Binding(
+            get: { deviceToRemove != nil },
+            set: { if !$0 { deviceToRemove = nil } }
+        )) {
+            Button("Cancel", role: .cancel) {
+                deviceToRemove = nil
+            }
+            Button("Remove", role: .destructive) {
+                if let id = deviceToRemove {
+                    removeDevice(id)
+                    deviceToRemove = nil
+                }
+            }
+        } message: {
+            let name = deviceToRemoveName
+            Text("Are you sure you want to remove \(name)?")
+        }
     }
     
     /// Ensure BLE scanning is always running.
@@ -148,6 +189,54 @@ struct MainAppView: View {
         }
     }
     
+    // MARK: - Overview Mode
+
+    private var deviceToRemoveName: String {
+        guard let id = deviceToRemove,
+              let bond = bondManager.getBond(deviceID: id) else { return "this WatchDog" }
+        return DeviceNameManager.shared.getDisplayName(deviceID: id, advertisingName: bond.name)
+    }
+
+    private func enterOverviewMode() {
+        guard !sortedDevices.isEmpty else { return }
+        let generator = UIImpactFeedbackGenerator(style: .medium)
+        generator.impactOccurred()
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+            isOverviewMode = true
+        }
+    }
+
+    private func dismissOverviewMode() {
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+            isOverviewMode = false
+        }
+    }
+
+    private func selectDeviceFromOverview(_ deviceID: UUID) {
+        if let page = pageIndex(for: deviceID) {
+            currentPage = page
+        }
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+            isOverviewMode = false
+        }
+    }
+
+    private func removeDevice(_ deviceID: UUID) {
+        // Disconnect if this device is currently connected
+        if let device = bluetoothManager.connectedDevice, device.id == deviceID {
+            bluetoothManager.disconnect(from: device)
+        }
+        bondManager.removeBond(deviceID: deviceID)
+
+        // Exit overview if no devices remain
+        if sortedDevices.isEmpty {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                isOverviewMode = false
+            }
+            currentPage = 0
+        }
+    }
+
     /// Periodic watchdog that checks every 3 seconds if scanning is still alive.
     /// If scanning has died for any reason, it restarts it.
     private func startScanWatchdog() {
