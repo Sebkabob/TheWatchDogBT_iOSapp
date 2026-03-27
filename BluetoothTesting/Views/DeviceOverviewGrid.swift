@@ -48,6 +48,7 @@ struct DeviceOverviewGrid: View {
                         )
                     }
                 }
+                .padding(.top, 12)
                 .padding(.horizontal, 20)
                 .padding(.bottom, 40)
             }
@@ -77,16 +78,24 @@ struct DeviceCardView: View {
     }
 
     private var statusColor: Color {
-        if !isConnected { return .gray }
-        let isArmed = (bluetoothManager.deviceState & 0x01) != 0
-        return isArmed ? .red : .green
+        if isConnected {
+            let isArmed = (bluetoothManager.deviceState & 0x01) != 0
+            return isArmed ? .red : .green
+        }
+        return isDeviceInRange ? .blue : .gray
+    }
+
+    private var isDeviceInRange: Bool {
+        if isConnected { return true }
+        if device.isInRange { return true }
+        return bluetoothManager.discoveredDevices.contains(where: { $0.id == device.id })
     }
 
     private var statusText: String {
         if isConnected {
             return bluetoothManager.deviceStateText
         }
-        return device.isInRange ? "In Range" : "Out of Range"
+        return isDeviceInRange ? "In Range" : "Out of Range"
     }
 
     var body: some View {

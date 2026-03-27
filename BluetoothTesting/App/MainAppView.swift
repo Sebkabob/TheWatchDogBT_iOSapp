@@ -61,7 +61,13 @@ struct MainAppView: View {
             // MARK: - Normal TabView Pager
             TabView(selection: $currentPage) {
                 // MARK: Add Device Page (index 0)
-                AddDevicePage(bluetoothManager: bluetoothManager)
+                AddDevicePage(bluetoothManager: bluetoothManager, onSheetDismissed: {
+                    if currentPage == 0 && !sortedDevices.isEmpty {
+                        withAnimation {
+                            currentPage = sortedDevices.count
+                        }
+                    }
+                })
                     .tag(0)
 
                 // MARK: Device Pages (index 1..N)
@@ -96,7 +102,6 @@ struct MainAppView: View {
                 .transition(.opacity)
             }
         }
-        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: isOverviewMode)
         .onAppear {
             guard !hasInitialized else { return }
             hasInitialized = true
@@ -143,15 +148,8 @@ struct MainAppView: View {
                 ensureScanningActive()
             }
         }
-        // When a new device is bonded, the sortedDevices array changes
+        // When devices are removed, clamp currentPage to valid range
         .onChange(of: bondManager.bondedDevices.count) { _, newCount in
-            // If devices were added and we're on the Add page, jump to the newest device
-            if currentPage == 0 && !sortedDevices.isEmpty {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    currentPage = sortedDevices.count // last device = count (1-based)
-                }
-            }
-            // Clamp currentPage if devices were removed
             if currentPage >= totalPages {
                 currentPage = max(0, totalPages - 1)
             }
@@ -207,7 +205,7 @@ struct MainAppView: View {
     }
 
     private func dismissOverviewMode() {
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+        withAnimation(.easeOut(duration: 0.3)) {
             isOverviewMode = false
         }
     }
@@ -216,7 +214,7 @@ struct MainAppView: View {
         if let page = pageIndex(for: deviceID) {
             currentPage = page
         }
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+        withAnimation(.easeOut(duration: 0.3)) {
             isOverviewMode = false
         }
     }
@@ -230,7 +228,7 @@ struct MainAppView: View {
 
         // Exit overview if no devices remain
         if sortedDevices.isEmpty {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+            withAnimation(.easeOut(duration: 0.3)) {
                 isOverviewMode = false
             }
             currentPage = 0
@@ -257,8 +255,9 @@ struct MainAppView: View {
 // MARK: - Add Device Page
 struct AddDevicePage: View {
     var bluetoothManager: BluetoothManager
+    var onSheetDismissed: (() -> Void)? = nil
     @State private var showAddDevice = false
-    
+
     var body: some View {
         VStack(spacing: 24) {
             Spacer()
@@ -288,7 +287,9 @@ struct AddDevicePage: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .sheet(isPresented: $showAddDevice) {
+        .sheet(isPresented: $showAddDevice, onDismiss: {
+            onSheetDismissed?()
+        }) {
             AddNewDeviceView(bluetoothManager: bluetoothManager)
         }
     }
