@@ -42,11 +42,11 @@ class BluetoothManager: NSObject {
     private var lastRSSIUpdate: [UUID: Date] = [:]
     private let rssiUpdateInterval: TimeInterval = 1.0
     
-    private let deviceTimeout: TimeInterval = 8.0
+    private let deviceTimeout: TimeInterval = 5.0
     private var staleDeviceTimer: Timer?
     
     private var connectionTimer: Timer?
-    private let connectionTimeout: TimeInterval = 30.0
+    private let connectionTimeout: TimeInterval = 15.0
     
     private var connectionDurationTimer: Timer?
     
@@ -772,11 +772,9 @@ extension BluetoothManager: CBCentralManagerDelegate {
         }
         
         peripheral.delegate = self
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            print("🔍 Discovering services...")
-            peripheral.discoverServices([self.targetServiceUUID])
-        }
+
+        print("🔍 Discovering services...")
+        peripheral.discoverServices([targetServiceUUID])
     }
     
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
@@ -810,9 +808,15 @@ extension BluetoothManager: CBCentralManagerDelegate {
             
             self.connectionDurationTimer?.invalidate()
             self.connectionDurationTimer = nil
+
+            // Restart scanning so bonded device "in range" state updates properly
+            if !self.isScanning && self.isBluetoothReady {
+                self.startScanning()
+                self.isBackgroundScanning = true
+            }
         }
     }
-    
+
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         print("❌ Failed to connect: \(error?.localizedDescription ?? "Unknown error")")
         
@@ -885,8 +889,8 @@ extension BluetoothManager: CBPeripheralDelegate {
             }
         }
         
-        // After characteristics are discovered, trigger motion log sync after a delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+        // After characteristics are discovered, trigger motion log sync after a short delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             guard let self = self, self.connectedDevice != nil else { return }
             print("📋 Auto-syncing motion logs after connection...")
             self.requestMotionLogCount()

@@ -20,7 +20,7 @@ class BondManager {
     
     // Timer to check for stale devices
     private var staleCheckTimer: Timer?
-    private let staleTimeout: TimeInterval = 8.0  // 8 seconds — prefer showing "in range" over false "out of range"
+    private let staleTimeout: TimeInterval = 5.0  // 5 seconds
     
     private init() {
         loadBonds()
@@ -101,8 +101,8 @@ class BondManager {
     // MARK: - Stale Device Check
     
     private func startStaleDeviceCheck() {
-        // Check every 2 seconds for devices that haven't been seen in 8 seconds
-        staleCheckTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        // Check every 1 second for devices that haven't been seen in 5 seconds
+        staleCheckTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             self?.checkForStaleDevices()
         }
         print("🔄 Started stale device check timer")
