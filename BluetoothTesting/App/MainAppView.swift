@@ -9,15 +9,16 @@ import SwiftUI
 
 struct MainAppView: View {
     @State private var bluetoothManager = BluetoothManager()
+    @Environment(\.scenePhase) private var scenePhase
     private let navState = NavigationStateManager.shared
     private let bondManager = BondManager.shared
-    
+
     // Current page index in the pager
     @State private var currentPage: Int = 0
-    
+
     // Flag to prevent duplicate setup
     @State private var hasInitialized = false
-    
+
     // Periodic scan health check timer
     @State private var scanWatchdogTimer: Timer?
 
@@ -63,9 +64,9 @@ struct MainAppView: View {
                 // MARK: Add Device Page (index 0)
                 AddDevicePage(bluetoothManager: bluetoothManager, onSheetDismissed: {
                     if currentPage == 0 && !sortedDevices.isEmpty {
-                        withAnimation {
-                            currentPage = sortedDevices.count
-                        }
+                        // Jump directly — no animation to avoid sweeping through
+                        // every intermediate page on the way to the new device
+                        currentPage = sortedDevices.count
                     }
                 })
                     .tag(0)
@@ -148,6 +149,15 @@ struct MainAppView: View {
                 ensureScanningActive()
             }
         }
+        // When app returns from background, force-restart scanning and
+        // reset stale timestamps so devices aren't falsely marked out of range
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                print("🔄 App became active — restarting BLE scan")
+                bondManager.refreshTimestampsForForegroundReturn()
+                bluetoothManager.handleAppBecameActive()
+            }
+        }
         // When devices are removed, clamp currentPage to valid range
         .onChange(of: bondManager.bondedDevices.count) { _, newCount in
             if currentPage >= totalPages {
@@ -178,12 +188,14 @@ struct MainAppView: View {
         // Always clear suppress flag — in the pager model, the user controls
         // connect/disconnect explicitly via buttons, not via auto-reconnect
         bluetoothManager.suppressAutoReconnect = false
-        
+
         guard bluetoothManager.isBluetoothReady else { return }
-        
+
         if !bluetoothManager.isScanning {
             print("🔍 MainAppView: Restarting background scan")
-            bluetoothManager.startBackgroundScanning()
+            // Use resume instead of start — preserves discoveredDevices and
+            // bypasses the isBackgroundScanning guard that can get stuck
+            bluetoothManager.resumeBackgroundScanning()
         }
     }
     
@@ -246,7 +258,9 @@ struct MainAppView: View {
             if bluetoothManager.isBluetoothReady && !bluetoothManager.isScanning {
                 print("🐕 Scan watchdog: scanning was dead, restarting!")
                 bluetoothManager.suppressAutoReconnect = false
-                bluetoothManager.startBackgroundScanning()
+                // Use resume to preserve discoveredDevices and bypass stale
+                // isBackgroundScanning flag
+                bluetoothManager.resumeBackgroundScanning()
             }
         }
     }

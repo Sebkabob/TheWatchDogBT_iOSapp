@@ -13,7 +13,6 @@ struct AddNewDeviceView: View {
     private let bondManager = BondManager.shared
     private let nameManager = DeviceNameManager.shared
     
-    @State private var showSuccessAlert = false
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     @State private var bondedDeviceName = ""
@@ -124,13 +123,6 @@ struct AddNewDeviceView: View {
                     completePairing(device: connected)
                 }
             }
-            .alert("WatchDog Added!", isPresented: $showSuccessAlert) {
-                Button("Done") {
-                    dismiss()
-                }
-            } message: {
-                Text("\(bondedDeviceName) has been bonded and is ready to use.")
-            }
             .alert("Pairing Failed", isPresented: $showErrorAlert) {
                 Button("OK", role: .cancel) {
                     connectingDeviceID = nil
@@ -204,24 +196,26 @@ struct AddNewDeviceView: View {
             print("⚠️ Pairing already completed, skipping")
             return
         }
-        
+
         pairingCompleted = true
         print("✅ Pairing complete for: \(device.name)")
-        
+
         // Add bond IMMEDIATELY
         bondManager.addBond(deviceID: device.id, name: device.name)
-        
+
         print("✅ Device added to bond list: \(device.name)")
         print("📋 Total bonded devices: \(bondManager.bondedDevices.count)")
-        
+
         // Clear connecting state
         connectingDeviceID = nil
         deviceToPair = nil
-        
-        // Show success
-        showSuccessAlert = true
-        
+
         print("✅ Successfully bonded and staying connected to \(bondedDeviceName)")
+
+        // Dismiss immediately — MainAppView will navigate to the new device page.
+        // This avoids showing the empty device list (bonded device is filtered out)
+        // and eliminates the extra alert → dismiss → pager-jump sequence.
+        dismiss()
     }
 }
 

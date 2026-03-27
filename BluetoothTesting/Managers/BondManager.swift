@@ -20,7 +20,7 @@ class BondManager {
     
     // Timer to check for stale devices
     private var staleCheckTimer: Timer?
-    private let staleTimeout: TimeInterval = 5.0  // 5 seconds
+    private let staleTimeout: TimeInterval = 8.0  // 8 seconds — generous to avoid false "out of range"
     
     private init() {
         loadBonds()
@@ -98,6 +98,21 @@ class BondManager {
         return nameManager.getDisplayName(deviceID: deviceID, advertisingName: bond.name)
     }
     
+    /// Reset lastSeen timestamps for devices that were previously in range.
+    /// Called when the app returns from background so the stale check timer
+    /// doesn't immediately mark everything out of range before new advertisements arrive.
+    func refreshTimestampsForForegroundReturn() {
+        let now = Date()
+        for index in bondedDevices.indices {
+            // Only refresh devices that had been seen (were in range before backgrounding).
+            // Devices that were already out of range stay out of range.
+            if bondedDevices[index].currentRSSI != nil {
+                bondedDevices[index].lastSeen = now
+            }
+        }
+        print("🔄 Refreshed bonded device timestamps for foreground return")
+    }
+
     // MARK: - Stale Device Check
     
     private func startStaleDeviceCheck() {

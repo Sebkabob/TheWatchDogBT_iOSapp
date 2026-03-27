@@ -435,16 +435,102 @@ class BluetoothManager: NSObject {
     
     func stopBackgroundScanning() {
         guard isBackgroundScanning else { return }
-        
+
         isBackgroundScanning = false
-        
+
         // Don't stop scanning if we're reconnecting
         if !isAttemptingReconnect {
             stopScanning()
         }
         print("🛑 Stopped background scanning")
     }
-    
+
+    /// Resume background scanning without clearing discoveredDevices.
+    /// Use this when scanning died (e.g. after connect() stopped it) but we
+    /// need to preserve the existing device list for UI and reconnection.
+    func resumeBackgroundScanning() {
+        guard isBluetoothReady else {
+            shouldStartScanningWhenReady = true
+            return
+        }
+
+        // Don't restart scanning during an active connection — it's not needed
+        // and can interfere with CoreBluetooth's connection flow
+        guard connectedDevice == nil && !isConnecting else { return }
+
+        centralManager.scanForPeripherals(
+            withServices: [targetServiceUUID],
+            options: [
+                CBCentralManagerScanOptionAllowDuplicatesKey: true,
+                CBCentralManagerScanOptionSolicitedServiceUUIDsKey: [targetServiceUUID]
+            ]
+        )
+
+        isScanning = true
+        isBackgroundScanning = true
+        lastAdvertisementReceived = Date()
+
+        startScanHealthMonitor()
+
+        // Restart stale device timer if not running
+        if staleDeviceTimer == nil {
+            DispatchQueue.main.async {
+                self.staleDeviceTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+                    self?.removeStaleDevices()
+                }
+            }
+        }
+
+        print("🔍 Resumed background scanning (devices preserved)")
+    }
+
+    // MARK: - App Lifecycle
+
+    /// Called when the app returns to the foreground. Force-restarts the BLE scan
+    /// because iOS suspends scanning in the background and it may not resume reliably.
+    func handleAppBecameActive() {
+        guard isBluetoothReady else {
+            shouldStartScanningWhenReady = true
+            return
+        }
+
+        // Don't interfere with an active connection attempt
+        guard connectedDevice == nil && !isConnecting else {
+            print("🔄 App became active but connection in progress — skipping scan restart")
+            return
+        }
+
+        // Reset timestamps so stale timers don't immediately remove devices
+        // that were seen before backgrounding
+        lastAdvertisementReceived = Date()
+        let now = Date()
+        for key in lastRSSIUpdate.keys {
+            lastRSSIUpdate[key] = now
+        }
+
+        // Force-restart the scan — iOS may have silently stopped it
+        centralManager.stopScan()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self = self, self.isBluetoothReady else { return }
+            // Re-check connection state after the delay
+            guard self.connectedDevice == nil && !self.isConnecting else { return }
+
+            self.centralManager.scanForPeripherals(
+                withServices: [self.targetServiceUUID],
+                options: [
+                    CBCentralManagerScanOptionAllowDuplicatesKey: true,
+                    CBCentralManagerScanOptionSolicitedServiceUUIDsKey: [self.targetServiceUUID]
+                ]
+            )
+
+            self.isScanning = true
+            self.isBackgroundScanning = true
+            self.lastAdvertisementReceived = Date()
+            print("🔄 BLE scan force-restarted after foreground return")
+        }
+    }
+
     // MARK: - Scan Health Monitoring
     
     private func startScanHealthMonitor() {
