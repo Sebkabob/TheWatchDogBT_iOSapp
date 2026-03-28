@@ -252,14 +252,15 @@ struct DeviceControlView: View {
                     isDisabled: !isDeviceConnected
                 )
                 .padding(.horizontal, 20)
-                .gesture(
+                .simultaneousGesture(
                     isDeviceConnected ?
-                    DragGesture(minimumDistance: 0)
+                    LongPressGesture(minimumDuration: 0.001)
                         .onChanged { _ in
                             if !isHolding {
                                 startHolding()
                             }
                         }
+                        .sequenced(before: DragGesture(minimumDistance: 0))
                         .onEnded { _ in
                             stopHolding()
                         }
@@ -403,17 +404,17 @@ struct DeviceControlView: View {
         guard isDeviceConnected else { return }
         
         isHolding = true
-        holdProgress = 0.0
-        
+        holdProgress = 0.09
+
         lightHaptic.prepare()
         heavyHaptic.prepare()
         lightHaptic.impactOccurred()
-        
-        withAnimation(.linear(duration: 1.0)) {
+
+        withAnimation(.linear(duration: 0.91)) {
             holdProgress = 1.0
         }
-        
-        holdTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { _ in
+
+        holdTimer = Timer.scheduledTimer(withTimeInterval: 0.91, repeats: false) { _ in
             if self.isHolding {
                 self.completeHold()
             }

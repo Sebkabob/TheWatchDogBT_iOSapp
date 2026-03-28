@@ -326,18 +326,20 @@ struct DevicePageView: View {
                     isDisabled: !isDeviceConnected
                 )
                 .padding(.horizontal, 20)
-                .onLongPressGesture(minimumDuration: 1.0, pressing: { isPressing in
-                    if isDeviceConnected {
-                        if isPressing {
-                            startHolding()
-                        } else {
+                .simultaneousGesture(
+                    isDeviceConnected ?
+                    LongPressGesture(minimumDuration: 0.001)
+                        .onChanged { _ in
+                            if !isHolding {
+                                startHolding()
+                            }
+                        }
+                        .sequenced(before: DragGesture(minimumDistance: 0))
+                        .onEnded { _ in
                             stopHolding()
                         }
-                    }
-                }, perform: {
-                    // This fires when the full duration is reached
-                    // completeHold() is already called by the fill timer
-                })
+                    : nil
+                )
                 
                 // Bottom buttons row
                 HStack(spacing: 12) {
@@ -550,18 +552,18 @@ struct DevicePageView: View {
         guard !isHolding else { return }
         
         isHolding = true
-        holdProgress = 0.0
-        
+        holdProgress = 0.09
+
         lightHaptic.prepare()
         heavyHaptic.prepare()
         lightHaptic.impactOccurred()
-        
+
         // Drive the fill bar with a repeating timer (~60fps)
         // This avoids relying on withAnimation which can be disrupted by the TabView
-        let totalDuration: Double = 1.0
+        let remainingDuration: Double = 0.91
         let interval: Double = 1.0 / 60.0
-        let increment: CGFloat = CGFloat(interval / totalDuration)
-        
+        let increment: CGFloat = CGFloat(interval / remainingDuration) * (1.0 - 0.09)
+
         holdTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { timer in
             if self.isHolding {
                 self.holdProgress += increment

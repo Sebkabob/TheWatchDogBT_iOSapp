@@ -9,7 +9,7 @@ struct LockButton: View {
     @Binding var isLocked: Bool
     let holdProgress: CGFloat
     var isDisabled: Bool = false
-    
+
     var buttonColor: Color {
         if isDisabled {
             // Grey out when disabled, but maintain red/black distinction
@@ -18,25 +18,25 @@ struct LockButton: View {
         // Button stays at its current state color, doesn't transition during hold
         return isLocked ? Color.red : Color.black
     }
-    
+
     var body: some View {
         ZStack {
             // Background button
             RoundedRectangle(cornerRadius: 20)
                 .fill(buttonColor)
                 .frame(height: 80)
-            
+
             // Progress overlay (only show when not disabled)
             if !isDisabled {
                 GeometryReader { geometry in
                     RoundedRectangle(cornerRadius: 20)
-                        .fill(Color.white.opacity(0.4))
+                        .fill(Color.white.opacity(0.4 * min(holdProgress / 0.09, 1.0)))
                         .frame(width: geometry.size.width * holdProgress, height: 80)
                 }
                 .frame(height: 80)
                 .clipShape(RoundedRectangle(cornerRadius: 20))
             }
-            
+
             // Button content
             HStack(spacing: 15) {
                 Image(systemName: isLocked ? "lock.fill" : "lock.open.fill")
