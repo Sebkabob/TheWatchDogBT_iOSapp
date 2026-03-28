@@ -12,6 +12,7 @@ struct SceneView3D: UIViewRepresentable {
     @Binding var rotationX: Double    // pitch (up/down)
     @Binding var rotationY: Double    // yaw (left/right)
     let usdzFileName: String
+    let ledColor: UIColor
     let ledIntensity: Double
     var onTap: (() -> Void)? = nil
 
@@ -105,67 +106,80 @@ struct SceneView3D: UIViewRepresentable {
         )
 
         if let ledNode = context.coordinator.ledNode {
-            updateLED(node: ledNode, intensity: ledIntensity)
+            updateLED(node: ledNode, color: ledColor, intensity: ledIntensity)
         }
     }
 
     private func searchForLED(in rootNode: SCNNode, coordinator: Coordinator) {
-        rootNode.enumerateHierarchy { (childNode, stop) in
-            if let nodeName = childNode.name {
-                if nodeName.uppercased().contains("LED") {
-                    coordinator.ledNode = childNode
-                    print("✅ LED found: \(nodeName)")
-                    stop.pointee = true
+        // The USDZ export flattened all body names to "empty_N".
+        // "empty_4" is the LED lens: 100-face circle, r≈0.55, centered on the front face.
+        // Fall back to any node whose name contains "LED" in case the model is re-exported
+        // with names intact.
+        var allNodes: [String] = []
+
+        rootNode.enumerateHierarchy { (childNode, _) in
+            if let name = childNode.name {
+                allNodes.append(name)
+                if name == "empty_4" || name.uppercased().contains("LED") || name.uppercased().contains("LIGHT") {
+                    if coordinator.ledNode == nil {
+                        coordinator.ledNode = childNode
+                        print("✅ LED node found: \(name)")
+                    }
                 }
             }
         }
+
+        print("🔍 All scene nodes: \(allNodes.joined(separator: ", "))")
         if coordinator.ledNode == nil {
-            print("❌ LED not found")
+            print("❌ LED node not found in scene")
         }
     }
 
-    private func updateLED(node: SCNNode, intensity: Double) {
+    private func updateLED(node: SCNNode, color: UIColor, intensity: Double) {
         guard let material = node.geometry?.firstMaterial else { return }
 
         if intensity > 0.0 {
             let brightness = CGFloat(intensity)
-            let brightnessMultiplier: CGFloat = 10.0
-            let warmOrange = UIColor(red: 1.0, green: 0.6, blue: 0.2, alpha: 1.0)
 
-            material.emission.contents = warmOrange
-            material.emission.intensity = brightness * brightnessMultiplier
-            material.diffuse.contents = warmOrange
+            // Subtle glow on the lens surface only
+            material.emission.contents = color
+            material.emission.intensity = brightness * 2.5
+            material.diffuse.contents = color
+            // Single-sided: emission visible only on the front face (normal pointing toward camera)
+            material.isDoubleSided = false
 
             if node.childNode(withName: "ledLight", recursively: false) == nil {
                 let lightNode = SCNNode()
                 lightNode.name = "ledLight"
                 lightNode.light = SCNLight()
-                lightNode.light?.type = .omni
-                lightNode.light?.color = warmOrange
+                lightNode.light?.type = .spot
+                // Cone: 25° inner (bright core), 55° outer (soft falloff)
+                lightNode.light?.spotInnerAngle = 25
+                lightNode.light?.spotOuterAngle = 55
+                // Default SceneKit light aims in -Z; rotate 180° around X to aim in +Z (toward camera)
+                lightNode.eulerAngles = SCNVector3(Float.pi, 0, 0)
 
                 let (min, max) = node.boundingBox
-                let center = SCNVector3(
+                lightNode.position = SCNVector3(
                     (min.x + max.x) / 2,
                     (min.y + max.y) / 2,
                     (min.z + max.z) / 2
                 )
-                lightNode.position = center
-
-                lightNode.light?.attenuationStartDistance = 0.5
-                lightNode.light?.attenuationEndDistance = 1.5
-
+                lightNode.light?.attenuationStartDistance = 0.3
+                lightNode.light?.attenuationEndDistance = 2.5
                 node.addChildNode(lightNode)
             }
 
             if let lightNode = node.childNode(withName: "ledLight", recursively: false) {
-                lightNode.light?.intensity = CGFloat(intensity * 30)
-                lightNode.light?.color = warmOrange
+                lightNode.light?.intensity = CGFloat(intensity * 12)
+                lightNode.light?.color = color
             }
 
         } else {
-            material.emission.contents = UIColor.white
+            material.emission.contents = UIColor.darkGray
             material.emission.intensity = 0.0
             material.diffuse.contents = UIColor.darkGray
+            material.isDoubleSided = false
 
             if let lightNode = node.childNode(withName: "ledLight", recursively: false) {
                 lightNode.light?.intensity = 0
@@ -221,7 +235,9 @@ struct SceneView3D: UIViewRepresentable {
 
         node.enumerateHierarchy { child, _ in
             guard let geometry = child.geometry else { return }
-            if let name = child.name, name.uppercased().contains("LED") { return }
+            // Skip the LED node so we don't clobber its emission material
+            let name = child.name ?? ""
+            if name == "empty_4" || name.uppercased().contains("LED") || name.uppercased().contains("LIGHT") { return }
 
             for material in geometry.materials {
                 material.lightingModel = .physicallyBased
@@ -514,6 +530,7 @@ struct SceneView3D: UIViewRepresentable {
         rotationX: .constant(0),
         rotationY: .constant(0),
         usdzFileName: "WatchDogBTCase_Final",
+        ledColor: UIColor(red: 1, green: 0, blue: 0, alpha: 1),
         ledIntensity: 0.5
     )
     .frame(width: 300, height: 400)

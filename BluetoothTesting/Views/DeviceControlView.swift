@@ -90,7 +90,14 @@ struct DeviceControlView: View {
         let isArmed = (bluetoothManager.deviceState & 0x01) != 0
         return isArmed ? .red : .green
     }
-    
+
+    private var mlcIndicatorVisible: Bool {
+        let mlc = bluetoothManager.mlcState
+        if mlc == .unknown { return false }
+        if mlc == .stationaryUpright && !settingsManager.isArmed { return false }
+        return true
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Device State Display at the top - Horizontal Layout
@@ -106,29 +113,45 @@ struct DeviceControlView: View {
                     Circle()
                         .fill(statusColor)
                         .frame(width: 12, height: 12)
-                    
+
                     Text(statusText)
                         .font(.title3)
                         .fontWeight(.bold)
                         .foregroundColor(statusColor)
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
-                
-                // Right: Battery indicator
-                if isDeviceConnected && bluetoothManager.batteryLevel >= 0 {
-                    HStack(spacing: 4) {
-                        if bluetoothManager.isCharging {
-                            Image(systemName: "bolt.fill")
-                                .foregroundColor(.yellow)
-                                .font(.caption)
+
+                // Right: Battery + MLC state
+                if isDeviceConnected {
+                    VStack(alignment: .trailing, spacing: 4) {
+                        if bluetoothManager.batteryLevel >= 0 {
+                            HStack(spacing: 4) {
+                                if bluetoothManager.isCharging {
+                                    Image(systemName: "bolt.fill")
+                                        .foregroundColor(.yellow)
+                                        .font(.caption)
+                                }
+                                Image(systemName: batteryIcon)
+                                    .foregroundColor(batteryColor)
+                                Text("\(bluetoothManager.batteryLevel)%")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                         }
-                        
-                        Image(systemName: batteryIcon)
-                            .foregroundColor(batteryColor)
-                        Text("\(bluetoothManager.batteryLevel)%")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        if mlcIndicatorVisible {
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(bluetoothManager.mlcState.color)
+                                    .frame(width: 8, height: 8)
+                                Text(bluetoothManager.mlcState.displayName)
+                                    .font(.caption)
+                                    .foregroundColor(bluetoothManager.mlcState.color)
+                            }
+                            .transition(.opacity)
+                        }
                     }
+                    .animation(.easeInOut(duration: 0.25), value: mlcIndicatorVisible)
+                    .frame(height: 36)
                     .frame(maxWidth: .infinity, alignment: .trailing)
                 } else {
                     Spacer()
@@ -143,7 +166,7 @@ struct DeviceControlView: View {
             ZStack(alignment: .leading) {
                 if showModel && isDeviceConnected {
                     // 3D Model - Centered
-                    Motion3DView(isLocked: isLocked, bluetoothManager: bluetoothManager)
+                    Motion3DView(bluetoothManager: bluetoothManager)
                         .frame(maxWidth: .infinity)
                         .transition(.opacity)
                 } else if showDisconnectedText {

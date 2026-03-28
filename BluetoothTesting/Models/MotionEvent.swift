@@ -8,29 +8,29 @@
 import Foundation
 
 enum MotionEventType: UInt8, Codable {
-    case unknown = 0
-    case lightMovement = 1
-    case moderateMovement = 2
-    case severeMovement = 3
-    case tamper = 4
-    
+    case none      = 0
+    case inMotion  = 1
+    case shaken    = 2
+    case impact    = 3
+    case freefall  = 4
+
     var displayName: String {
         switch self {
-        case .unknown: return "Unknown"
-        case .lightMovement: return "Light Movement"
-        case .moderateMovement: return "Moderate Movement"
-        case .severeMovement: return "Severe Movement"
-        case .tamper: return "Tamper Detected"
+        case .none:      return "None"
+        case .inMotion:  return "In Motion"
+        case .shaken:    return "Shaken"
+        case .impact:    return "Impact"
+        case .freefall:  return "Free Fall"
         }
     }
-    
+
     var icon: String {
         switch self {
-        case .unknown: return "questionmark.circle"
-        case .lightMovement: return "water.waves"
-        case .moderateMovement: return "wind"
-        case .severeMovement: return "tornado"
-        case .tamper: return "exclamationmark.triangle.fill"
+        case .none:      return "minus.circle"
+        case .inMotion:  return "figure.walk"
+        case .shaken:    return "waveform.path"
+        case .impact:    return "exclamationmark.triangle"
+        case .freefall:  return "arrow.down.circle"
         }
     }
 }
@@ -70,7 +70,7 @@ struct MotionEvent: Identifiable, Codable {
         let eventTypeBits = lastByte & 0x7F  // Lower 7 bits for event type
         let alarmSounded = (lastByte & 0x80) != 0  // Bit 7 for alarm flag
         
-        let eventType = MotionEventType(rawValue: eventTypeBits) ?? .unknown
+        let eventType = MotionEventType(rawValue: eventTypeBits) ?? .none
         
         return MotionEvent(timestamp: timestamp, eventType: eventType, alarmSounded: alarmSounded)
     }

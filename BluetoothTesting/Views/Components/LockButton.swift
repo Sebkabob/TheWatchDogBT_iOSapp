@@ -41,7 +41,7 @@ struct LockButton: View {
             HStack(spacing: 15) {
                 Image(systemName: isLocked ? "lock.fill" : "lock.open.fill")
                     .font(.title)
-                Text(isLocked ? "Unlock" : "Lock")
+                Text(isLocked ? "Hold to Unlock" : "Hold to Lock")
                     .font(.title2)
                     .fontWeight(.bold)
             }

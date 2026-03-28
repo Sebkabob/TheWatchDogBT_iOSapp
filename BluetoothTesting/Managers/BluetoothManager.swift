@@ -8,6 +8,35 @@
 import Foundation
 import CoreBluetooth
 import Observation
+import SwiftUI
+
+enum MLCState: UInt8 {
+    case stationaryUpright    = 0
+    case stationaryNotUpright = 1
+    case inMotion             = 2
+    case shaken               = 3
+    case unknown              = 0xFF
+
+    var displayName: String {
+        switch self {
+        case .stationaryUpright:    return "Resting"
+        case .stationaryNotUpright: return "Tilted"
+        case .inMotion:             return "Moving"
+        case .shaken:               return "Shaken"
+        case .unknown:              return "--"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .stationaryUpright:    return .green
+        case .stationaryNotUpright: return .yellow
+        case .inMotion:             return .orange
+        case .shaken:               return .red
+        case .unknown:              return .gray
+        }
+    }
+}
 
 @Observable
 class BluetoothManager: NSObject {
@@ -20,6 +49,13 @@ class BluetoothManager: NSObject {
     var hasReceivedInitialState = false
     var batteryLevel: Int = -1
     var isCharging: Bool = false
+    var isCablePlugged: Bool = false    // true once charging starts; cleared when discharging
+    var isBatteryFull: Bool = false     // true when charging ends at 100 %
+    var isAlarmActive: Bool = false     // set on 0xFF motion alert; auto-clears after ~30 s
+    var isFindMyActive: Bool = false    // set by Find My command reply
+    var mlcState: MLCState = .unknown   // real-time MLC motion classification from status notifications
+    var lastMotionType: MotionEventType = .none  // motion type from most recent motion alert
+    private var alarmClearTimer: Timer?
 
     // Debug data
     var debugCurrentDraw: Double = 0.0  // mA
@@ -230,6 +266,12 @@ class BluetoothManager: NSObject {
             self.hasReceivedInitialState = false
             self.batteryLevel = -1
             self.isCharging = false
+            self.isCablePlugged = false
+            self.isBatteryFull = false
+            self.isAlarmActive = false
+            self.isFindMyActive = false
+            self.alarmClearTimer?.invalidate()
+            self.alarmClearTimer = nil
             self.debugCurrentDraw = 0.0
             self.debugVoltage = 0.0
             self.connectionStartTime = nil
@@ -239,6 +281,30 @@ class BluetoothManager: NSObject {
         }
     }
     
+    // MARK: - Battery / charging state helper (call on main thread)
+
+    /// Updates battery-related LED state properties from each incoming battery byte.
+    /// Infers isCablePlugged from charging transitions since the protocol has no explicit cable bit.
+    private func updateBatteryState(charging: Bool, battery: Int) {
+        let wasCharging = isCharging
+        batteryLevel = battery
+        isCharging = charging
+
+        if charging && !wasCharging {
+            // Cable just plugged in and started charging
+            isCablePlugged = true
+            isBatteryFull = false
+        } else if !charging && wasCharging && battery >= 100 {
+            // Charging finished — cable still plugged, battery full
+            isBatteryFull = true
+            // isCablePlugged stays true
+        } else if !charging && battery < 95 && isCablePlugged {
+            // Battery is draining → cable has been removed
+            isCablePlugged = false
+            isBatteryFull = false
+        }
+    }
+
     func sendData(_ data: Data) {
         guard let characteristic = writeCharacteristic,
               let peripheral = connectedDevice?.peripheral else {
@@ -883,6 +949,14 @@ extension BluetoothManager: CBCentralManagerDelegate {
             self.hasReceivedInitialState = false
             self.batteryLevel = -1
             self.isCharging = false
+            self.isCablePlugged = false
+            self.isBatteryFull = false
+            self.isAlarmActive = false
+            self.isFindMyActive = false
+            self.mlcState = .unknown
+            self.lastMotionType = .none
+            self.alarmClearTimer?.invalidate()
+            self.alarmClearTimer = nil
             self.isConnecting = false
             self.pendingConnectionDevice = nil
             self.debugCurrentDraw = 0.0
@@ -891,7 +965,7 @@ extension BluetoothManager: CBCentralManagerDelegate {
             self.connectionDuration = 0
             self.pendingEventCount = 0
             self.isSyncingMotionLogs = false
-            
+
             self.connectionDurationTimer?.invalidate()
             self.connectionDurationTimer = nil
 
@@ -1015,14 +1089,34 @@ extension BluetoothManager: CBPeripheralDelegate {
         
         // ─── Check if this is a motion alert (0xFF) ───
         if firstByte == MOTION_ALERT_MARKER {
-            print("🚨 Motion alert received from device!")
-            if data.count >= 2 {
-                let batteryByte = data[1]
-                let charging = (batteryByte & 0x80) != 0
-                let battery = Int(batteryByte & 0x7F)
-                DispatchQueue.main.async {
-                    self.batteryLevel = battery
-                    self.isCharging = charging
+            let motionType: MotionEventType
+            let batteryByte: UInt8
+
+            if data.count >= 3 {
+                // New 3-byte format: [0xFF] [motionType] [battery]
+                motionType = MotionEventType(rawValue: data[1]) ?? .inMotion
+                batteryByte = data[2]
+            } else if data.count >= 2 {
+                // Legacy 2-byte format: [0xFF] [battery]
+                motionType = .inMotion
+                batteryByte = data[1]
+            } else {
+                motionType = .inMotion
+                batteryByte = 0
+            }
+
+            let charging = (batteryByte & 0x80) != 0
+            let battery = Int(batteryByte & 0x7F)
+            print("🚨 Motion alert: \(motionType.displayName)")
+
+            DispatchQueue.main.async {
+                self.lastMotionType = motionType
+                self.updateBatteryState(charging: charging, battery: battery)
+                // Mark alarm active; auto-clear after ~30 s (full melody duration)
+                self.isAlarmActive = true
+                self.alarmClearTimer?.invalidate()
+                self.alarmClearTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: false) { [weak self] _ in
+                    self?.isAlarmActive = false
                 }
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
@@ -1038,48 +1132,40 @@ extension BluetoothManager: CBPeripheralDelegate {
         }
         
         // ─── Otherwise it's a regular status update ───
+        // Parse all fields on the BLE callback thread, then apply atomically on main.
         let settingsByte = firstByte
-        
+
+        var charging = false
+        var battery = 0
+        if data.count >= 2 {
+            let batteryByte = data[1]
+            charging = (batteryByte & 0x80) != 0
+            battery = Int(batteryByte & 0x7F)
+        }
+
+        var current: Double = 0.0
+        var voltage: Double = 0.0
+        if data.count >= 6 {
+            let currentRaw = UInt16(data[2]) | (UInt16(data[3]) << 8)
+            current = Double(Int16(bitPattern: currentRaw))
+            let voltageRaw = UInt16(data[4]) | (UInt16(data[5]) << 8)
+            voltage = Double(voltageRaw) / 1000.0
+        }
+
+        let mlc: MLCState = data.count >= 7 ? (MLCState(rawValue: data[6]) ?? .unknown) : .unknown
+
         DispatchQueue.main.async {
             let oldState = self.deviceState
             self.deviceState = settingsByte
             self.hasReceivedInitialState = true
-            
             self.settingsManager.decodeSettings(from: settingsByte)
-            
-            print("📥 Received device state: 0x\(String(format: "%02X", settingsByte)) - \(self.deviceStateText) (was: 0x\(String(format: "%02X", oldState)))")
-        }
-        
-        // Byte 1: battery level
-        if data.count >= 2 {
-            let batteryByte = data[1]
-            let charging = (batteryByte & 0x80) != 0
-            let battery = Int(batteryByte & 0x7F)
-            
-            DispatchQueue.main.async {
-                self.batteryLevel = battery
-                self.isCharging = charging
-                print("🔋 Battery level: \(battery)% \(charging ? "(Charging)" : "")")
-            }
-        }
-        
-        // Bytes 2-5: debug data
-        if data.count >= 6 {
-            let currentLow = UInt16(data[2])
-            let currentHigh = UInt16(data[3])
-            let currentRaw = currentLow | (currentHigh << 8)
-            let current = Double(Int16(bitPattern: currentRaw))
-            
-            let voltageLow = UInt16(data[4])
-            let voltageHigh = UInt16(data[5])
-            let voltageRaw = voltageLow | (voltageHigh << 8)
-            let voltage = Double(voltageRaw) / 1000.0
-            
-            DispatchQueue.main.async {
-                self.debugCurrentDraw = current
-                self.debugVoltage = voltage
-                print("🔧 Debug - Current: \(current)mA, Voltage: \(voltage)V")
-            }
+
+            self.updateBatteryState(charging: charging, battery: battery)
+            self.debugCurrentDraw = current
+            self.debugVoltage = voltage
+            self.mlcState = mlc
+
+            print("📥 State: 0x\(String(format: "%02X", settingsByte)) (was: 0x\(String(format: "%02X", oldState))), 🔋 \(battery)%\(charging ? " ⚡" : ""), MLC: \(mlc.displayName)")
         }
     }
     
