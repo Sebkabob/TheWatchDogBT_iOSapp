@@ -141,7 +141,8 @@ struct WatchDogSettingsView: View {
                         }
                     }
                     
-                    // Advanced Section
+                    // Advanced Section (hidden unless dev mode unlocked)
+                    if settingsManager.devModeUnlocked {
                     Section(header: Text("Advanced")) {
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
@@ -182,7 +183,8 @@ struct WatchDogSettingsView: View {
                                 .labelsHidden()
                         }
                     }
-                    
+                    } // end dev mode guard
+
                     // Forget Device Section
                     Section {
                         Button(action: {

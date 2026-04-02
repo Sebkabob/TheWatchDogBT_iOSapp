@@ -47,6 +47,11 @@ struct DeviceControlView: View {
     // Track min/max SOC for dynamic range
     @State private var minSOC: Double = 100.0
     @State private var maxSOC: Double = 0.0
+
+    // Dev mode tap counter
+    @State private var devTapCount: Int = 0
+    @State private var devTapResetTask: Task<Void, Never>?
+    @State private var devModeToast: String?
     
     private let lightHaptic = UIImpactFeedbackGenerator(style: .light)
     private let heavyHaptic = UIImpactFeedbackGenerator(style: .heavy)
@@ -136,6 +141,19 @@ struct DeviceControlView: View {
                                 Text("\(bluetoothManager.batteryLevel)%")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
+                            }
+                            .onTapGesture {
+                                devTapResetTask?.cancel()
+                                devTapCount += 1
+                                if devTapCount >= 10 {
+                                    devTapCount = 0
+                                    settingsManager.devModeUnlocked.toggle()
+                                    devModeToast = settingsManager.devModeUnlocked ? "Dev mode on" : "Dev mode off"
+                                }
+                                devTapResetTask = Task {
+                                    try? await Task.sleep(for: .seconds(3))
+                                    if !Task.isCancelled { devTapCount = 0 }
+                                }
                             }
                         }
                         if mlcIndicatorVisible {
@@ -421,8 +439,31 @@ struct DeviceControlView: View {
                 bluetoothManager.startReconnecting(to: deviceID)
             }
         }
+        .overlay {
+            if let toast = devModeToast {
+                Text(toast)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Color.black.opacity(0.75))
+                    .cornerRadius(10)
+                    .transition(.opacity.animation(.easeInOut(duration: 0.15)))
+            }
+        }
+        .onChange(of: devModeToast) {
+            if devModeToast != nil {
+                Task {
+                    try? await Task.sleep(for: .seconds(1))
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        devModeToast = nil
+                    }
+                }
+            }
+        }
     }
-    
+
     private func startHolding() {
         guard isDeviceConnected else { return }
         

@@ -23,6 +23,7 @@ class SettingsManager {
     var debugModeEnabled: Bool = false
     var highPerformanceMode: Bool = false
     var liveOrientationEnabled: Bool = false
+    var devModeUnlocked: Bool = false
     
     // UserDefaults keys
     private let armedKey = "watchdog_armed"
@@ -35,6 +36,7 @@ class SettingsManager {
     private let debugModeKey = "watchdog_debug_mode"
     private let highPerformanceModeKey = "watchdog_high_performance_mode"
     private let liveOrientationKey = "watchdog_live_orientation"
+    private let devModeUnlockedKey = "watchdog_dev_mode_unlocked"
     
     private init() {
         loadSettings()
@@ -149,6 +151,7 @@ class SettingsManager {
         UserDefaults.standard.set(debugModeEnabled, forKey: debugModeKey)
         UserDefaults.standard.set(highPerformanceMode, forKey: highPerformanceModeKey)
         UserDefaults.standard.set(liveOrientationEnabled, forKey: liveOrientationKey)
+        UserDefaults.standard.set(devModeUnlocked, forKey: devModeUnlockedKey)
     }
     
     private func loadSettings() {
@@ -177,6 +180,13 @@ class SettingsManager {
             liveOrientationEnabled = UserDefaults.standard.bool(forKey: liveOrientationKey)
         } else {
             liveOrientationEnabled = false
+        }
+
+        // Dev Mode defaults to OFF
+        if UserDefaults.standard.object(forKey: devModeUnlockedKey) != nil {
+            devModeUnlocked = UserDefaults.standard.bool(forKey: devModeUnlockedKey)
+        } else {
+            devModeUnlocked = false
         }
         
         if let alarmString = UserDefaults.standard.string(forKey: alarmTypeKey),
