@@ -11,29 +11,29 @@ import Observation
 import SwiftUI
 
 enum MLCState: UInt8 {
-    case stationaryUpright    = 0
-    case stationaryNotUpright = 1
-    case inMotion             = 2
-    case shaken               = 3
-    case unknown              = 0xFF
+    case stationary  = 0
+    case doorOpen    = 1
+    case inMotion    = 2
+    case shaken      = 3
+    case unknown     = 0xFF
 
     var displayName: String {
         switch self {
-        case .stationaryUpright:    return "Resting"
-        case .stationaryNotUpright: return "Tilted"
-        case .inMotion:             return "Moving"
-        case .shaken:               return "Shaken"
-        case .unknown:              return "--"
+        case .stationary:  return "Resting"
+        case .doorOpen:    return "Door Open"
+        case .inMotion:    return "Moving"
+        case .shaken:      return "Shaken"
+        case .unknown:     return "--"
         }
     }
 
     var color: Color {
         switch self {
-        case .stationaryUpright:    return .green
-        case .stationaryNotUpright: return .yellow
-        case .inMotion:             return .orange
-        case .shaken:               return .red
-        case .unknown:              return .gray
+        case .stationary:  return .green
+        case .doorOpen:    return .yellow
+        case .inMotion:    return .orange
+        case .shaken:      return .red
+        case .unknown:     return .gray
         }
     }
 }
@@ -60,6 +60,9 @@ class BluetoothManager: NSObject {
     // Debug data
     var debugCurrentDraw: Double = 0.0  // mA
     var debugVoltage: Double = 0.0      // V
+    var debugAccelX: Float = 0.0        // g
+    var debugAccelY: Float = 0.0        // g
+    var debugAccelZ: Float = 0.0        // g
     var connectionStartTime: Date?
     var connectionDuration: TimeInterval = 0
 
@@ -1154,6 +1157,18 @@ extension BluetoothManager: CBPeripheralDelegate {
 
         let mlc: MLCState = data.count >= 7 ? (MLCState(rawValue: data[6]) ?? .unknown) : .unknown
 
+        var accelX: Float = 0.0
+        var accelY: Float = 0.0
+        var accelZ: Float = 0.0
+        if data.count >= 13 {
+            let rawX = Int16(data[7]) | (Int16(data[8]) << 8)
+            let rawY = Int16(data[9]) | (Int16(data[10]) << 8)
+            let rawZ = Int16(data[11]) | (Int16(data[12]) << 8)
+            accelX = Float(rawX) * 16.0 / 32768.0
+            accelY = Float(rawY) * 16.0 / 32768.0
+            accelZ = Float(rawZ) * 16.0 / 32768.0
+        }
+
         DispatchQueue.main.async {
             let oldState = self.deviceState
             self.deviceState = settingsByte
@@ -1164,6 +1179,9 @@ extension BluetoothManager: CBPeripheralDelegate {
             self.debugCurrentDraw = current
             self.debugVoltage = voltage
             self.mlcState = mlc
+            self.debugAccelX = accelX
+            self.debugAccelY = accelY
+            self.debugAccelZ = accelZ
 
             print("📥 State: 0x\(String(format: "%02X", settingsByte)) (was: 0x\(String(format: "%02X", oldState))), 🔋 \(battery)%\(charging ? " ⚡" : ""), MLC: \(mlc.displayName)")
         }

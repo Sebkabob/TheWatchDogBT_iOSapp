@@ -533,11 +533,14 @@ struct MotionEventRow: View {
     
     private var iconColor: Color {
         switch event.eventType {
-        case .none:      return .gray
-        case .inMotion:  return .orange
-        case .shaken:    return .red
-        case .impact:    return .red
-        case .freefall:  return .purple
+        case .none:         return .gray
+        case .inMotion:     return .orange
+        case .shaken:       return .red
+        case .impact:       return .red
+        case .freefall:     return .purple
+        case .tilted:       return .yellow
+        case .doorOpening:  return .orange
+        case .doorClosing:  return .blue
         }
     }
 }

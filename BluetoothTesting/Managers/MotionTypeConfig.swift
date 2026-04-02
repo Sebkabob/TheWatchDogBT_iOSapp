@@ -13,11 +13,14 @@ struct MotionTypeConfig {
     
     /// Motion type mapping table — values match MLC/FSM firmware enum
     static let typeTable: [UInt8: (name: String, triggersAlarm: Bool)] = [
-        0: (name: "None",      triggersAlarm: false),
-        1: (name: "In Motion", triggersAlarm: false),
-        2: (name: "Shaken",    triggersAlarm: true),
-        3: (name: "Impact",    triggersAlarm: true),
-        4: (name: "Free Fall", triggersAlarm: true),
+        0: (name: "None",         triggersAlarm: false),
+        1: (name: "In Motion",    triggersAlarm: false),
+        2: (name: "Shaken",       triggersAlarm: true),
+        3: (name: "Impact",       triggersAlarm: true),
+        4: (name: "Free Fall",    triggersAlarm: true),
+        5: (name: "Tilted",       triggersAlarm: true),
+        6: (name: "Door Opening", triggersAlarm: true),
+        7: (name: "Door Closing", triggersAlarm: true),
     ]
 
     /// Convert firmware motion type byte to iOS MotionEventType

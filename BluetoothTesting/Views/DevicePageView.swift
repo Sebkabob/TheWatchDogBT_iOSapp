@@ -101,7 +101,7 @@ struct DevicePageView: View {
     private var mlcIndicatorVisible: Bool {
         let mlc = bluetoothManager.mlcState
         if mlc == .unknown { return false }
-        if mlc == .stationaryUpright && !settingsManager.isArmed { return false }
+        if mlc == .stationary && !settingsManager.isArmed { return false }
         return true
     }
 
@@ -293,6 +293,17 @@ struct DevicePageView: View {
                             }
                             
                             DebugInfoRow(label: "Connected", value: connectionTimeString)
+
+                            Divider()
+
+                            Text("ACCEL (g)")
+                                .font(.system(size: 9))
+                                .fontWeight(.bold)
+                                .foregroundColor(.orange)
+
+                            DebugInfoRow(label: "X", value: String(format: "%.3f", bluetoothManager.debugAccelX))
+                            DebugInfoRow(label: "Y", value: String(format: "%.3f", bluetoothManager.debugAccelY))
+                            DebugInfoRow(label: "Z", value: String(format: "%.3f", bluetoothManager.debugAccelZ))
                         }
                         .padding(8)
                         .background(Color(.systemBackground).opacity(0.9))
