@@ -38,6 +38,8 @@ struct WatchDogSettingsView: View {
     @State private var loggingEnabled: Bool = false
     @State private var disableAlarmWhenConnected: Bool = false
     @State private var debugModeEnabled: Bool = false
+    @State private var highPerformanceMode: Bool = false
+    @State private var liveOrientationEnabled: Bool = false
     
     // Forget device confirmation
     @State private var showForgetConfirmation = false
@@ -139,8 +141,34 @@ struct WatchDogSettingsView: View {
                         }
                     }
                     
-                    // Debug Mode Section
+                    // Advanced Section
                     Section(header: Text("Advanced")) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("High Performance Mode")
+                                    .font(.body)
+                                Text("50Hz updates · Higher battery usage")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Toggle("", isOn: $highPerformanceMode)
+                                .labelsHidden()
+                        }
+
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Live Orientation")
+                                    .font(.body)
+                                Text("3D model mirrors real device orientation")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Toggle("", isOn: $liveOrientationEnabled)
+                                .labelsHidden()
+                        }
+
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Debug Mode")
@@ -245,6 +273,8 @@ struct WatchDogSettingsView: View {
         loggingEnabled = settingsManager.loggingEnabled
         disableAlarmWhenConnected = settingsManager.disableAlarmWhenConnected
         debugModeEnabled = settingsManager.debugModeEnabled
+        highPerformanceMode = settingsManager.highPerformanceMode
+        liveOrientationEnabled = settingsManager.liveOrientationEnabled
     }
     
     private func applySettings() {
@@ -271,7 +301,9 @@ struct WatchDogSettingsView: View {
             lights: lightsEnabled,
             logging: loggingEnabled,
             disableAlarmConnected: disableAlarmWhenConnected,
-            debugMode: debugModeEnabled
+            debugMode: debugModeEnabled,
+            highPerformance: highPerformanceMode,
+            liveOrientation: liveOrientationEnabled
         )
         
         // Send settings byte to WatchDog only if connected to this device
@@ -287,6 +319,8 @@ struct WatchDogSettingsView: View {
         print("  Lights: \(lightsEnabled ? "On" : "Off")")
         print("  Logging: \(loggingEnabled ? "On" : "Off")")
         print("  Disable Alarm When Connected: \(disableAlarmWhenConnected ? "Yes" : "No")")
+        print("  High Performance Mode: \(highPerformanceMode ? "On" : "Off")")
+        print("  Live Orientation: \(liveOrientationEnabled ? "On" : "Off")")
         print("  Debug Mode: \(debugModeEnabled ? "On" : "Off")")
         
         dismiss()

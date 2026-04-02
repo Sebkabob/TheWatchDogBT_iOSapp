@@ -21,6 +21,8 @@ class SettingsManager {
     var disableAlarmWhenConnected: Bool = false
     var deviceName: String = "WatchDog"
     var debugModeEnabled: Bool = false
+    var highPerformanceMode: Bool = false
+    var liveOrientationEnabled: Bool = false
     
     // UserDefaults keys
     private let armedKey = "watchdog_armed"
@@ -31,6 +33,8 @@ class SettingsManager {
     private let disableAlarmWhenConnectedKey = "watchdog_disable_alarm_connected"
     private let deviceNameKey = "watchdog_device_name"
     private let debugModeKey = "watchdog_debug_mode"
+    private let highPerformanceModeKey = "watchdog_high_performance_mode"
+    private let liveOrientationKey = "watchdog_live_orientation"
     
     private init() {
         loadSettings()
@@ -80,6 +84,23 @@ class SettingsManager {
         return byte
     }
     
+    /// Encodes deviceInfo into a single byte (byte 13)
+    /// Bit 0: High Performance Mode
+    func encodeDeviceInfo() -> UInt8 {
+        var byte: UInt8 = 0
+        if highPerformanceMode {
+            byte |= (1 << 0)
+        }
+        return byte
+    }
+
+    /// Decodes deviceInfo byte from WatchDog
+    func decodeDeviceInfo(from byte: UInt8) {
+        highPerformanceMode = (byte & (1 << 0)) != 0
+        print("  High Performance Mode: \(highPerformanceMode)")
+        saveSettings()
+    }
+
     /// Decodes a byte from WatchDog into settings
     func decodeSettings(from byte: UInt8) {
         print("📥 Decoding settings byte: 0x\(String(format: "%02X", byte))")
@@ -126,6 +147,8 @@ class SettingsManager {
         UserDefaults.standard.set(disableAlarmWhenConnected, forKey: disableAlarmWhenConnectedKey)
         UserDefaults.standard.set(deviceName, forKey: deviceNameKey)
         UserDefaults.standard.set(debugModeEnabled, forKey: debugModeKey)
+        UserDefaults.standard.set(highPerformanceMode, forKey: highPerformanceModeKey)
+        UserDefaults.standard.set(liveOrientationEnabled, forKey: liveOrientationKey)
     }
     
     private func loadSettings() {
@@ -140,6 +163,20 @@ class SettingsManager {
             debugModeEnabled = UserDefaults.standard.bool(forKey: debugModeKey)
         } else {
             debugModeEnabled = false
+        }
+
+        // High Performance Mode defaults to OFF
+        if UserDefaults.standard.object(forKey: highPerformanceModeKey) != nil {
+            highPerformanceMode = UserDefaults.standard.bool(forKey: highPerformanceModeKey)
+        } else {
+            highPerformanceMode = false
+        }
+
+        // Live Orientation defaults to OFF
+        if UserDefaults.standard.object(forKey: liveOrientationKey) != nil {
+            liveOrientationEnabled = UserDefaults.standard.bool(forKey: liveOrientationKey)
+        } else {
+            liveOrientationEnabled = false
         }
         
         if let alarmString = UserDefaults.standard.string(forKey: alarmTypeKey),
@@ -156,7 +193,8 @@ class SettingsManager {
     /// Call this when user manually changes settings
     func updateSettings(name: String? = nil, armed: Bool? = nil, alarm: AlarmType? = nil,
                        sens: SensitivityLevel? = nil, lights: Bool? = nil, logging: Bool? = nil,
-                       disableAlarmConnected: Bool? = nil, debugMode: Bool? = nil) {
+                       disableAlarmConnected: Bool? = nil, debugMode: Bool? = nil,
+                       highPerformance: Bool? = nil, liveOrientation: Bool? = nil) {
         if let name = name { deviceName = name }
         if let armed = armed { isArmed = armed }
         if let alarm = alarm { alarmType = alarm }
@@ -165,7 +203,9 @@ class SettingsManager {
         if let logging = logging { loggingEnabled = logging }
         if let disableAlarmConnected = disableAlarmConnected { disableAlarmWhenConnected = disableAlarmConnected }
         if let debugMode = debugMode { debugModeEnabled = debugMode }
-        
+        if let highPerformance = highPerformance { highPerformanceMode = highPerformance }
+        if let liveOrientation = liveOrientation { liveOrientationEnabled = liveOrientation }
+
         saveSettings()
     }
 }

@@ -63,6 +63,10 @@ class BluetoothManager: NSObject {
     var debugAccelX: Float = 0.0        // g
     var debugAccelY: Float = 0.0        // g
     var debugAccelZ: Float = 0.0        // g
+    var accelXHistory: [(date: Date, value: Double)] = []
+    var accelYHistory: [(date: Date, value: Double)] = []
+    var accelZHistory: [(date: Date, value: Double)] = []
+    private let accelHistoryDuration: TimeInterval = 15
     var connectionStartTime: Date?
     var connectionDuration: TimeInterval = 0
 
@@ -326,9 +330,10 @@ class BluetoothManager: NSObject {
     
     func sendSettings() {
         let settingsByte = settingsManager.encodeSettings()
-        let data = Data([settingsByte])
+        let deviceInfoByte = settingsManager.encodeDeviceInfo()
+        let data = Data([settingsByte, deviceInfoByte])
         sendData(data)
-        print("📤 Sent settings byte: 0x\(String(format: "%02X", settingsByte))")
+        print("📤 Sent settings: 0x\(String(format: "%02X", settingsByte)) deviceInfo: 0x\(String(format: "%02X", deviceInfoByte))")
     }
     
     // MARK: - Ping / Find Device
@@ -1169,11 +1174,16 @@ extension BluetoothManager: CBPeripheralDelegate {
             accelZ = Float(rawZ) * 16.0 / 32768.0
         }
 
+        let deviceInfoByte: UInt8? = data.count >= 14 ? data[13] : nil
+
         DispatchQueue.main.async {
             let oldState = self.deviceState
             self.deviceState = settingsByte
             self.hasReceivedInitialState = true
             self.settingsManager.decodeSettings(from: settingsByte)
+            if let deviceInfoByte {
+                self.settingsManager.decodeDeviceInfo(from: deviceInfoByte)
+            }
 
             self.updateBatteryState(charging: charging, battery: battery)
             self.debugCurrentDraw = current
@@ -1182,6 +1192,15 @@ extension BluetoothManager: CBPeripheralDelegate {
             self.debugAccelX = accelX
             self.debugAccelY = accelY
             self.debugAccelZ = accelZ
+
+            let now = Date()
+            self.accelXHistory.append((date: now, value: Double(accelX)))
+            self.accelYHistory.append((date: now, value: Double(accelY)))
+            self.accelZHistory.append((date: now, value: Double(accelZ)))
+            let cutoff = now.addingTimeInterval(-self.accelHistoryDuration)
+            self.accelXHistory.removeAll { $0.date < cutoff }
+            self.accelYHistory.removeAll { $0.date < cutoff }
+            self.accelZHistory.removeAll { $0.date < cutoff }
 
             print("📥 State: 0x\(String(format: "%02X", settingsByte)) (was: 0x\(String(format: "%02X", oldState))), 🔋 \(battery)%\(charging ? " ⚡" : ""), MLC: \(mlc.displayName)")
         }

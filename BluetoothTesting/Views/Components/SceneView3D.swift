@@ -11,9 +11,13 @@ import SceneKit
 struct SceneView3D: UIViewRepresentable {
     @Binding var rotationX: Double    // pitch (up/down)
     @Binding var rotationY: Double    // yaw (left/right)
+    @Binding var rotationZ: Double    // roll (tilt left/right)
     let usdzFileName: String
     let ledColor: UIColor
     let ledIntensity: Double
+    var gesturesEnabled: Bool = true
+    var smoothRotation: Bool = false
+    var liveQuaternion: SCNVector4? = nil
     var onTap: (() -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
@@ -78,9 +82,11 @@ struct SceneView3D: UIViewRepresentable {
         context.coordinator.sceneView = sceneView
 
         // Add gesture recognizers — only begin when touching the 3D model
-        let panGesture = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePan(_:)))
-        panGesture.delegate = context.coordinator
-        sceneView.addGestureRecognizer(panGesture)
+        if gesturesEnabled {
+            let panGesture = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePan(_:)))
+            panGesture.delegate = context.coordinator
+            sceneView.addGestureRecognizer(panGesture)
+        }
 
         let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
         tapGesture.delegate = context.coordinator
@@ -99,11 +105,22 @@ struct SceneView3D: UIViewRepresentable {
             searchForLED(in: model, coordinator: context.coordinator)
         }
 
-        model.eulerAngles = SCNVector3(
-            Float(rotationX),
-            Float(rotationY),
-            0
-        )
+        if let q = liveQuaternion {
+            SCNTransaction.begin()
+            SCNTransaction.animationDuration = 0.15
+            model.orientation = SCNQuaternion(q.x, q.y, q.z, q.w)
+            SCNTransaction.commit()
+        } else {
+            // Smooth transition back to gesture-driven orientation
+            SCNTransaction.begin()
+            SCNTransaction.animationDuration = smoothRotation ? 0.5 : 0
+            model.eulerAngles = SCNVector3(
+                Float(rotationX),
+                Float(rotationY),
+                Float(rotationZ)
+            )
+            SCNTransaction.commit()
+        }
 
         if let ledNode = context.coordinator.ledNode {
             updateLED(node: ledNode, color: ledColor, intensity: ledIntensity)
@@ -529,6 +546,7 @@ struct SceneView3D: UIViewRepresentable {
     SceneView3D(
         rotationX: .constant(0),
         rotationY: .constant(0),
+        rotationZ: .constant(0),
         usdzFileName: "WatchDogBTCase_Final",
         ledColor: UIColor(red: 1, green: 0, blue: 0, alpha: 1),
         ledIntensity: 0.5

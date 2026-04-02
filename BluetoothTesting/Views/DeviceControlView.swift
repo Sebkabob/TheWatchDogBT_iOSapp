@@ -236,9 +236,21 @@ struct DeviceControlView: View {
                                 .fontWeight(.bold)
                                 .foregroundColor(.orange)
 
-                            DebugInfoRow(label: "X", value: String(format: "%.3f", bluetoothManager.debugAccelX))
-                            DebugInfoRow(label: "Y", value: String(format: "%.3f", bluetoothManager.debugAccelY))
-                            DebugInfoRow(label: "Z", value: String(format: "%.3f", bluetoothManager.debugAccelZ))
+                            VStack(alignment: .leading, spacing: 2) {
+                                DebugInfoRow(label: "X", value: String(format: "%.3f", bluetoothManager.debugAccelX))
+                                AccelGraph(history: bluetoothManager.accelXHistory, color: .red)
+                                    .frame(height: 35)
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                DebugInfoRow(label: "Y", value: String(format: "%.3f", bluetoothManager.debugAccelY))
+                                AccelGraph(history: bluetoothManager.accelYHistory, color: .green)
+                                    .frame(height: 35)
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                DebugInfoRow(label: "Z", value: String(format: "%.3f", bluetoothManager.debugAccelZ))
+                                AccelGraph(history: bluetoothManager.accelZHistory, color: .blue)
+                                    .frame(height: 35)
+                            }
                         }
                         .padding(8)
                         .background(Color(.systemBackground).opacity(0.9))
@@ -483,33 +495,32 @@ struct DeviceControlView: View {
         updateCurrentHistory(bluetoothManager.debugCurrentDraw)
         updateVoltageHistory(bluetoothManager.debugVoltage)
         updateSOCHistory(Double(bluetoothManager.batteryLevel))
-        
         graphUpdateTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
             self.updateCurrentHistory(self.bluetoothManager.debugCurrentDraw)
             self.updateVoltageHistory(self.bluetoothManager.debugVoltage)
             self.updateSOCHistory(Double(self.bluetoothManager.batteryLevel))
         }
     }
-    
+
     private func stopGraphUpdates() {
         graphUpdateTimer?.invalidate()
         graphUpdateTimer = nil
         minSOC = 100.0
         maxSOC = 0.0
     }
-    
+
     private func updateCurrentHistory(_ current: Double) {
         let now = Date()
         currentHistory.append((date: now, value: current))
         cleanOldHistory(history: &currentHistory)
     }
-    
+
     private func updateVoltageHistory(_ voltage: Double) {
         let now = Date()
         voltageHistory.append((date: now, value: voltage))
         cleanOldHistory(history: &voltageHistory)
     }
-    
+
     private func updateSOCHistory(_ soc: Double) {
         let now = Date()
         socHistory.append((date: now, value: soc))
@@ -517,7 +528,7 @@ struct DeviceControlView: View {
         if soc < minSOC { minSOC = soc }
         if soc > maxSOC { maxSOC = soc }
     }
-    
+
     private func cleanOldHistory(history: inout [(date: Date, value: Double)]) {
         let cutoff = Date().addingTimeInterval(-180)
         history.removeAll { $0.date < cutoff }
@@ -684,6 +695,63 @@ struct SOCGraph: View {
                     Text("\(Int((minY + maxY) / 2))").font(.system(size: 6)).foregroundColor(.secondary)
                     Spacer()
                     Text("\(Int(minY))").font(.system(size: 6)).foregroundColor(.secondary)
+                }.padding(.leading, 2)
+            }.cornerRadius(4)
+        }
+    }
+}
+
+struct AccelGraph: View {
+    let history: [(date: Date, value: Double)]
+    let color: Color
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.01)) { timeline in
+            let now = timeline.date
+            AccelGraphContent(history: history, color: color, now: now)
+        }
+    }
+}
+
+private struct AccelGraphContent: View {
+    let history: [(date: Date, value: Double)]
+    let color: Color
+    let now: Date
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let height = geometry.size.height
+            let validHistory = history.filter { now.timeIntervalSince($0.date) <= 15.0 && now.timeIntervalSince($0.date) >= 0.0 }
+            let dataMin = validHistory.map { $0.value }.min() ?? -1.0
+            let dataMax = validHistory.map { $0.value }.max() ?? 1.0
+            let margin = max(0.1, (dataMax - dataMin) * 0.1)
+            let minY = dataMin - margin
+            let maxY = dataMax + margin
+            let rangeY = maxY - minY
+
+            ZStack(alignment: .bottomLeading) {
+                Rectangle().fill(Color(.systemGray6))
+                VStack(spacing: 0) { ForEach(0..<3) { _ in Divider().background(Color.gray.opacity(0.3)); Spacer() } }
+                if validHistory.count > 1 {
+                    let maxTimeRange: TimeInterval = 15
+                    Path { path in
+                        for (index, point) in validHistory.enumerated() {
+                            let clampedValue = max(minY, min(maxY, point.value))
+                            let timeOffset = now.timeIntervalSince(point.date)
+                            let x = width - (CGFloat(timeOffset / maxTimeRange) * width)
+                            let normalizedValue = rangeY > 0 ? (clampedValue - minY) / rangeY : 0.5
+                            let y = height - (CGFloat(normalizedValue) * height)
+                            if index == 0 { path.move(to: CGPoint(x: x, y: y)) } else { path.addLine(to: CGPoint(x: x, y: y)) }
+                        }
+                    }.stroke(color, lineWidth: 1.5)
+                }
+                VStack(spacing: 0) {
+                    Text(String(format: "%.1f", maxY)).font(.system(size: 6)).foregroundColor(.secondary)
+                    Spacer()
+                    Text(String(format: "%.1f", (minY + maxY) / 2)).font(.system(size: 6)).foregroundColor(.secondary)
+                    Spacer()
+                    Text(String(format: "%.1f", minY)).font(.system(size: 6)).foregroundColor(.secondary)
                 }.padding(.leading, 2)
             }.cornerRadius(4)
         }

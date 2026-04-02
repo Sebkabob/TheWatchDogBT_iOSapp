@@ -301,9 +301,21 @@ struct DevicePageView: View {
                                 .fontWeight(.bold)
                                 .foregroundColor(.orange)
 
-                            DebugInfoRow(label: "X", value: String(format: "%.3f", bluetoothManager.debugAccelX))
-                            DebugInfoRow(label: "Y", value: String(format: "%.3f", bluetoothManager.debugAccelY))
-                            DebugInfoRow(label: "Z", value: String(format: "%.3f", bluetoothManager.debugAccelZ))
+                            VStack(alignment: .leading, spacing: 2) {
+                                DebugInfoRow(label: "X", value: String(format: "%.3f", bluetoothManager.debugAccelX))
+                                AccelGraph(history: bluetoothManager.accelXHistory, color: .red)
+                                    .frame(height: 35)
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                DebugInfoRow(label: "Y", value: String(format: "%.3f", bluetoothManager.debugAccelY))
+                                AccelGraph(history: bluetoothManager.accelYHistory, color: .green)
+                                    .frame(height: 35)
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                DebugInfoRow(label: "Z", value: String(format: "%.3f", bluetoothManager.debugAccelZ))
+                                AccelGraph(history: bluetoothManager.accelZHistory, color: .blue)
+                                    .frame(height: 35)
+                            }
                         }
                         .padding(8)
                         .background(Color(.systemBackground).opacity(0.9))
@@ -661,33 +673,32 @@ struct DevicePageView: View {
         updateCurrentHistory(bluetoothManager.debugCurrentDraw)
         updateVoltageHistory(bluetoothManager.debugVoltage)
         updateSOCHistory(Double(bluetoothManager.batteryLevel))
-        
         graphUpdateTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
             self.updateCurrentHistory(self.bluetoothManager.debugCurrentDraw)
             self.updateVoltageHistory(self.bluetoothManager.debugVoltage)
             self.updateSOCHistory(Double(self.bluetoothManager.batteryLevel))
         }
     }
-    
+
     private func stopGraphUpdates() {
         graphUpdateTimer?.invalidate()
         graphUpdateTimer = nil
         minSOC = 100.0
         maxSOC = 0.0
     }
-    
+
     private func updateCurrentHistory(_ current: Double) {
         let now = Date()
         currentHistory.append((date: now, value: current))
         cleanOldHistory(history: &currentHistory)
     }
-    
+
     private func updateVoltageHistory(_ voltage: Double) {
         let now = Date()
         voltageHistory.append((date: now, value: voltage))
         cleanOldHistory(history: &voltageHistory)
     }
-    
+
     private func updateSOCHistory(_ soc: Double) {
         let now = Date()
         socHistory.append((date: now, value: soc))
@@ -695,7 +706,7 @@ struct DevicePageView: View {
         if soc < minSOC { minSOC = soc }
         if soc > maxSOC { maxSOC = soc }
     }
-    
+
     private func cleanOldHistory(history: inout [(date: Date, value: Double)]) {
         let cutoff = Date().addingTimeInterval(-180)
         history.removeAll { $0.date < cutoff }
