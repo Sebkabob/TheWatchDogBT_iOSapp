@@ -24,6 +24,7 @@ class SettingsManager {
     var highPerformanceMode: Bool = false
     var liveOrientationEnabled: Bool = false
     var devModeUnlocked: Bool = false
+    var dataLoggingMode: Bool = false
     
     // UserDefaults keys
     private let armedKey = "watchdog_armed"
@@ -37,6 +38,7 @@ class SettingsManager {
     private let highPerformanceModeKey = "watchdog_high_performance_mode"
     private let liveOrientationKey = "watchdog_live_orientation"
     private let devModeUnlockedKey = "watchdog_dev_mode_unlocked"
+    private let dataLoggingModeKey = "watchdog_data_logging_mode"
     
     private init() {
         loadSettings()
@@ -152,6 +154,7 @@ class SettingsManager {
         UserDefaults.standard.set(highPerformanceMode, forKey: highPerformanceModeKey)
         UserDefaults.standard.set(liveOrientationEnabled, forKey: liveOrientationKey)
         UserDefaults.standard.set(devModeUnlocked, forKey: devModeUnlockedKey)
+        UserDefaults.standard.set(dataLoggingMode, forKey: dataLoggingModeKey)
     }
     
     private func loadSettings() {
@@ -188,6 +191,13 @@ class SettingsManager {
         } else {
             devModeUnlocked = false
         }
+
+        // Data Logging Mode defaults to OFF
+        if UserDefaults.standard.object(forKey: dataLoggingModeKey) != nil {
+            dataLoggingMode = UserDefaults.standard.bool(forKey: dataLoggingModeKey)
+        } else {
+            dataLoggingMode = false
+        }
         
         if let alarmString = UserDefaults.standard.string(forKey: alarmTypeKey),
            let alarm = AlarmType(rawValue: alarmString) {
@@ -204,7 +214,8 @@ class SettingsManager {
     func updateSettings(name: String? = nil, armed: Bool? = nil, alarm: AlarmType? = nil,
                        sens: SensitivityLevel? = nil, lights: Bool? = nil, logging: Bool? = nil,
                        disableAlarmConnected: Bool? = nil, debugMode: Bool? = nil,
-                       highPerformance: Bool? = nil, liveOrientation: Bool? = nil) {
+                       highPerformance: Bool? = nil, liveOrientation: Bool? = nil,
+                       dataLogging: Bool? = nil) {
         if let name = name { deviceName = name }
         if let armed = armed { isArmed = armed }
         if let alarm = alarm { alarmType = alarm }
@@ -215,6 +226,7 @@ class SettingsManager {
         if let debugMode = debugMode { debugModeEnabled = debugMode }
         if let highPerformance = highPerformance { highPerformanceMode = highPerformance }
         if let liveOrientation = liveOrientation { liveOrientationEnabled = liveOrientation }
+        if let dataLogging = dataLogging { dataLoggingMode = dataLogging }
 
         saveSettings()
     }

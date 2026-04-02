@@ -40,6 +40,7 @@ struct WatchDogSettingsView: View {
     @State private var debugModeEnabled: Bool = false
     @State private var highPerformanceMode: Bool = false
     @State private var liveOrientationEnabled: Bool = false
+    @State private var dataLoggingMode: Bool = false
     
     // Forget device confirmation
     @State private var showForgetConfirmation = false
@@ -143,7 +144,7 @@ struct WatchDogSettingsView: View {
                     
                     // Advanced Section (hidden unless dev mode unlocked)
                     if settingsManager.devModeUnlocked {
-                    Section(header: Text("Advanced")) {
+                    Section(header: Text("Debug Tools")) {
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("High Performance Mode")
@@ -169,17 +170,29 @@ struct WatchDogSettingsView: View {
                             Toggle("", isOn: $liveOrientationEnabled)
                                 .labelsHidden()
                         }
-
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Debug Mode")
                                     .font(.body)
-                                Text("Show technical diagnostics")
+                                Text("Show hidden technical diagnostics")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
                             Spacer()
                             Toggle("", isOn: $debugModeEnabled)
+                                .labelsHidden()
+                        }
+
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Data Logging")
+                                    .font(.body)
+                                Text("Record accel data to CSV for MLC training")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Toggle("", isOn: $dataLoggingMode)
                                 .labelsHidden()
                         }
                     }
@@ -277,8 +290,9 @@ struct WatchDogSettingsView: View {
         debugModeEnabled = settingsManager.debugModeEnabled
         highPerformanceMode = settingsManager.highPerformanceMode
         liveOrientationEnabled = settingsManager.liveOrientationEnabled
+        dataLoggingMode = settingsManager.dataLoggingMode
     }
-    
+
     private func applySettings() {
         guard let deviceID = resolvedDeviceID else { return }
         
@@ -305,7 +319,8 @@ struct WatchDogSettingsView: View {
             disableAlarmConnected: disableAlarmWhenConnected,
             debugMode: debugModeEnabled,
             highPerformance: highPerformanceMode,
-            liveOrientation: liveOrientationEnabled
+            liveOrientation: liveOrientationEnabled,
+            dataLogging: dataLoggingMode
         )
         
         // Send settings byte to WatchDog only if connected to this device
@@ -324,7 +339,8 @@ struct WatchDogSettingsView: View {
         print("  High Performance Mode: \(highPerformanceMode ? "On" : "Off")")
         print("  Live Orientation: \(liveOrientationEnabled ? "On" : "Off")")
         print("  Debug Mode: \(debugModeEnabled ? "On" : "Off")")
-        
+        print("  Data Logging: \(dataLoggingMode ? "On" : "Off")")
+
         dismiss()
     }
     

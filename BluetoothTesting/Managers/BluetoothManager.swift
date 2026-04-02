@@ -1193,6 +1193,8 @@ extension BluetoothManager: CBPeripheralDelegate {
             self.debugAccelY = accelY
             self.debugAccelZ = accelZ
 
+            MotionDataRecorder.shared.addSample(x: accelX, y: accelY, z: accelZ)
+
             let now = Date()
             self.accelXHistory.append((date: now, value: Double(accelX)))
             self.accelYHistory.append((date: now, value: Double(accelY)))

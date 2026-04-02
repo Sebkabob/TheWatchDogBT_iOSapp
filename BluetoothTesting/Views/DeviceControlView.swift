@@ -52,7 +52,12 @@ struct DeviceControlView: View {
     @State private var devTapCount: Int = 0
     @State private var devTapResetTask: Task<Void, Never>?
     @State private var devModeToast: String?
-    
+
+    // Data recording
+    private let recorder = MotionDataRecorder.shared
+    @State private var csvShareURL: URL?
+    @State private var showShareSheet = false
+
     private let lightHaptic = UIImpactFeedbackGenerator(style: .light)
     private let heavyHaptic = UIImpactFeedbackGenerator(style: .heavy)
     
@@ -269,6 +274,14 @@ struct DeviceControlView: View {
                                 AccelGraph(history: bluetoothManager.accelZHistory, color: .blue)
                                     .frame(height: 35)
                             }
+
+                            if settingsManager.dataLoggingMode {
+                                Divider()
+                                RecordButton(recorder: recorder) { url in
+                                    csvShareURL = url
+                                    showShareSheet = true
+                                }
+                            }
                         }
                         .padding(8)
                         .background(Color(.systemBackground).opacity(0.9))
@@ -460,6 +473,11 @@ struct DeviceControlView: View {
                         devModeToast = nil
                     }
                 }
+            }
+        }
+        .sheet(isPresented: $showShareSheet) {
+            if let url = csvShareURL {
+                ShareSheet(activityItems: [url])
             }
         }
     }
