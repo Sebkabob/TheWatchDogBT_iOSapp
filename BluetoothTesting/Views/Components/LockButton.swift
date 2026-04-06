@@ -9,14 +9,28 @@ struct LockButton: View {
     @Binding var isLocked: Bool
     let holdProgress: CGFloat
     var isDisabled: Bool = false
+    var isStabilizing: Bool = false
+
+    @State private var pulseOpacity: Double = 0.6
 
     var buttonColor: Color {
+        if isStabilizing {
+            return Color.blue
+        }
         if isDisabled {
-            // Grey out when disabled, but maintain red/black distinction
             return isLocked ? Color.red.opacity(0.5) : Color.black.opacity(0.5)
         }
-        // Button stays at its current state color, doesn't transition during hold
         return isLocked ? Color.red : Color.black
+    }
+
+    private var buttonText: String {
+        if isStabilizing { return "Stabilizing..." }
+        return isLocked ? "Hold to Unlock" : "Hold to Lock"
+    }
+
+    private var buttonIcon: String {
+        if isStabilizing { return "lock.rotation" }
+        return isLocked ? "lock.fill" : "lock.open.fill"
     }
 
     var body: some View {
@@ -25,9 +39,10 @@ struct LockButton: View {
             RoundedRectangle(cornerRadius: 20)
                 .fill(buttonColor)
                 .frame(height: 80)
+                .opacity(isStabilizing ? pulseOpacity : 1.0)
 
-            // Progress overlay (only show when not disabled)
-            if !isDisabled {
+            // Progress overlay (only show when not disabled and not stabilizing)
+            if !isDisabled && !isStabilizing {
                 GeometryReader { geometry in
                     RoundedRectangle(cornerRadius: 20)
                         .fill(Color.white.opacity(0.4 * min(holdProgress / 0.09, 1.0)))
@@ -39,9 +54,9 @@ struct LockButton: View {
 
             // Button content
             HStack(spacing: 15) {
-                Image(systemName: isLocked ? "lock.fill" : "lock.open.fill")
+                Image(systemName: buttonIcon)
                     .font(.title)
-                Text(isLocked ? "Hold to Unlock" : "Hold to Lock")
+                Text(buttonText)
                     .font(.title2)
                     .fontWeight(.bold)
             }
@@ -52,6 +67,24 @@ struct LockButton: View {
                 .stroke(Color.gray.opacity(0.5), lineWidth: 2)
         )
         .shadow(radius: isDisabled ? 2 : 5)
+        .onChange(of: isStabilizing) {
+            if isStabilizing {
+                withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
+                    pulseOpacity = 1.0
+                }
+            } else {
+                withAnimation(.easeOut(duration: 0.3)) {
+                    pulseOpacity = 0.6
+                }
+            }
+        }
+        .onAppear {
+            if isStabilizing {
+                withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
+                    pulseOpacity = 1.0
+                }
+            }
+        }
     }
 }
 

@@ -377,7 +377,8 @@ struct DevicePageView: View {
                 LockButton(
                     isLocked: $isLocked,
                     holdProgress: holdProgress,
-                    isDisabled: !isDeviceConnected
+                    isDisabled: !isDeviceConnected,
+                    isStabilizing: bluetoothManager.mlcState == .stabilizing
                 )
                 .padding(.horizontal, 20)
                 .simultaneousGesture(
@@ -594,17 +595,7 @@ struct DevicePageView: View {
     }
     
     private func performConnect() {
-        // Clear the suppress flag so scanning/connection works
-        bluetoothManager.suppressAutoReconnect = false
-        
-        // Find the discovered device and connect
-        if let device = bluetoothManager.discoveredDevices.first(where: { $0.id == deviceID }) {
-            print("🔌 Connecting to \(device.name)")
-            bluetoothManager.connect(to: device)
-        } else {
-            print("⚠️ Device not found in discovered devices, cannot connect")
-            isConnectingThisDevice = false
-        }
+        bluetoothManager.connectByID(deviceID)
     }
     
     private func disconnectDevice() {

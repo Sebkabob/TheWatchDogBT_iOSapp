@@ -303,7 +303,8 @@ struct DeviceControlView: View {
                 LockButton(
                     isLocked: $isLocked,
                     holdProgress: holdProgress,
-                    isDisabled: !isDeviceConnected
+                    isDisabled: !isDeviceConnected,
+                    isStabilizing: bluetoothManager.mlcState == .stabilizing
                 )
                 .padding(.horizontal, 20)
                 .simultaneousGesture(

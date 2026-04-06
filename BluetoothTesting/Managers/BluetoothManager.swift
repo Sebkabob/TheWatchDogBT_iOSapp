@@ -11,29 +11,32 @@ import Observation
 import SwiftUI
 
 enum MLCState: UInt8 {
-    case stationary  = 0
-    case doorOpen    = 1
-    case inMotion    = 2
-    case shaken      = 3
-    case unknown     = 0xFF
+    case stationary   = 0
+    case doorOpen     = 1
+    case inMotion     = 2
+    case shaken       = 3
+    case stabilizing  = 0xFE
+    case unknown      = 0xFF
 
     var displayName: String {
         switch self {
-        case .stationary:  return "Resting"
-        case .doorOpen:    return "Door Open"
-        case .inMotion:    return "Moving"
-        case .shaken:      return "Shaken"
-        case .unknown:     return "--"
+        case .stationary:   return "Resting"
+        case .doorOpen:     return "Door Open"
+        case .inMotion:     return "Moving"
+        case .shaken:       return "Shaken"
+        case .stabilizing:  return "Stabilizing"
+        case .unknown:      return "--"
         }
     }
 
     var color: Color {
         switch self {
-        case .stationary:  return .green
-        case .doorOpen:    return .yellow
-        case .inMotion:    return .orange
-        case .shaken:      return .red
-        case .unknown:     return .gray
+        case .stationary:   return .green
+        case .doorOpen:     return .yellow
+        case .inMotion:     return .orange
+        case .shaken:       return .red
+        case .stabilizing:  return .blue
+        case .unknown:      return .gray
         }
     }
 }
@@ -89,10 +92,10 @@ class BluetoothManager: NSObject {
     private var staleDeviceTimer: Timer?
     
     private var connectionTimer: Timer?
-    private let connectionTimeout: TimeInterval = 15.0
-    
+    private let connectionTimeout: TimeInterval = 10.0
+
     private var connectionDurationTimer: Timer?
-    
+
     // Track if we're in the middle of connecting to prevent duplicate attempts
     private(set) var isConnecting = false
     private var pendingConnectionDevice: UUID?
@@ -160,11 +163,6 @@ class BluetoothManager: NSObject {
             centralManager.stopScan()
         }
         
-        DispatchQueue.main.async {
-            self.discoveredDevices.removeAll()
-        }
-        lastRSSIUpdate.removeAll()
-        
         centralManager.scanForPeripherals(
             withServices: [targetServiceUUID],
             options: [
@@ -208,39 +206,75 @@ class BluetoothManager: NSObject {
     }
     
     func connect(to device: BluetoothDevice) {
-        if isConnecting && pendingConnectionDevice == device.id {
+        beginConnection(device.peripheral, name: device.name, deviceID: device.id)
+    }
+
+    /// Connect using a device UUID. Resolves the peripheral from discoveredDevices
+    /// first (fresh from recent advertisement), then CoreBluetooth's cache, then
+    /// falls back to scanning until the device is found.
+    func connectByID(_ deviceID: UUID) {
+        if isConnecting && pendingConnectionDevice == deviceID {
             print("⚠️ Already connecting to this device")
             return
         }
-        
-        // Clear the suppress flag when explicitly connecting
+
         suppressAutoReconnect = false
-        
-        isConnecting = true
-        pendingConnectionDevice = device.id
-        
-        print("🔌 Connecting to: \(device.name) [\(device.id.uuidString.prefix(8))]")
-        
-        if isScanning && !isAttemptingReconnect {
-            stopScanning()
+
+        // 1. Best: use peripheral from a recent advertisement
+        if let device = discoveredDevices.first(where: { $0.id == deviceID }) {
+            print("🔌 Found device in discoveredDevices")
+            beginConnection(device.peripheral, name: device.name, deviceID: deviceID)
+            return
         }
-        
+
+        // 2. Fallback: ask CoreBluetooth for a cached peripheral
+        if let peripheral = centralManager.retrievePeripherals(withIdentifiers: [deviceID]).first {
+            print("🔌 Found device in CoreBluetooth cache")
+            beginConnection(peripheral, name: peripheral.name ?? "WatchDog", deviceID: deviceID)
+            return
+        }
+
+        // 3. Last resort: scan until we find it, then auto-connect
+        print("🔍 Device not found yet — scanning to reconnect...")
+        isConnecting = true
+        pendingConnectionDevice = deviceID
+        startReconnecting(to: deviceID)
+    }
+
+    private func beginConnection(_ peripheral: CBPeripheral, name: String, deviceID: UUID) {
+        isConnecting = true
+        pendingConnectionDevice = deviceID
+
+        print("🔌 Connecting to: \(name) [\(deviceID.uuidString.prefix(8))]")
+
+        // Stop scanning to let CoreBluetooth focus on the connection
+        if isScanning {
+            centralManager.stopScan()
+            DispatchQueue.main.async {
+                self.isScanning = false
+            }
+        }
+
         let options: [String: Any] = [
             CBConnectPeripheralOptionNotifyOnConnectionKey: true,
             CBConnectPeripheralOptionNotifyOnDisconnectionKey: true,
             CBConnectPeripheralOptionNotifyOnNotificationKey: false,
             CBConnectPeripheralOptionStartDelayKey: 0
         ]
-        
-        centralManager.connect(device.peripheral, options: options)
-        
+
+        centralManager.connect(peripheral, options: options)
+
         DispatchQueue.main.async {
+            self.connectionTimer?.invalidate()
             self.connectionTimer = Timer.scheduledTimer(withTimeInterval: self.connectionTimeout, repeats: false) { [weak self] _ in
-                print("⏱️ Connection timeout for \(device.name)")
-                self?.centralManager.cancelPeripheralConnection(device.peripheral)
-                self?.connectionTimer = nil
-                self?.isConnecting = false
-                self?.pendingConnectionDevice = nil
+                guard let self = self else { return }
+                print("⏱️ Connection timeout for \(name)")
+                self.centralManager.cancelPeripheralConnection(peripheral)
+                self.connectionTimer = nil
+                self.isConnecting = false
+                self.pendingConnectionDevice = nil
+                // Always restart scanning after timeout
+                self.resumeBackgroundScanning()
             }
         }
     }
@@ -755,13 +789,15 @@ class BluetoothManager: NSObject {
               let targetID = reconnectTargetDeviceID,
               device.id == targetID,
               !suppressAutoReconnect,
-              connectedDevice == nil,
-              !isConnecting else {
+              connectedDevice == nil else {
             return
         }
-        
+
         print("🔄 Target device discovered during reconnect — connecting immediately!")
-        connect(to: device)
+        // Use beginConnection directly with the fresh peripheral from didDiscover.
+        // This bypasses the isConnecting guard since WE are the pending connection.
+        stopReconnecting()
+        beginConnection(device.peripheral, name: device.name, deviceID: device.id)
     }
     
     private func removeStaleDevices() {
@@ -808,10 +844,11 @@ extension BluetoothManager: CBCentralManagerDelegate {
             switch central.state {
             case .poweredOn:
                 print("✅ Bluetooth powered on")
-                if self.shouldStartScanningWhenReady {
-                    self.shouldStartScanningWhenReady = false
-                    print("🔄 Bluetooth ready - starting pending scan")
-                    self.startScanning()
+                // Always start scanning as soon as BLE is ready — no need to wait
+                // for a UI trigger. This eliminates cold-start delays.
+                self.shouldStartScanningWhenReady = false
+                if !self.isScanning {
+                    self.resumeBackgroundScanning()
                 }
                 // If we were reconnecting, make sure scan resumes
                 if self.isAttemptingReconnect {
@@ -948,7 +985,7 @@ extension BluetoothManager: CBCentralManagerDelegate {
             if let index = self.discoveredDevices.firstIndex(where: { $0.id == peripheral.identifier }) {
                 self.discoveredDevices[index].isConnected = false
             }
-            
+
             self.connectedDevice = nil
             self.writeCharacteristic = nil
             self.notifyCharacteristic = nil
@@ -965,8 +1002,6 @@ extension BluetoothManager: CBCentralManagerDelegate {
             self.lastMotionType = .none
             self.alarmClearTimer?.invalidate()
             self.alarmClearTimer = nil
-            self.isConnecting = false
-            self.pendingConnectionDevice = nil
             self.debugCurrentDraw = 0.0
             self.debugVoltage = 0.0
             self.connectionStartTime = nil
@@ -977,25 +1012,34 @@ extension BluetoothManager: CBCentralManagerDelegate {
             self.connectionDurationTimer?.invalidate()
             self.connectionDurationTimer = nil
 
-            // Restart scanning so bonded device "in range" state updates properly
-            if !self.isScanning && self.isBluetoothReady {
-                self.startScanning()
-                self.isBackgroundScanning = true
+            // Only clear connection state if we're NOT already in a new
+            // connection attempt — otherwise this late callback from a prior
+            // disconnect will sabotage the new connect().
+            if !self.isConnecting {
+                self.pendingConnectionDevice = nil
+
+                // Restart scanning so bonded device "in range" state updates properly
+                if !self.isScanning && self.isBluetoothReady {
+                    self.resumeBackgroundScanning()
+                }
             }
         }
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         print("❌ Failed to connect: \(error?.localizedDescription ?? "Unknown error")")
-        
+
         DispatchQueue.main.async {
             self.connectionTimer?.invalidate()
             self.connectionTimer = nil
             self.isConnecting = false
             self.pendingConnectionDevice = nil
-            
-            // If we're reconnecting, we should keep trying — the scan is still active
-            // and the next advertisement will trigger another attempt
+
+            // Restart scanning so the app isn't stuck
+            if !self.isScanning && self.isBluetoothReady {
+                self.resumeBackgroundScanning()
+            }
+
             if self.isAttemptingReconnect {
                 print("🔄 Connection failed but still reconnecting — will retry on next advertisement")
             }
