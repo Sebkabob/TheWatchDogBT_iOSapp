@@ -93,6 +93,9 @@ struct DeviceCardView: View {
 
     private var statusText: String {
         if isConnected {
+            if bluetoothManager.mlcState == .stabilizing {
+                return "Locking"
+            }
             return bluetoothManager.deviceStateText
         }
         return isDeviceInRange ? "In Range" : "Out of Range"

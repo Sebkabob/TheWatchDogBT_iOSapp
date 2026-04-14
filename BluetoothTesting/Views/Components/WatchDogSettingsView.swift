@@ -77,11 +77,16 @@ struct WatchDogSettingsView: View {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Sensitivity")
                                 .font(.subheadline)
-                            
+
                             AnimatedSegmentedControl(
                                 selection: $sensitivity,
                                 options: SensitivityLevel.allCases
                             )
+
+                            Text(sensitivityDescription)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .animation(.default, value: sensitivity)
                         }
                         .padding(.vertical, 4)
                     }
@@ -268,6 +273,17 @@ struct WatchDogSettingsView: View {
         }
     }
     
+    private var sensitivityDescription: String {
+        switch sensitivity {
+        case .low:
+            return "Identifies the type of motion before triggering the alarm. Reduces false alarms by filtering out minor vibrations."
+        case .medium:
+            return "Balances between motion identification and immediate detection. Some filtering is applied before triggering."
+        case .high:
+            return "Triggers the alarm on any detected motion immediately, without filtering. Best for maximum security."
+        }
+    }
+
     private func loadCurrentSettings() {
         guard let deviceID = resolvedDeviceID else { return }
         

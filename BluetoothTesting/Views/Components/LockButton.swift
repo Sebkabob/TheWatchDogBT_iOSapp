@@ -11,8 +11,6 @@ struct LockButton: View {
     var isDisabled: Bool = false
     var isStabilizing: Bool = false
 
-    @State private var pulseOpacity: Double = 0.6
-
     var buttonColor: Color {
         if isStabilizing {
             return Color.blue
@@ -39,7 +37,11 @@ struct LockButton: View {
             RoundedRectangle(cornerRadius: 20)
                 .fill(buttonColor)
                 .frame(height: 80)
-                .opacity(isStabilizing ? pulseOpacity : 1.0)
+                .phaseAnimator(isStabilizing ? [0.6, 1.0] : [1.0]) { content, phase in
+                    content.opacity(phase)
+                } animation: { _ in
+                    .easeInOut(duration: 0.8)
+                }
 
             // Progress overlay (only show when not disabled and not stabilizing)
             if !isDisabled && !isStabilizing {
@@ -67,24 +69,6 @@ struct LockButton: View {
                 .stroke(Color.gray.opacity(0.5), lineWidth: 2)
         )
         .shadow(radius: isDisabled ? 2 : 5)
-        .onChange(of: isStabilizing) {
-            if isStabilizing {
-                withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
-                    pulseOpacity = 1.0
-                }
-            } else {
-                withAnimation(.easeOut(duration: 0.3)) {
-                    pulseOpacity = 0.6
-                }
-            }
-        }
-        .onAppear {
-            if isStabilizing {
-                withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
-                    pulseOpacity = 1.0
-                }
-            }
-        }
     }
 }
 

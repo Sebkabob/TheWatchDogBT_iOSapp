@@ -448,6 +448,7 @@ class BluetoothManager: NSObject {
             DispatchQueue.main.async {
                 self.pendingEventCount = Int(count)
                 if count > 0 {
+                    self.isSyncingMotionLogs = true
                     self.requestMotionEvent(at: 0)
                 } else {
                     self.isSyncingMotionLogs = false
@@ -455,12 +456,14 @@ class BluetoothManager: NSObject {
             }
             
         case RESP_EVENT_DATA:
-            guard data.count >= 10 else { return }
+            // 11 bytes: 0xE1, index_hi, index_lo, year, month, day, hour, minute, second, motionType, battery
+            guard data.count >= 11 else { return }
             let index = (UInt16(data[1]) << 8) | UInt16(data[2])
             let year = data[3], month = data[4], day = data[5]
             let hour = data[6], minute = data[7], second = data[8]
             let motionType = data[9]
-            
+            let batteryByte = data[10]
+
             var timestamp: Date
             if year == 0 && month <= 1 && day <= 1 {
                 timestamp = Date()
@@ -474,19 +477,18 @@ class BluetoothManager: NSObject {
                 components.second = Int(second)
                 timestamp = Calendar.current.date(from: components) ?? Date()
             }
-            
+
             let config = MotionTypeConfig.convert(firmwareType: motionType)
             let event = MotionEvent(timestamp: timestamp, eventType: config.eventType, alarmSounded: config.alarmSounded)
-            
+            let charging = (batteryByte & 0x80) != 0
+            let battery = Int(batteryByte & 0x7F)
+
             DispatchQueue.main.async {
                 MotionLogManager.shared.addMotionEvent(event)
-                let ackData = Data([self.CMD_ACK_EVENT, UInt8((index >> 8) & 0xFF), UInt8(index & 0xFF)])
-                self.sendData(ackData)
+                self.updateBatteryState(charging: charging, battery: battery)
                 let nextIndex = index + 1
                 if nextIndex < UInt16(self.pendingEventCount) {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                        self.requestMotionEvent(at: nextIndex)
-                    }
+                    self.requestMotionEvent(at: nextIndex)
                 } else {
                     self.clearMotionLog()
                     self.isSyncingMotionLogs = false
@@ -811,11 +813,8 @@ extension BluetoothManager: CBPeripheralDelegate {
             }
         }
         
-        // Auto-sync motion logs after characteristics discovered
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            guard let self = self, self.connectedDevice != nil else { return }
-            self.requestMotionLogCount()
-        }
+        // Firmware auto-sends RESP_LOG_COUNT on connect if there are
+        // pending events — no need to request manually.
     }
     
     func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
@@ -861,9 +860,6 @@ extension BluetoothManager: CBPeripheralDelegate {
                 self.alarmClearTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: false) { [weak self] _ in
                     self?.isAlarmActive = false
                 }
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.requestMotionLogCount()
             }
             return
         }

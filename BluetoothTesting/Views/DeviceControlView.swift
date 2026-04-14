@@ -90,12 +90,18 @@ struct DeviceControlView: View {
         if !isDeviceConnected {
             return "Unknown"
         }
+        if bluetoothManager.mlcState == .stabilizing {
+            return "Locking"
+        }
         return bluetoothManager.deviceStateText
     }
-    
+
     private var statusColor: Color {
         if !isDeviceConnected {
             return .gray
+        }
+        if bluetoothManager.mlcState == .stabilizing {
+            return .blue
         }
         let isArmed = (bluetoothManager.deviceState & 0x01) != 0
         return isArmed ? .red : .green
