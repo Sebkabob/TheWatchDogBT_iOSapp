@@ -372,7 +372,7 @@ struct DeviceControlView: View {
                         }
                     }
                     
-                    NavigationLink(destination: MotionLogsView()) {
+                    NavigationLink(destination: MotionLogsView(bluetoothManager: bluetoothManager)) {
                         HStack {
                             Image(systemName: "exclamationmark.triangle")
                             Text("Motion Logs")

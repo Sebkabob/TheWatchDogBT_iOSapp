@@ -9,6 +9,7 @@ import SwiftUI
 
 struct MotionLogsView: View {
     @Environment(\.dismiss) var dismiss
+    var bluetoothManager: BluetoothManager
     private let motionLogManager = MotionLogManager.shared
     @State private var selectedDate: Date
     @State private var refreshID = UUID()
@@ -17,8 +18,9 @@ struct MotionLogsView: View {
     @State private var showClearTodayConfirmation = false
 
     @AppStorage("skipClearEventsConfirmation") private var skipConfirmation = false
-    
-    init() {
+
+    init(bluetoothManager: BluetoothManager) {
+        self.bluetoothManager = bluetoothManager
         _selectedDate = State(initialValue: Date())
     }
     
@@ -146,7 +148,12 @@ struct MotionLogsView: View {
             )
             .presentationDetents([.medium])
         }
-        // @Observable automatically triggers view updates when motionEvents changes
+        .onAppear {
+            bluetoothManager.startMotionLogPolling()
+        }
+        .onDisappear {
+            bluetoothManager.stopMotionLogPolling()
+        }
     }
     
     private var selectedDateText: String {
@@ -591,6 +598,6 @@ struct MotionEventRow: View {
 
 #Preview {
     NavigationStack {
-        MotionLogsView()
+        MotionLogsView(bluetoothManager: BluetoothManager())
     }
 }
