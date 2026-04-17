@@ -78,3 +78,10 @@ struct DeviceRow: View {
         .disabled(isConnecting)
     }
 }
+
+#Preview {
+    // BluetoothDevice requires a live CBPeripheral — preview shows layout placeholder
+    Text("DeviceRow preview requires a live CBPeripheral")
+        .foregroundStyle(.secondary)
+        .padding()
+}

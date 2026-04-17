@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct DeviceScanView: View {
-    @ObservedObject var bluetoothManager: BluetoothManager
+    var bluetoothManager: BluetoothManager
     @State private var showAlert = false
     @State private var alertMessage = ""
     
@@ -86,4 +86,8 @@ struct DeviceScanView: View {
             Alert(title: Text("Error"), message: Text(alertMessage), dismissButton: .default(Text("OK")))
         }
     }
+}
+
+#Preview {
+    DeviceScanView(bluetoothManager: BluetoothManager())
 }

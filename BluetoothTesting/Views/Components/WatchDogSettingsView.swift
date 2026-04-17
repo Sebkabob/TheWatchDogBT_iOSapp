@@ -9,11 +9,11 @@ import SwiftUI
 
 struct WatchDogSettingsView: View {
     @Environment(\.dismiss) var dismiss
-    @ObservedObject private var settingsManager = SettingsManager.shared
-    @ObservedObject private var bondManager = BondManager.shared
-    @ObservedObject private var nameManager = DeviceNameManager.shared
-    @ObservedObject private var iconManager = DeviceIconManager.shared
-    @ObservedObject var bluetoothManager: BluetoothManager
+    private let settingsManager = SettingsManager.shared
+    private let bondManager = BondManager.shared
+    private let nameManager = DeviceNameManager.shared
+    private let iconManager = DeviceIconManager.shared
+    var bluetoothManager: BluetoothManager
     
     /// Device ID — used when settings opened from 3D model tap.
     /// Falls back to connected device if nil.
@@ -38,6 +38,9 @@ struct WatchDogSettingsView: View {
     @State private var loggingEnabled: Bool = false
     @State private var disableAlarmWhenConnected: Bool = false
     @State private var debugModeEnabled: Bool = false
+    @State private var highPerformanceMode: Bool = false
+    @State private var liveOrientationEnabled: Bool = false
+    @State private var dataLoggingMode: Bool = false
     
     // Forget device confirmation
     @State private var showForgetConfirmation = false
@@ -46,7 +49,7 @@ struct WatchDogSettingsView: View {
     private let maxNameLength = 16
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 0) {
                 // Settings content
                 Form {
@@ -74,11 +77,16 @@ struct WatchDogSettingsView: View {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Sensitivity")
                                 .font(.subheadline)
-                            
+
                             AnimatedSegmentedControl(
                                 selection: $sensitivity,
                                 options: SensitivityLevel.allCases
                             )
+
+                            Text(sensitivityDescription)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .animation(.default, value: sensitivity)
                         }
                         .padding(.vertical, 4)
                     }
@@ -139,13 +147,39 @@ struct WatchDogSettingsView: View {
                         }
                     }
                     
-                    // Debug Mode Section
-                    Section(header: Text("Advanced")) {
+                    // Advanced Section (hidden unless dev mode unlocked)
+                    if settingsManager.devModeUnlocked {
+                    Section(header: Text("Debug Tools")) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("High Performance Mode")
+                                    .font(.body)
+                                Text("50Hz updates · Higher battery usage")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Toggle("", isOn: $highPerformanceMode)
+                                .labelsHidden()
+                        }
+
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Live Orientation")
+                                    .font(.body)
+                                Text("3D model mirrors real device orientation")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Toggle("", isOn: $liveOrientationEnabled)
+                                .labelsHidden()
+                        }
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Debug Mode")
                                     .font(.body)
-                                Text("Show technical diagnostics")
+                                Text("Show hidden technical diagnostics")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
@@ -153,8 +187,22 @@ struct WatchDogSettingsView: View {
                             Toggle("", isOn: $debugModeEnabled)
                                 .labelsHidden()
                         }
+
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Data Logging")
+                                    .font(.body)
+                                Text("Record accel data to CSV for MLC training")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Toggle("", isOn: $dataLoggingMode)
+                                .labelsHidden()
+                        }
                     }
-                    
+                    } // end dev mode guard
+
                     // Forget Device Section
                     Section {
                         Button(action: {
@@ -225,6 +273,17 @@ struct WatchDogSettingsView: View {
         }
     }
     
+    private var sensitivityDescription: String {
+        switch sensitivity {
+        case .low:
+            return "Identifies the type of motion before triggering the alarm. Reduces false alarms by filtering out minor vibrations."
+        case .medium:
+            return "Balances between motion identification and immediate detection. Some filtering is applied before triggering."
+        case .high:
+            return "Triggers the alarm on any detected motion immediately, without filtering. Best for maximum security."
+        }
+    }
+
     private func loadCurrentSettings() {
         guard let deviceID = resolvedDeviceID else { return }
         
@@ -245,8 +304,11 @@ struct WatchDogSettingsView: View {
         loggingEnabled = settingsManager.loggingEnabled
         disableAlarmWhenConnected = settingsManager.disableAlarmWhenConnected
         debugModeEnabled = settingsManager.debugModeEnabled
+        highPerformanceMode = settingsManager.highPerformanceMode
+        liveOrientationEnabled = settingsManager.liveOrientationEnabled
+        dataLoggingMode = settingsManager.dataLoggingMode
     }
-    
+
     private func applySettings() {
         guard let deviceID = resolvedDeviceID else { return }
         
@@ -271,7 +333,10 @@ struct WatchDogSettingsView: View {
             lights: lightsEnabled,
             logging: loggingEnabled,
             disableAlarmConnected: disableAlarmWhenConnected,
-            debugMode: debugModeEnabled
+            debugMode: debugModeEnabled,
+            highPerformance: highPerformanceMode,
+            liveOrientation: liveOrientationEnabled,
+            dataLogging: dataLoggingMode
         )
         
         // Send settings byte to WatchDog only if connected to this device
@@ -287,8 +352,11 @@ struct WatchDogSettingsView: View {
         print("  Lights: \(lightsEnabled ? "On" : "Off")")
         print("  Logging: \(loggingEnabled ? "On" : "Off")")
         print("  Disable Alarm When Connected: \(disableAlarmWhenConnected ? "Yes" : "No")")
+        print("  High Performance Mode: \(highPerformanceMode ? "On" : "Off")")
+        print("  Live Orientation: \(liveOrientationEnabled ? "On" : "Off")")
         print("  Debug Mode: \(debugModeEnabled ? "On" : "Off")")
-        
+        print("  Data Logging: \(dataLoggingMode ? "On" : "Off")")
+
         dismiss()
     }
     

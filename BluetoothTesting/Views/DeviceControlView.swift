@@ -9,9 +9,9 @@ import SwiftUI
 
 struct DeviceControlView: View {
     @Environment(\.dismiss) var dismiss
-    @ObservedObject var bluetoothManager: BluetoothManager
-    @ObservedObject private var settingsManager = SettingsManager.shared
-    @ObservedObject private var nameManager = DeviceNameManager.shared
+    var bluetoothManager: BluetoothManager
+    private let settingsManager = SettingsManager.shared
+    private let nameManager = DeviceNameManager.shared
     @State private var isLocked = true
     @State private var holdProgress: CGFloat = 0.0
     @State private var isHolding = false
@@ -47,7 +47,17 @@ struct DeviceControlView: View {
     // Track min/max SOC for dynamic range
     @State private var minSOC: Double = 100.0
     @State private var maxSOC: Double = 0.0
-    
+
+    // Dev mode tap counter
+    @State private var devTapCount: Int = 0
+    @State private var devTapResetTask: Task<Void, Never>?
+    @State private var devModeToast: String?
+
+    // Data recording
+    private let recorder = MotionDataRecorder.shared
+    @State private var csvShareURL: URL?
+    @State private var showShareSheet = false
+
     private let lightHaptic = UIImpactFeedbackGenerator(style: .light)
     private let heavyHaptic = UIImpactFeedbackGenerator(style: .heavy)
     
@@ -80,17 +90,30 @@ struct DeviceControlView: View {
         if !isDeviceConnected {
             return "Unknown"
         }
+        if bluetoothManager.mlcState == .stabilizing {
+            return "Locking"
+        }
         return bluetoothManager.deviceStateText
     }
-    
+
     private var statusColor: Color {
         if !isDeviceConnected {
             return .gray
         }
+        if bluetoothManager.mlcState == .stabilizing {
+            return .blue
+        }
         let isArmed = (bluetoothManager.deviceState & 0x01) != 0
         return isArmed ? .red : .green
     }
-    
+
+    private var mlcIndicatorVisible: Bool {
+        let mlc = bluetoothManager.mlcState
+        if mlc == .unknown { return false }
+        if mlc == .stationary && !settingsManager.isArmed { return false }
+        return true
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Device State Display at the top - Horizontal Layout
@@ -106,29 +129,58 @@ struct DeviceControlView: View {
                     Circle()
                         .fill(statusColor)
                         .frame(width: 12, height: 12)
-                    
+
                     Text(statusText)
                         .font(.title3)
                         .fontWeight(.bold)
                         .foregroundColor(statusColor)
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
-                
-                // Right: Battery indicator
-                if isDeviceConnected && bluetoothManager.batteryLevel >= 0 {
-                    HStack(spacing: 4) {
-                        if bluetoothManager.isCharging {
-                            Image(systemName: "bolt.fill")
-                                .foregroundColor(.yellow)
-                                .font(.caption)
+
+                // Right: Battery + MLC state
+                if isDeviceConnected {
+                    VStack(alignment: .trailing, spacing: 4) {
+                        if bluetoothManager.batteryLevel >= 0 {
+                            HStack(spacing: 4) {
+                                if bluetoothManager.isCharging {
+                                    Image(systemName: "bolt.fill")
+                                        .foregroundColor(.yellow)
+                                        .font(.caption)
+                                }
+                                Image(systemName: batteryIcon)
+                                    .foregroundColor(batteryColor)
+                                Text("\(bluetoothManager.batteryLevel)%")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .onTapGesture {
+                                devTapResetTask?.cancel()
+                                devTapCount += 1
+                                if devTapCount >= 10 {
+                                    devTapCount = 0
+                                    settingsManager.devModeUnlocked.toggle()
+                                    devModeToast = settingsManager.devModeUnlocked ? "Dev mode on" : "Dev mode off"
+                                }
+                                devTapResetTask = Task {
+                                    try? await Task.sleep(for: .seconds(3))
+                                    if !Task.isCancelled { devTapCount = 0 }
+                                }
+                            }
                         }
-                        
-                        Image(systemName: batteryIcon)
-                            .foregroundColor(batteryColor)
-                        Text("\(bluetoothManager.batteryLevel)%")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        if mlcIndicatorVisible {
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(bluetoothManager.mlcState.color)
+                                    .frame(width: 8, height: 8)
+                                Text(bluetoothManager.mlcState.displayName)
+                                    .font(.caption)
+                                    .foregroundColor(bluetoothManager.mlcState.color)
+                            }
+                            .transition(.opacity)
+                        }
                     }
+                    .animation(.easeInOut(duration: 0.25), value: mlcIndicatorVisible)
+                    .frame(height: 36)
                     .frame(maxWidth: .infinity, alignment: .trailing)
                 } else {
                     Spacer()
@@ -143,7 +195,7 @@ struct DeviceControlView: View {
             ZStack(alignment: .leading) {
                 if showModel && isDeviceConnected {
                     // 3D Model - Centered
-                    Motion3DView(isLocked: isLocked, bluetoothManager: bluetoothManager)
+                    Motion3DView(bluetoothManager: bluetoothManager)
                         .frame(maxWidth: .infinity)
                         .transition(.opacity)
                 } else if showDisconnectedText {
@@ -205,6 +257,37 @@ struct DeviceControlView: View {
                             }
                             
                             DebugInfoRow(label: "Connected", value: connectionTimeString)
+
+                            Divider()
+
+                            Text("ACCEL (g)")
+                                .font(.system(size: 9))
+                                .fontWeight(.bold)
+                                .foregroundColor(.orange)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                DebugInfoRow(label: "X", value: String(format: "%.3f", bluetoothManager.debugAccelX))
+                                AccelGraph(history: bluetoothManager.accelXHistory, color: .red)
+                                    .frame(height: 35)
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                DebugInfoRow(label: "Y", value: String(format: "%.3f", bluetoothManager.debugAccelY))
+                                AccelGraph(history: bluetoothManager.accelYHistory, color: .green)
+                                    .frame(height: 35)
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                DebugInfoRow(label: "Z", value: String(format: "%.3f", bluetoothManager.debugAccelZ))
+                                AccelGraph(history: bluetoothManager.accelZHistory, color: .blue)
+                                    .frame(height: 35)
+                            }
+
+                            if settingsManager.dataLoggingMode {
+                                Divider()
+                                RecordButton(recorder: recorder) { url in
+                                    csvShareURL = url
+                                    showShareSheet = true
+                                }
+                            }
                         }
                         .padding(8)
                         .background(Color(.systemBackground).opacity(0.9))
@@ -226,17 +309,19 @@ struct DeviceControlView: View {
                 LockButton(
                     isLocked: $isLocked,
                     holdProgress: holdProgress,
-                    isDisabled: !isDeviceConnected
+                    isDisabled: !isDeviceConnected,
+                    isStabilizing: bluetoothManager.mlcState == .stabilizing
                 )
                 .padding(.horizontal, 20)
-                .gesture(
+                .simultaneousGesture(
                     isDeviceConnected ?
-                    DragGesture(minimumDistance: 0)
+                    LongPressGesture(minimumDuration: 0.001)
                         .onChanged { _ in
                             if !isHolding {
                                 startHolding()
                             }
                         }
+                        .sequenced(before: DragGesture(minimumDistance: 0))
                         .onEnded { _ in
                             stopHolding()
                         }
@@ -287,7 +372,7 @@ struct DeviceControlView: View {
                         }
                     }
                     
-                    NavigationLink(destination: MotionLogsView()) {
+                    NavigationLink(destination: MotionLogsView(bluetoothManager: bluetoothManager)) {
                         HStack {
                             Image(systemName: "exclamationmark.triangle")
                             Text("Motion Logs")
@@ -374,23 +459,51 @@ struct DeviceControlView: View {
                 bluetoothManager.startReconnecting(to: deviceID)
             }
         }
+        .overlay {
+            if let toast = devModeToast {
+                Text(toast)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Color.black.opacity(0.75))
+                    .cornerRadius(10)
+                    .transition(.opacity.animation(.easeInOut(duration: 0.15)))
+            }
+        }
+        .onChange(of: devModeToast) {
+            if devModeToast != nil {
+                Task {
+                    try? await Task.sleep(for: .seconds(1))
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        devModeToast = nil
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showShareSheet) {
+            if let url = csvShareURL {
+                ShareSheet(activityItems: [url])
+            }
+        }
     }
-    
+
     private func startHolding() {
         guard isDeviceConnected else { return }
         
         isHolding = true
-        holdProgress = 0.0
-        
+        holdProgress = 0.09
+
         lightHaptic.prepare()
         heavyHaptic.prepare()
         lightHaptic.impactOccurred()
-        
-        withAnimation(.linear(duration: 1.0)) {
+
+        withAnimation(.linear(duration: 0.91)) {
             holdProgress = 1.0
         }
-        
-        holdTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { _ in
+
+        holdTimer = Timer.scheduledTimer(withTimeInterval: 0.91, repeats: false) { _ in
             if self.isHolding {
                 self.completeHold()
             }
@@ -448,33 +561,32 @@ struct DeviceControlView: View {
         updateCurrentHistory(bluetoothManager.debugCurrentDraw)
         updateVoltageHistory(bluetoothManager.debugVoltage)
         updateSOCHistory(Double(bluetoothManager.batteryLevel))
-        
         graphUpdateTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
             self.updateCurrentHistory(self.bluetoothManager.debugCurrentDraw)
             self.updateVoltageHistory(self.bluetoothManager.debugVoltage)
             self.updateSOCHistory(Double(self.bluetoothManager.batteryLevel))
         }
     }
-    
+
     private func stopGraphUpdates() {
         graphUpdateTimer?.invalidate()
         graphUpdateTimer = nil
         minSOC = 100.0
         maxSOC = 0.0
     }
-    
+
     private func updateCurrentHistory(_ current: Double) {
         let now = Date()
         currentHistory.append((date: now, value: current))
         cleanOldHistory(history: &currentHistory)
     }
-    
+
     private func updateVoltageHistory(_ voltage: Double) {
         let now = Date()
         voltageHistory.append((date: now, value: voltage))
         cleanOldHistory(history: &voltageHistory)
     }
-    
+
     private func updateSOCHistory(_ soc: Double) {
         let now = Date()
         socHistory.append((date: now, value: soc))
@@ -482,7 +594,7 @@ struct DeviceControlView: View {
         if soc < minSOC { minSOC = soc }
         if soc > maxSOC { maxSOC = soc }
     }
-    
+
     private func cleanOldHistory(history: inout [(date: Date, value: Double)]) {
         let cutoff = Date().addingTimeInterval(-180)
         history.removeAll { $0.date < cutoff }
@@ -649,6 +761,63 @@ struct SOCGraph: View {
                     Text("\(Int((minY + maxY) / 2))").font(.system(size: 6)).foregroundColor(.secondary)
                     Spacer()
                     Text("\(Int(minY))").font(.system(size: 6)).foregroundColor(.secondary)
+                }.padding(.leading, 2)
+            }.cornerRadius(4)
+        }
+    }
+}
+
+struct AccelGraph: View {
+    let history: [(date: Date, value: Double)]
+    let color: Color
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.01)) { timeline in
+            let now = timeline.date
+            AccelGraphContent(history: history, color: color, now: now)
+        }
+    }
+}
+
+private struct AccelGraphContent: View {
+    let history: [(date: Date, value: Double)]
+    let color: Color
+    let now: Date
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let height = geometry.size.height
+            let validHistory = history.filter { now.timeIntervalSince($0.date) <= 15.0 && now.timeIntervalSince($0.date) >= 0.0 }
+            let dataMin = validHistory.map { $0.value }.min() ?? -1.0
+            let dataMax = validHistory.map { $0.value }.max() ?? 1.0
+            let margin = max(0.1, (dataMax - dataMin) * 0.1)
+            let minY = dataMin - margin
+            let maxY = dataMax + margin
+            let rangeY = maxY - minY
+
+            ZStack(alignment: .bottomLeading) {
+                Rectangle().fill(Color(.systemGray6))
+                VStack(spacing: 0) { ForEach(0..<3) { _ in Divider().background(Color.gray.opacity(0.3)); Spacer() } }
+                if validHistory.count > 1 {
+                    let maxTimeRange: TimeInterval = 15
+                    Path { path in
+                        for (index, point) in validHistory.enumerated() {
+                            let clampedValue = max(minY, min(maxY, point.value))
+                            let timeOffset = now.timeIntervalSince(point.date)
+                            let x = width - (CGFloat(timeOffset / maxTimeRange) * width)
+                            let normalizedValue = rangeY > 0 ? (clampedValue - minY) / rangeY : 0.5
+                            let y = height - (CGFloat(normalizedValue) * height)
+                            if index == 0 { path.move(to: CGPoint(x: x, y: y)) } else { path.addLine(to: CGPoint(x: x, y: y)) }
+                        }
+                    }.stroke(color, lineWidth: 1.5)
+                }
+                VStack(spacing: 0) {
+                    Text(String(format: "%.1f", maxY)).font(.system(size: 6)).foregroundColor(.secondary)
+                    Spacer()
+                    Text(String(format: "%.1f", (minY + maxY) / 2)).font(.system(size: 6)).foregroundColor(.secondary)
+                    Spacer()
+                    Text(String(format: "%.1f", minY)).font(.system(size: 6)).foregroundColor(.secondary)
                 }.padding(.leading, 2)
             }.cornerRadius(4)
         }

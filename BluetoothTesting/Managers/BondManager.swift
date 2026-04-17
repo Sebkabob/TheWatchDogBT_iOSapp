@@ -7,18 +7,20 @@
 
 import Foundation
 import CoreBluetooth
+import Observation
 
-class BondManager: ObservableObject {
+@Observable
+class BondManager {
     static let shared = BondManager()
-    
-    @Published var bondedDevices: [BondedDevice] = []
+
+    var bondedDevices: [BondedDevice] = []
     
     private let bondsKey = "watchdog_bonded_devices"
     private let nameManager = DeviceNameManager.shared
     
     // Timer to check for stale devices
     private var staleCheckTimer: Timer?
-    private let staleTimeout: TimeInterval = 8.0  // 8 seconds — prefer showing "in range" over false "out of range"
+    private let staleTimeout: TimeInterval = 8.0  // 8 seconds — generous to avoid false "out of range"
     
     private init() {
         loadBonds()
@@ -96,11 +98,26 @@ class BondManager: ObservableObject {
         return nameManager.getDisplayName(deviceID: deviceID, advertisingName: bond.name)
     }
     
+    /// Reset lastSeen timestamps for devices that were previously in range.
+    /// Called when the app returns from background so the stale check timer
+    /// doesn't immediately mark everything out of range before new advertisements arrive.
+    func refreshTimestampsForForegroundReturn() {
+        let now = Date()
+        for index in bondedDevices.indices {
+            // Only refresh devices that had been seen (were in range before backgrounding).
+            // Devices that were already out of range stay out of range.
+            if bondedDevices[index].currentRSSI != nil {
+                bondedDevices[index].lastSeen = now
+            }
+        }
+        print("🔄 Refreshed bonded device timestamps for foreground return")
+    }
+
     // MARK: - Stale Device Check
     
     private func startStaleDeviceCheck() {
-        // Check every 2 seconds for devices that haven't been seen in 8 seconds
-        staleCheckTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        // Check every 1 second for devices that haven't been seen in 5 seconds
+        staleCheckTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             self?.checkForStaleDevices()
         }
         print("🔄 Started stale device check timer")
@@ -108,27 +125,18 @@ class BondManager: ObservableObject {
     
     private func checkForStaleDevices() {
         let now = Date()
-        var needsUpdate = false
-        
+
         for index in bondedDevices.indices {
-            // If device has RSSI and lastSeen, check if it's stale
             if bondedDevices[index].currentRSSI != nil,
                let lastSeen = bondedDevices[index].lastSeen {
                 let timeSinceLastSeen = now.timeIntervalSince(lastSeen)
-                
-                // Clear RSSI if not seen in staleTimeout seconds
+
                 if timeSinceLastSeen > staleTimeout {
                     print("🕐 Device went out of range: \(bondedDevices[index].name) (last seen \(String(format: "%.1f", timeSinceLastSeen))s ago)")
                     bondedDevices[index].currentRSSI = nil
                     bondedDevices[index].lastSeen = nil
-                    needsUpdate = true
                 }
             }
-        }
-        
-        // Force UI update if any devices became stale
-        if needsUpdate {
-            objectWillChange.send()
         }
     }
     

@@ -37,3 +37,13 @@ struct SignalStrengthIndicator: View {
         .frame(height: 13)
     }
 }
+
+#Preview {
+    HStack(spacing: 16) {
+        SignalStrengthIndicator(rssi: -55)
+        SignalStrengthIndicator(rssi: -75)
+        SignalStrengthIndicator(rssi: -90)
+        SignalStrengthIndicator(rssi: -110)
+    }
+    .padding()
+}

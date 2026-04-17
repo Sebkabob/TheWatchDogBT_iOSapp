@@ -2,102 +2,44 @@
 //  Motion3DView.swift
 //  BluetoothTesting
 //
-//  Created by Sebastian Forenza on 10/30/25.
-//
 
 import SwiftUI
+import SceneKit
 
 struct Motion3DView: View {
-    // Drag rotation state
-    @State private var currentRotationX: Double = 0  // pitch (up/down)
-    @State private var currentRotationY: Double = 0  // yaw (left/right)
-    @State private var dragStartRotationX: Double = 0
-    @State private var dragStartRotationY: Double = 0
-    
-    // Momentum / inertia
-    @State private var velocityX: Double = 0
-    @State private var velocityY: Double = 0
-    @State private var lastDragTranslation: CGSize = .zero
-    @State private var decayTimer: Timer?
-    
-    // Tap detection
-    @State private var dragStartTime: Date = Date()
-    @State private var dragTotalDistance: CGFloat = 0
+    @State private var currentRotationX: Double = 0
+    @State private var currentRotationY: Double = 0
+    @State private var currentRotationZ: Double = 0
     @State private var showSettings = false
-    
-    @StateObject private var ledPulseManager = LEDPulseManager()
-    
+    @State private var ledAnimator = LEDAnimator()
+    @State private var liveQuaternion: SCNVector4? = nil
+    @State private var smoothedGX: Double = 0
+    @State private var smoothedGY: Double = 1
+    @State private var smoothedGZ: Double = 0
+    @State private var smoothingSeeded: Bool = false
+
     let usdzFileName = "WatchDogBTCase_V2"
-    var isLocked: Bool = false
     var bluetoothManager: BluetoothManager
     var allowSettingsTap: Bool = true
-    /// Device ID to pass to settings when opened (used when tapping 3D model)
     var targetDeviceID: UUID? = nil
-    
-    // Sensitivity and physics
-    private let dragSensitivity: Double = 0.008
-    private let maxPitch: Double = 1.2       // limit vertical tilt
-    private let decayFactor: Double = 0.95   // momentum decay per frame
-    private let minVelocity: Double = 0.0005 // stop threshold
-    // Tap thresholds
-    private let tapMaxDuration: TimeInterval = 0.25
-    private let tapMaxDistance: CGFloat = 8
-    
+
+    private var settingsManager: SettingsManager { SettingsManager.shared }
+    private var isLiveOrientation: Bool { settingsManager.liveOrientationEnabled }
+
     var body: some View {
         ZStack {
             SceneView3D(
-                rotation: SIMD3<Double>(currentRotationX, 0, 0),
-                dragRotation: SIMD3<Double>(0, currentRotationY, 0),
+                rotationX: $currentRotationX,
+                rotationY: $currentRotationY,
+                rotationZ: $currentRotationZ,
                 usdzFileName: usdzFileName,
-                ledIntensity: isLocked ? ledPulseManager.pulseIntensity : 0.0
+                ledColor: ledAnimator.outputColor,
+                ledIntensity: ledAnimator.outputIntensity,
+                gesturesEnabled: !isLiveOrientation,
+                liveQuaternion: liveQuaternion,
+                onTap: allowSettingsTap ? { showSettings = true } : nil
             )
             .ignoresSafeArea()
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        if dragTotalDistance == 0 && lastDragTranslation == .zero {
-                            // Drag just started
-                            dragStartTime = Date()
-                            dragTotalDistance = 0
-                            dragStartRotationX = currentRotationX
-                            dragStartRotationY = currentRotationY
-                            decayTimer?.invalidate()
-                            decayTimer = nil
-                        }
-                        
-                        let deltaW = value.translation.width - lastDragTranslation.width
-                        let deltaH = value.translation.height - lastDragTranslation.height
-                        dragTotalDistance += sqrt(deltaW * deltaW + deltaH * deltaH)
-                        
-                        // Update rotation
-                        currentRotationY = dragStartRotationY + Double(value.translation.width) * dragSensitivity
-                        let newPitch = dragStartRotationX + Double(value.translation.height) * dragSensitivity
-                        currentRotationX = max(-maxPitch, min(maxPitch, newPitch))
-                        
-                        // Track velocity for momentum
-                        velocityX = Double(deltaH) * dragSensitivity
-                        velocityY = Double(deltaW) * dragSensitivity
-                        
-                        lastDragTranslation = value.translation
-                    }
-                    .onEnded { value in
-                        let dragDuration = Date().timeIntervalSince(dragStartTime)
-                        
-                        // Detect tap: short duration + small movement
-                        if dragDuration < tapMaxDuration && dragTotalDistance < tapMaxDistance {
-                            if allowSettingsTap {
-                                showSettings = true
-                            }
-                        } else {
-                            // Start momentum decay
-                            startMomentumDecay()
-                        }
-                        
-                        // Reset tracking
-                        lastDragTranslation = .zero
-                        dragTotalDistance = 0
-                    }
-            )
         }
         .sheet(isPresented: $showSettings) {
             WatchDogSettingsView(
@@ -106,41 +48,122 @@ struct Motion3DView: View {
             )
         }
         .onAppear {
-            if isLocked {
-                ledPulseManager.startPulsing()
-            }
+            syncAnimatorState()
+            ledAnimator.start()
         }
         .onDisappear {
-            decayTimer?.invalidate()
-            ledPulseManager.stopPulsing()
+            ledAnimator.stop()
         }
-        .onChange(of: isLocked) {
-            if isLocked {
-                ledPulseManager.startPulsing()
-            } else {
-                ledPulseManager.stopPulsing()
-            }
-        }
+        // Re-sync whenever any relevant BLE property changes
+        .onChange(of: bluetoothManager.deviceState)    { syncAnimatorState() }
+        .onChange(of: bluetoothManager.isCharging)     { syncAnimatorState() }
+        .onChange(of: bluetoothManager.isCablePlugged) { syncAnimatorState() }
+        .onChange(of: bluetoothManager.isBatteryFull)  { syncAnimatorState() }
+        .onChange(of: bluetoothManager.isAlarmActive)  { syncAnimatorState() }
+        .onChange(of: bluetoothManager.isFindMyActive) { syncAnimatorState() }
+        .onChange(of: bluetoothManager.connectedDevice?.id) { syncAnimatorState() }
+        .onChange(of: settingsManager.lightsEnabled)   { syncAnimatorState() }
+        .onChange(of: settingsManager.alarmType)       { syncAnimatorState() }
+        .onChange(of: settingsManager.isArmed)         { syncAnimatorState() }
+        // Drive model orientation from accelerometer
+        .onChange(of: bluetoothManager.debugAccelX) { updateLiveOrientation() }
     }
-    
-    private func startMomentumDecay() {
-        decayTimer?.invalidate()
-        
-        decayTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { timer in
-            velocityX *= decayFactor
-            velocityY *= decayFactor
-            
-            currentRotationY += velocityY
-            let newPitch = currentRotationX + velocityX
-            currentRotationX = max(-maxPitch, min(maxPitch, newPitch))
-            
-            if abs(velocityX) < minVelocity && abs(velocityY) < minVelocity {
-                velocityX = 0
-                velocityY = 0
-                timer.invalidate()
-                decayTimer = nil
+
+    /// Push the current BLE + settings snapshot into the animator's input state.
+    private func syncAnimatorState() {
+        ledAnimator.isConnected    = bluetoothManager.connectedDevice != nil
+        ledAnimator.isArmed        = settingsManager.isArmed
+        ledAnimator.lightsEnabled  = settingsManager.lightsEnabled
+        ledAnimator.alarmType      = settingsManager.alarmType
+        ledAnimator.isCharging     = bluetoothManager.isCharging
+        ledAnimator.isCablePlugged = bluetoothManager.isCablePlugged
+        ledAnimator.isBatteryFull  = bluetoothManager.isBatteryFull
+        ledAnimator.isAlarmActive  = bluetoothManager.isAlarmActive
+        ledAnimator.isFindMyActive = bluetoothManager.isFindMyActive
+    }
+
+    private func updateLiveOrientation() {
+        guard isLiveOrientation else {
+            if liveQuaternion != nil {
+                // Reset so next activation seeds fresh
+                smoothingSeeded = false
+                liveQuaternion = nil
             }
+            return
         }
+
+        let ax = Double(bluetoothManager.debugAccelX)
+        let ay = Double(bluetoothManager.debugAccelY)
+        let az = Double(bluetoothManager.debugAccelZ)
+
+        let rawMag = sqrt(ax * ax + ay * ay + az * az)
+        guard rawMag > 0.1 else { return }
+
+        // Normalize raw input
+        let nx = ax / rawMag
+        let ny = ay / rawMag
+        let nz = az / rawMag
+
+        if !smoothingSeeded {
+            // Seed filter with current reading so there's no jump from default
+            smoothedGX = nx
+            smoothedGY = ny
+            smoothedGZ = nz
+            smoothingSeeded = true
+        }
+
+        // Exponential low-pass filter to reduce jitter
+        let alpha = 0.3
+        smoothedGX = smoothedGX * (1 - alpha) + nx * alpha
+        smoothedGY = smoothedGY * (1 - alpha) + ny * alpha
+        smoothedGZ = smoothedGZ * (1 - alpha) + nz * alpha
+
+        let sMag = sqrt(smoothedGX * smoothedGX + smoothedGY * smoothedGY + smoothedGZ * smoothedGZ)
+        guard sMag > 0.01 else { return }
+        let gx = smoothedGX / sMag
+        let gy = smoothedGY / sMag
+        let gz = smoothedGZ / sMag
+
+        // Map device coords to SceneKit coords:
+        //   Device X (up)    → Scene Y
+        //   Device Y (right) → Scene X
+        //   Device Z (face)  → Scene -Z (face toward camera = model's -Z direction)
+        let sceneX = Float(gy)
+        let sceneY = Float(gx)
+        let sceneZ = Float(-gz)
+
+        // Compute quaternion that rotates reference up (0,1,0) to the observed gravity direction
+        let refX: Float = 0, refY: Float = 1, refZ: Float = 0
+
+        let dot = refX * sceneX + refY * sceneY + refZ * sceneZ
+
+        // Cross product: ref × scene
+        let crossX = refY * sceneZ - refZ * sceneY  // 1*sceneZ - 0*sceneY
+        let crossY = refZ * sceneX - refX * sceneZ  // 0*sceneX - 0*sceneZ
+        let crossZ = refX * sceneY - refY * sceneX  // 0*sceneY - 1*sceneX
+
+        let crossMag = sqrt(crossX * crossX + crossY * crossY + crossZ * crossZ)
+
+        let q: SCNVector4
+        if crossMag < 0.0001 {
+            if dot > 0 {
+                q = SCNVector4(0, 0, 0, 1) // identity
+            } else {
+                q = SCNVector4(1, 0, 0, 0) // 180° around X
+            }
+        } else {
+            let angle = acos(max(-1, min(1, dot)))
+            let halfAngle = angle / 2
+            let s = sin(halfAngle) / crossMag
+            q = SCNVector4(
+                crossX * s,
+                crossY * s,
+                crossZ * s,
+                cos(halfAngle)
+            )
+        }
+
+        liveQuaternion = q
     }
 }
 

@@ -9,11 +9,10 @@ import SwiftUI
 
 struct AddNewDeviceView: View {
     @Environment(\.dismiss) var dismiss
-    @ObservedObject var bluetoothManager: BluetoothManager
-    @ObservedObject private var bondManager = BondManager.shared
-    @ObservedObject private var nameManager = DeviceNameManager.shared
+    var bluetoothManager: BluetoothManager
+    private let bondManager = BondManager.shared
+    private let nameManager = DeviceNameManager.shared
     
-    @State private var showSuccessAlert = false
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     @State private var bondedDeviceName = ""
@@ -37,7 +36,7 @@ struct AddNewDeviceView: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 20) {
                 // Status indicator
                 HStack {
@@ -56,10 +55,10 @@ struct AddNewDeviceView: View {
                     VStack(spacing: 10) {
                         ProgressView()
                             .scaleEffect(1.5)
-                        Text("Looking for WatchDogs...")
+                        Text("Sniffing for WatchDogs...")
                             .foregroundColor(.secondary)
                             .padding()
-                        Text("Make sure your WatchDog is powered on")
+                        Text("Make sure your WatchDog is nearby")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -123,13 +122,6 @@ struct AddNewDeviceView: View {
                     print("✅ Device connected - completing pairing")
                     completePairing(device: connected)
                 }
-            }
-            .alert("WatchDog Added!", isPresented: $showSuccessAlert) {
-                Button("Done") {
-                    dismiss()
-                }
-            } message: {
-                Text("\(bondedDeviceName) has been bonded and is ready to use.")
             }
             .alert("Pairing Failed", isPresented: $showErrorAlert) {
                 Button("OK", role: .cancel) {
@@ -204,24 +196,26 @@ struct AddNewDeviceView: View {
             print("⚠️ Pairing already completed, skipping")
             return
         }
-        
+
         pairingCompleted = true
         print("✅ Pairing complete for: \(device.name)")
-        
+
         // Add bond IMMEDIATELY
         bondManager.addBond(deviceID: device.id, name: device.name)
-        
+
         print("✅ Device added to bond list: \(device.name)")
         print("📋 Total bonded devices: \(bondManager.bondedDevices.count)")
-        
+
         // Clear connecting state
         connectingDeviceID = nil
         deviceToPair = nil
-        
-        // Show success
-        showSuccessAlert = true
-        
+
         print("✅ Successfully bonded and staying connected to \(bondedDeviceName)")
+
+        // Dismiss immediately — MainAppView will navigate to the new device page.
+        // This avoids showing the empty device list (bonded device is filtered out)
+        // and eliminates the extra alert → dismiss → pager-jump sequence.
+        dismiss()
     }
 }
 
@@ -310,7 +304,7 @@ struct NameYourWatchDogSheet: View {
     private let maxNameLength = 16
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 24) {
                 // Icon
                 Image(systemName: "tag.fill")

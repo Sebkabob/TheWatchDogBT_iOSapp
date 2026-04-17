@@ -9,12 +9,18 @@ import SwiftUI
 
 struct MotionLogsView: View {
     @Environment(\.dismiss) var dismiss
-    @StateObject private var motionLogManager = MotionLogManager.shared
+    var bluetoothManager: BluetoothManager
+    private let motionLogManager = MotionLogManager.shared
     @State private var selectedDate: Date
     @State private var refreshID = UUID()
     @State private var showMonthYearPicker = false
-    
-    init() {
+    @State private var showClearAllConfirmation = false
+    @State private var showClearTodayConfirmation = false
+
+    @AppStorage("skipClearEventsConfirmation") private var skipConfirmation = false
+
+    init(bluetoothManager: BluetoothManager) {
+        self.bluetoothManager = bluetoothManager
         _selectedDate = State(initialValue: Date())
     }
     
@@ -84,8 +90,24 @@ struct MotionLogsView: View {
             ToolbarItem(placement: .navigationBarTrailing) {
                 if !motionLogManager.motionEvents.isEmpty {
                     Menu {
+                        if !motionLogManager.getEvents(for: Date()).isEmpty {
+                            Button(role: .destructive, action: {
+                                if skipConfirmation {
+                                    motionLogManager.clearEventsForDate(Date())
+                                } else {
+                                    showClearTodayConfirmation = true
+                                }
+                            }) {
+                                Label("Clear Today's Events", systemImage: "calendar.badge.minus")
+                            }
+                        }
+
                         Button(role: .destructive, action: {
-                            motionLogManager.clearAllEvents()
+                            if skipConfirmation {
+                                motionLogManager.clearAllEvents()
+                            } else {
+                                showClearAllConfirmation = true
+                            }
                         }) {
                             Label("Clear All Events", systemImage: "trash")
                         }
@@ -95,6 +117,30 @@ struct MotionLogsView: View {
                 }
             }
         }
+        .alert("Clear All Events?", isPresented: $showClearAllConfirmation) {
+            Button("OK", role: .destructive) {
+                motionLogManager.clearAllEvents()
+            }
+            Button("No", role: .cancel) { }
+            Button("Don't Show This Again", role: .destructive) {
+                skipConfirmation = true
+                motionLogManager.clearAllEvents()
+            }
+        } message: {
+            Text("Are you sure you want to clear all events?")
+        }
+        .alert("Clear Today's Events?", isPresented: $showClearTodayConfirmation) {
+            Button("OK", role: .destructive) {
+                motionLogManager.clearEventsForDate(Date())
+            }
+            Button("No", role: .cancel) { }
+            Button("Don't Show This Again", role: .destructive) {
+                skipConfirmation = true
+                motionLogManager.clearEventsForDate(Date())
+            }
+        } message: {
+            Text("Are you sure you want to clear today's events?")
+        }
         .sheet(isPresented: $showMonthYearPicker) {
             MonthYearPickerSheet(
                 selectedDate: $selectedDate,
@@ -102,8 +148,11 @@ struct MotionLogsView: View {
             )
             .presentationDetents([.medium])
         }
-        .onReceive(motionLogManager.$motionEvents) { _ in
-            refreshID = UUID()
+        .onAppear {
+            bluetoothManager.startMotionLogPolling()
+        }
+        .onDisappear {
+            bluetoothManager.stopMotionLogPolling()
         }
     }
     
@@ -184,7 +233,7 @@ struct MonthYearPickerSheet: View {
     }
     
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 16) {
                 // Event count for selected month
                 let count = eventCountForSelection()
@@ -535,17 +584,20 @@ struct MotionEventRow: View {
     
     private var iconColor: Color {
         switch event.eventType {
-        case .unknown: return .gray
-        case .lightMovement: return .blue
-        case .moderateMovement: return .orange
-        case .severeMovement: return .red
-        case .tamper: return .purple
+        case .none:         return .gray
+        case .inMotion:     return .orange
+        case .shaken:       return .red
+        case .impact:       return .red
+        case .freefall:     return .purple
+        case .tilted:       return .yellow
+        case .doorOpening:  return .orange
+        case .doorClosing:  return .blue
         }
     }
 }
 
 #Preview {
-    NavigationView {
-        MotionLogsView()
+    NavigationStack {
+        MotionLogsView(bluetoothManager: BluetoothManager())
     }
 }

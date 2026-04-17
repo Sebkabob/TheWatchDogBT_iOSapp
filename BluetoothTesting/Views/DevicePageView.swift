@@ -8,13 +8,14 @@
 import SwiftUI
 
 struct DevicePageView: View {
-    @ObservedObject var bluetoothManager: BluetoothManager
-    @ObservedObject private var settingsManager = SettingsManager.shared
-    @ObservedObject private var nameManager = DeviceNameManager.shared
-    @ObservedObject private var bondManager = BondManager.shared
+    var bluetoothManager: BluetoothManager
+    private let settingsManager = SettingsManager.shared
+    private let nameManager = DeviceNameManager.shared
+    private let bondManager = BondManager.shared
     
     let deviceID: UUID
-    
+    var onOverviewRequest: (() -> Void)? = nil
+
     @State private var isLocked = true
     @State private var holdProgress: CGFloat = 0.0
     @State private var isHolding = false
@@ -29,6 +30,9 @@ struct DevicePageView: View {
     // Local "connecting" state — set immediately on button press for instant feedback.
     // Cleared when connection succeeds or fails.
     @State private var isConnectingThisDevice = false
+
+    // Ping animation state
+    @State private var isPinging = false
     
     // Debug graph history (last 3 minutes)
     @State private var currentHistory: [(date: Date, value: Double)] = []
@@ -37,7 +41,17 @@ struct DevicePageView: View {
     @State private var graphUpdateTimer: Timer?
     @State private var minSOC: Double = 100.0
     @State private var maxSOC: Double = 0.0
-    
+
+    // Dev mode tap counter
+    @State private var devTapCount: Int = 0
+    @State private var devTapResetTask: Task<Void, Never>?
+    @State private var devModeToast: String?
+
+    // Data recording
+    private let recorder = MotionDataRecorder.shared
+    @State private var csvShareURL: URL?
+    @State private var showShareSheet = false
+
     private let lightHaptic = UIImpactFeedbackGenerator(style: .light)
     private let heavyHaptic = UIImpactFeedbackGenerator(style: .heavy)
     
@@ -83,17 +97,30 @@ struct DevicePageView: View {
         if !isDeviceConnected {
             return "Unknown"
         }
+        if bluetoothManager.mlcState == .stabilizing {
+            return "Locking"
+        }
         return bluetoothManager.deviceStateText
     }
-    
+
     private var statusColor: Color {
         if !isDeviceConnected {
             return .gray
+        }
+        if bluetoothManager.mlcState == .stabilizing {
+            return .blue
         }
         let isArmed = (bluetoothManager.deviceState & 0x01) != 0
         return isArmed ? .red : .green
     }
     
+    private var mlcIndicatorVisible: Bool {
+        let mlc = bluetoothManager.mlcState
+        if mlc == .unknown { return false }
+        if mlc == .stationary && !settingsManager.isArmed { return false }
+        return true
+    }
+
     private var connectionTimeString: String {
         let duration = bluetoothManager.connectionDuration
         let hours = Int(duration) / 3600
@@ -132,21 +159,50 @@ struct DevicePageView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
                 
-                // Right: Battery indicator
-                if isDeviceConnected && bluetoothManager.batteryLevel >= 0 {
-                    HStack(spacing: 4) {
-                        if bluetoothManager.isCharging {
-                            Image(systemName: "bolt.fill")
-                                .foregroundColor(.yellow)
-                                .font(.caption)
+                // Right: Battery + MLC state
+                if isDeviceConnected {
+                    VStack(alignment: .trailing, spacing: 4) {
+                        if bluetoothManager.batteryLevel >= 0 {
+                            HStack(spacing: 4) {
+                                if bluetoothManager.isCharging {
+                                    Image(systemName: "bolt.fill")
+                                        .foregroundColor(.yellow)
+                                        .font(.caption)
+                                }
+                                Image(systemName: batteryIcon)
+                                    .foregroundColor(batteryColor)
+                                Text("\(bluetoothManager.batteryLevel)%")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .onTapGesture {
+                                devTapResetTask?.cancel()
+                                devTapCount += 1
+                                if devTapCount >= 10 {
+                                    devTapCount = 0
+                                    settingsManager.devModeUnlocked.toggle()
+                                    devModeToast = settingsManager.devModeUnlocked ? "Dev mode on" : "Dev mode off"
+                                }
+                                devTapResetTask = Task {
+                                    try? await Task.sleep(for: .seconds(3))
+                                    if !Task.isCancelled { devTapCount = 0 }
+                                }
+                            }
                         }
-                        
-                        Image(systemName: batteryIcon)
-                            .foregroundColor(batteryColor)
-                        Text("\(bluetoothManager.batteryLevel)%")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        if mlcIndicatorVisible {
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(bluetoothManager.mlcState.color)
+                                    .frame(width: 8, height: 8)
+                                Text(bluetoothManager.mlcState.displayName)
+                                    .font(.caption)
+                                    .foregroundColor(bluetoothManager.mlcState.color)
+                            }
+                            .transition(.opacity)
+                        }
                     }
+                    .animation(.easeInOut(duration: 0.25), value: mlcIndicatorVisible)
+                    .frame(height: 36)
                     .frame(maxWidth: .infinity, alignment: .trailing)
                 } else {
                     Spacer()
@@ -163,9 +219,7 @@ struct DevicePageView: View {
                     // Device is in range (connected or just advertising) — show 3D model
                     if showModel {
                         Motion3DView(
-                            isLocked: isLocked,
                             bluetoothManager: bluetoothManager,
-                            // Only allow settings tap when connected
                             allowSettingsTap: isDeviceConnected,
                             targetDeviceID: deviceID
                         )
@@ -190,6 +244,52 @@ struct DevicePageView: View {
                     .transition(.opacity)
                 }
                 
+                // Ping (Find Device) button - Right side, only when connected
+                if isDeviceConnected {
+                    VStack {
+                        Spacer()
+
+                        Button {
+                            triggerPing()
+                        } label: {
+                            ZStack {
+                                // Ripple rings that expand outward when pinging
+                                ForEach(0..<3, id: \.self) { i in
+                                    Circle()
+                                        .stroke(Color.accentColor, lineWidth: 1.5)
+                                        .frame(width: 44, height: 44)
+                                        .scaleEffect(isPinging ? 1.8 + CGFloat(i) * 0.5 : 1.0)
+                                        .opacity(isPinging ? 0.0 : 0.6)
+                                        .animation(
+                                            isPinging
+                                                ? .easeOut(duration: 0.9).delay(Double(i) * 0.12)
+                                                : .easeIn(duration: 0.2),
+                                            value: isPinging
+                                        )
+                                }
+
+                                Circle()
+                                    .fill(.ultraThinMaterial)
+                                    .frame(width: 44, height: 44)
+                                    .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
+
+                                Image(systemName: isPinging ? "speaker.wave.3.fill" : "speaker.wave.2.fill")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundStyle(Color.accentColor)
+                                    .contentTransition(.symbolEffect(.replace))
+                                    .symbolEffect(.bounce, value: isPinging)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.trailing, 16)
+                        .padding(.bottom, 200)
+
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                }
+
                 // Debug Info Box - Left side (only when connected and debug enabled)
                 if isDeviceConnected && settingsManager.debugModeEnabled {
                     VStack(alignment: .leading, spacing: 0) {
@@ -222,6 +322,37 @@ struct DevicePageView: View {
                             }
                             
                             DebugInfoRow(label: "Connected", value: connectionTimeString)
+
+                            Divider()
+
+                            Text("ACCEL (g)")
+                                .font(.system(size: 9))
+                                .fontWeight(.bold)
+                                .foregroundColor(.orange)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                DebugInfoRow(label: "X", value: String(format: "%.3f", bluetoothManager.debugAccelX))
+                                AccelGraph(history: bluetoothManager.accelXHistory, color: .red)
+                                    .frame(height: 35)
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                DebugInfoRow(label: "Y", value: String(format: "%.3f", bluetoothManager.debugAccelY))
+                                AccelGraph(history: bluetoothManager.accelYHistory, color: .green)
+                                    .frame(height: 35)
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                DebugInfoRow(label: "Z", value: String(format: "%.3f", bluetoothManager.debugAccelZ))
+                                AccelGraph(history: bluetoothManager.accelZHistory, color: .blue)
+                                    .frame(height: 35)
+                            }
+
+                            if settingsManager.dataLoggingMode {
+                                Divider()
+                                RecordButton(recorder: recorder) { url in
+                                    csvShareURL = url
+                                    showShareSheet = true
+                                }
+                            }
                         }
                         .padding(8)
                         .background(Color(.systemBackground).opacity(0.9))
@@ -229,7 +360,7 @@ struct DevicePageView: View {
                         .shadow(radius: 3)
                         .frame(width: 110)
                         .padding(.leading, 12)
-                        .padding(.bottom, 200)
+                        .padding(.bottom, 50)
                         
                         Spacer()
                     }
@@ -238,28 +369,38 @@ struct DevicePageView: View {
             .animation(.easeInOut(duration: 0.5), value: isDeviceInRange)
             .animation(.easeInOut(duration: 1.0), value: showModel)
             .animation(.easeInOut(duration: 0.3), value: isDeviceConnected)
-            
+            .contentShape(Rectangle())
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.5)
+                    .onEnded { _ in
+                        onOverviewRequest?()
+                    }
+            )
+
             // MARK: Bottom Control Section
             VStack(spacing: 12) {
                 // Lock button
                 LockButton(
                     isLocked: $isLocked,
                     holdProgress: holdProgress,
-                    isDisabled: !isDeviceConnected
+                    isDisabled: !isDeviceConnected,
+                    isStabilizing: bluetoothManager.mlcState == .stabilizing
                 )
                 .padding(.horizontal, 20)
-                .onLongPressGesture(minimumDuration: 1.0, pressing: { isPressing in
-                    if isDeviceConnected {
-                        if isPressing {
-                            startHolding()
-                        } else {
+                .simultaneousGesture(
+                    isDeviceConnected ?
+                    LongPressGesture(minimumDuration: 0.001)
+                        .onChanged { _ in
+                            if !isHolding {
+                                startHolding()
+                            }
+                        }
+                        .sequenced(before: DragGesture(minimumDistance: 0))
+                        .onEnded { _ in
                             stopHolding()
                         }
-                    }
-                }, perform: {
-                    // This fires when the full duration is reached
-                    // completeHold() is already called by the fill timer
-                })
+                    : nil
+                )
                 
                 // Bottom buttons row
                 HStack(spacing: 12) {
@@ -338,8 +479,8 @@ struct DevicePageView: View {
         }
         .statusBar(hidden: true)
         .sheet(isPresented: $showMotionLogs) {
-            NavigationView {
-                MotionLogsView()
+            NavigationStack {
+                MotionLogsView(bluetoothManager: bluetoothManager)
             }
         }
         .onAppear {
@@ -392,8 +533,36 @@ struct DevicePageView: View {
                 isConnectingThisDevice = false
             }
         }
+        .overlay {
+            if let toast = devModeToast {
+                Text(toast)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Color.black.opacity(0.75))
+                    .cornerRadius(10)
+                    .transition(.opacity.animation(.easeInOut(duration: 0.15)))
+            }
+        }
+        .onChange(of: devModeToast) {
+            if devModeToast != nil {
+                Task {
+                    try? await Task.sleep(for: .seconds(1))
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        devModeToast = nil
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showShareSheet) {
+            if let url = csvShareURL {
+                ShareSheet(activityItems: [url])
+            }
+        }
     }
-    
+
     // MARK: - Model Visibility
     
     private func updateModelVisibility() {
@@ -432,17 +601,7 @@ struct DevicePageView: View {
     }
     
     private func performConnect() {
-        // Clear the suppress flag so scanning/connection works
-        bluetoothManager.suppressAutoReconnect = false
-        
-        // Find the discovered device and connect
-        if let device = bluetoothManager.discoveredDevices.first(where: { $0.id == deviceID }) {
-            print("🔌 Connecting to \(device.name)")
-            bluetoothManager.connect(to: device)
-        } else {
-            print("⚠️ Device not found in discovered devices, cannot connect")
-            isConnectingThisDevice = false
-        }
+        bluetoothManager.connectByID(deviceID)
     }
     
     private func disconnectDevice() {
@@ -472,18 +631,18 @@ struct DevicePageView: View {
         guard !isHolding else { return }
         
         isHolding = true
-        holdProgress = 0.0
-        
+        holdProgress = 0.09
+
         lightHaptic.prepare()
         heavyHaptic.prepare()
         lightHaptic.impactOccurred()
-        
+
         // Drive the fill bar with a repeating timer (~60fps)
         // This avoids relying on withAnimation which can be disrupted by the TabView
-        let totalDuration: Double = 1.0
+        let remainingDuration: Double = 0.91
         let interval: Double = 1.0 / 60.0
-        let increment: CGFloat = CGFloat(interval / totalDuration)
-        
+        let increment: CGFloat = CGFloat(interval / remainingDuration) * (1.0 - 0.09)
+
         holdTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { timer in
             if self.isHolding {
                 self.holdProgress += increment
@@ -529,6 +688,20 @@ struct DevicePageView: View {
         }
     }
     
+    // MARK: - Ping
+
+    private func triggerPing() {
+        guard isDeviceConnected, !isPinging else { return }
+
+        lightHaptic.impactOccurred()
+        bluetoothManager.sendPing()
+
+        isPinging = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            isPinging = false
+        }
+    }
+
     // MARK: - Battery
     
     private var batteryIcon: String {
@@ -556,33 +729,32 @@ struct DevicePageView: View {
         updateCurrentHistory(bluetoothManager.debugCurrentDraw)
         updateVoltageHistory(bluetoothManager.debugVoltage)
         updateSOCHistory(Double(bluetoothManager.batteryLevel))
-        
         graphUpdateTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
             self.updateCurrentHistory(self.bluetoothManager.debugCurrentDraw)
             self.updateVoltageHistory(self.bluetoothManager.debugVoltage)
             self.updateSOCHistory(Double(self.bluetoothManager.batteryLevel))
         }
     }
-    
+
     private func stopGraphUpdates() {
         graphUpdateTimer?.invalidate()
         graphUpdateTimer = nil
         minSOC = 100.0
         maxSOC = 0.0
     }
-    
+
     private func updateCurrentHistory(_ current: Double) {
         let now = Date()
         currentHistory.append((date: now, value: current))
         cleanOldHistory(history: &currentHistory)
     }
-    
+
     private func updateVoltageHistory(_ voltage: Double) {
         let now = Date()
         voltageHistory.append((date: now, value: voltage))
         cleanOldHistory(history: &voltageHistory)
     }
-    
+
     private func updateSOCHistory(_ soc: Double) {
         let now = Date()
         socHistory.append((date: now, value: soc))
@@ -590,7 +762,7 @@ struct DevicePageView: View {
         if soc < minSOC { minSOC = soc }
         if soc > maxSOC { maxSOC = soc }
     }
-    
+
     private func cleanOldHistory(history: inout [(date: Date, value: Double)]) {
         let cutoff = Date().addingTimeInterval(-180)
         history.removeAll { $0.date < cutoff }

@@ -11,43 +11,27 @@ import Foundation
 /// Edit this table to change the display names and settings for each motion type
 struct MotionTypeConfig {
     
-    /// Motion type mapping table - EDIT THESE VALUES
+    /// Motion type mapping table — values match MLC/FSM firmware enum
     static let typeTable: [UInt8: (name: String, triggersAlarm: Bool)] = [
-        0: (name: "Unknown", triggersAlarm: false),
-        1: (name: "Small Motion", triggersAlarm: false),
-        2: (name: "Medium Motion", triggersAlarm: false),
-        3: (name: "Large Motion", triggersAlarm: true),
-        4: (name: "Severe Motion", triggersAlarm: true),
-        5: (name: "Tamper Detected", triggersAlarm: true),
-        // Add more types as needed...
+        0: (name: "None",         triggersAlarm: false),
+        1: (name: "In Motion",    triggersAlarm: false),
+        2: (name: "Shaken",       triggersAlarm: true),
+        3: (name: "Impact",       triggersAlarm: true),
+        4: (name: "Free Fall",    triggersAlarm: true),
+        5: (name: "Tilted",       triggersAlarm: true),
+        6: (name: "Door Opening", triggersAlarm: true),
+        7: (name: "Door Closing", triggersAlarm: true),
     ]
-    
+
     /// Convert firmware motion type byte to iOS MotionEventType
     static func convert(firmwareType: UInt8) -> (eventType: MotionEventType, alarmSounded: Bool) {
         guard let config = typeTable[firmwareType] else {
-            // Unknown type - default to unknown
-            return (.unknown, false)
+            return (.none, false)
         }
-        
-        // Map to closest MotionEventType based on name
-        let eventType: MotionEventType
-        let name = config.name.lowercased()
-        
-        if name.contains("small") || name.contains("light") {
-            eventType = .lightMovement
-        } else if name.contains("medium") || name.contains("moderate") {
-            eventType = .moderateMovement
-        } else if name.contains("large") || name.contains("severe") {
-            eventType = .severeMovement
-        } else if name.contains("tamper") {
-            eventType = .tamper
-        } else {
-            eventType = .unknown
-        }
-        
+        let eventType = MotionEventType(rawValue: firmwareType) ?? .none
         return (eventType, config.triggersAlarm)
     }
-    
+
     /// Get display name for a firmware motion type
     static func getDisplayName(for firmwareType: UInt8) -> String {
         return typeTable[firmwareType]?.name ?? "Unknown Motion Type \(firmwareType)"

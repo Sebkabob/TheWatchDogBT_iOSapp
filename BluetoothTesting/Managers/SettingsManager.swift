@@ -6,19 +6,25 @@
 //
 
 import Foundation
+import Observation
 
-class SettingsManager: ObservableObject {
+@Observable
+class SettingsManager {
     static let shared = SettingsManager()
-    
-    // Published properties for UI binding
-    @Published var isArmed: Bool = false
-    @Published var alarmType: AlarmType = .normal
-    @Published var sensitivity: SensitivityLevel = .medium
-    @Published var lightsEnabled: Bool = true
-    @Published var loggingEnabled: Bool = false
-    @Published var disableAlarmWhenConnected: Bool = false
-    @Published var deviceName: String = "WatchDog"
-    @Published var debugModeEnabled: Bool = false
+
+    // Observable properties for UI binding
+    var isArmed: Bool = false
+    var alarmType: AlarmType = .normal
+    var sensitivity: SensitivityLevel = .medium
+    var lightsEnabled: Bool = true
+    var loggingEnabled: Bool = false
+    var disableAlarmWhenConnected: Bool = false
+    var deviceName: String = "WatchDog"
+    var debugModeEnabled: Bool = false
+    var highPerformanceMode: Bool = false
+    var liveOrientationEnabled: Bool = false
+    var devModeUnlocked: Bool = false
+    var dataLoggingMode: Bool = false
     
     // UserDefaults keys
     private let armedKey = "watchdog_armed"
@@ -29,6 +35,10 @@ class SettingsManager: ObservableObject {
     private let disableAlarmWhenConnectedKey = "watchdog_disable_alarm_connected"
     private let deviceNameKey = "watchdog_device_name"
     private let debugModeKey = "watchdog_debug_mode"
+    private let highPerformanceModeKey = "watchdog_high_performance_mode"
+    private let liveOrientationKey = "watchdog_live_orientation"
+    private let devModeUnlockedKey = "watchdog_dev_mode_unlocked"
+    private let dataLoggingModeKey = "watchdog_data_logging_mode"
     
     private init() {
         loadSettings()
@@ -78,6 +88,23 @@ class SettingsManager: ObservableObject {
         return byte
     }
     
+    /// Encodes deviceInfo into a single byte (byte 13)
+    /// Bit 0: High Performance Mode
+    func encodeDeviceInfo() -> UInt8 {
+        var byte: UInt8 = 0
+        if highPerformanceMode {
+            byte |= (1 << 0)
+        }
+        return byte
+    }
+
+    /// Decodes deviceInfo byte from WatchDog
+    func decodeDeviceInfo(from byte: UInt8) {
+        highPerformanceMode = (byte & (1 << 0)) != 0
+        print("  High Performance Mode: \(highPerformanceMode)")
+        saveSettings()
+    }
+
     /// Decodes a byte from WatchDog into settings
     func decodeSettings(from byte: UInt8) {
         print("📥 Decoding settings byte: 0x\(String(format: "%02X", byte))")
@@ -124,6 +151,10 @@ class SettingsManager: ObservableObject {
         UserDefaults.standard.set(disableAlarmWhenConnected, forKey: disableAlarmWhenConnectedKey)
         UserDefaults.standard.set(deviceName, forKey: deviceNameKey)
         UserDefaults.standard.set(debugModeEnabled, forKey: debugModeKey)
+        UserDefaults.standard.set(highPerformanceMode, forKey: highPerformanceModeKey)
+        UserDefaults.standard.set(liveOrientationEnabled, forKey: liveOrientationKey)
+        UserDefaults.standard.set(devModeUnlocked, forKey: devModeUnlockedKey)
+        UserDefaults.standard.set(dataLoggingMode, forKey: dataLoggingModeKey)
     }
     
     private func loadSettings() {
@@ -138,6 +169,34 @@ class SettingsManager: ObservableObject {
             debugModeEnabled = UserDefaults.standard.bool(forKey: debugModeKey)
         } else {
             debugModeEnabled = false
+        }
+
+        // High Performance Mode defaults to OFF
+        if UserDefaults.standard.object(forKey: highPerformanceModeKey) != nil {
+            highPerformanceMode = UserDefaults.standard.bool(forKey: highPerformanceModeKey)
+        } else {
+            highPerformanceMode = false
+        }
+
+        // Live Orientation defaults to OFF
+        if UserDefaults.standard.object(forKey: liveOrientationKey) != nil {
+            liveOrientationEnabled = UserDefaults.standard.bool(forKey: liveOrientationKey)
+        } else {
+            liveOrientationEnabled = false
+        }
+
+        // Dev Mode defaults to OFF
+        if UserDefaults.standard.object(forKey: devModeUnlockedKey) != nil {
+            devModeUnlocked = UserDefaults.standard.bool(forKey: devModeUnlockedKey)
+        } else {
+            devModeUnlocked = false
+        }
+
+        // Data Logging Mode defaults to OFF
+        if UserDefaults.standard.object(forKey: dataLoggingModeKey) != nil {
+            dataLoggingMode = UserDefaults.standard.bool(forKey: dataLoggingModeKey)
+        } else {
+            dataLoggingMode = false
         }
         
         if let alarmString = UserDefaults.standard.string(forKey: alarmTypeKey),
@@ -154,7 +213,9 @@ class SettingsManager: ObservableObject {
     /// Call this when user manually changes settings
     func updateSettings(name: String? = nil, armed: Bool? = nil, alarm: AlarmType? = nil,
                        sens: SensitivityLevel? = nil, lights: Bool? = nil, logging: Bool? = nil,
-                       disableAlarmConnected: Bool? = nil, debugMode: Bool? = nil) {
+                       disableAlarmConnected: Bool? = nil, debugMode: Bool? = nil,
+                       highPerformance: Bool? = nil, liveOrientation: Bool? = nil,
+                       dataLogging: Bool? = nil) {
         if let name = name { deviceName = name }
         if let armed = armed { isArmed = armed }
         if let alarm = alarm { alarmType = alarm }
@@ -163,7 +224,10 @@ class SettingsManager: ObservableObject {
         if let logging = logging { loggingEnabled = logging }
         if let disableAlarmConnected = disableAlarmConnected { disableAlarmWhenConnected = disableAlarmConnected }
         if let debugMode = debugMode { debugModeEnabled = debugMode }
-        
+        if let highPerformance = highPerformance { highPerformanceMode = highPerformance }
+        if let liveOrientation = liveOrientation { liveOrientationEnabled = liveOrientation }
+        if let dataLogging = dataLogging { dataLoggingMode = dataLogging }
+
         saveSettings()
     }
 }
