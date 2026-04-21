@@ -49,6 +49,28 @@ enum DeviceIcon: String, Codable, CaseIterable {
         }
     }
     
+    /// Default motion types that trigger alarm for this icon's use case
+    var defaultAlarmTriggers: Set<MotionEventType> {
+        switch self {
+        case .door:
+            return [.doorOpening, .doorClosing]
+        case .cabinet:
+            return [.doorOpening, .tilted]
+        case .bicycle, .skateboard, .scooter, .motorcycle:
+            return [.inMotion, .shaken, .impact, .freefall]
+        case .car:
+            return [.inMotion, .impact, .freefall]
+        case .bag, .backpack, .briefcase, .suitcase, .box:
+            return [.shaken, .impact, .freefall, .tilted]
+        case .house:
+            return [.doorOpening, .doorClosing, .impact, .shaken]
+        case .pill:
+            return [.doorOpening, .tilted, .shaken]
+        case .dog, .lockShield, .key:
+            return [.shaken, .impact, .freefall, .tilted, .doorOpening, .doorClosing]
+        }
+    }
+
     // Track which icons have .fill variants
     var hasFillVariant: Bool {
         switch self {

@@ -8,32 +8,22 @@
 import Foundation
 
 /// Configuration for motion types received from WatchDog
-/// Edit this table to change the display names and settings for each motion type
+/// Uses SettingsManager for user-configurable alarm triggers
 struct MotionTypeConfig {
-    
-    /// Motion type mapping table — values match MLC/FSM firmware enum
-    static let typeTable: [UInt8: (name: String, triggersAlarm: Bool)] = [
-        0: (name: "None",         triggersAlarm: false),
-        1: (name: "In Motion",    triggersAlarm: false),
-        2: (name: "Shaken",       triggersAlarm: true),
-        3: (name: "Impact",       triggersAlarm: true),
-        4: (name: "Free Fall",    triggersAlarm: true),
-        5: (name: "Tilted",       triggersAlarm: true),
-        6: (name: "Door Opening", triggersAlarm: true),
-        7: (name: "Door Closing", triggersAlarm: true),
-    ]
 
     /// Convert firmware motion type byte to iOS MotionEventType
+    /// Alarm trigger is determined by user's alarmTriggers setting
     static func convert(firmwareType: UInt8) -> (eventType: MotionEventType, alarmSounded: Bool) {
-        guard let config = typeTable[firmwareType] else {
-            return (.none, false)
-        }
         let eventType = MotionEventType(rawValue: firmwareType) ?? .none
-        return (eventType, config.triggersAlarm)
+        let triggers = SettingsManager.shared.shouldTriggerAlarm(for: eventType)
+        return (eventType, triggers)
     }
 
     /// Get display name for a firmware motion type
     static func getDisplayName(for firmwareType: UInt8) -> String {
-        return typeTable[firmwareType]?.name ?? "Unknown Motion Type \(firmwareType)"
+        let eventType = MotionEventType(rawValue: firmwareType) ?? .none
+        return eventType == .none && firmwareType != 0
+            ? "Unknown Motion Type \(firmwareType)"
+            : eventType.displayName
     }
 }

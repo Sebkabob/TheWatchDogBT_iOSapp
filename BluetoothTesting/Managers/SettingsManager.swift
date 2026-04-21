@@ -25,6 +25,8 @@ class SettingsManager {
     var liveOrientationEnabled: Bool = false
     var devModeUnlocked: Bool = false
     var dataLoggingMode: Bool = false
+    var alarmTriggers: Set<MotionEventType> = [.shaken, .impact, .freefall, .tilted, .doorOpening, .doorClosing]
+    var selectedPresetRawValue: String = "maxSecurity"
     
     // UserDefaults keys
     private let armedKey = "watchdog_armed"
@@ -39,6 +41,8 @@ class SettingsManager {
     private let liveOrientationKey = "watchdog_live_orientation"
     private let devModeUnlockedKey = "watchdog_dev_mode_unlocked"
     private let dataLoggingModeKey = "watchdog_data_logging_mode"
+    private let alarmTriggersKey = "watchdog_alarm_triggers"
+    private let selectedPresetKey = "watchdog_selected_preset"
     
     private init() {
         loadSettings()
@@ -155,6 +159,9 @@ class SettingsManager {
         UserDefaults.standard.set(liveOrientationEnabled, forKey: liveOrientationKey)
         UserDefaults.standard.set(devModeUnlocked, forKey: devModeUnlockedKey)
         UserDefaults.standard.set(dataLoggingMode, forKey: dataLoggingModeKey)
+        let triggerRawValues = alarmTriggers.map { $0.rawValue }
+        UserDefaults.standard.set(triggerRawValues, forKey: alarmTriggersKey)
+        UserDefaults.standard.set(selectedPresetRawValue, forKey: selectedPresetKey)
     }
     
     private func loadSettings() {
@@ -199,6 +206,14 @@ class SettingsManager {
             dataLoggingMode = false
         }
         
+        if let savedPreset = UserDefaults.standard.string(forKey: selectedPresetKey) {
+            selectedPresetRawValue = savedPreset
+        }
+
+        if let savedTriggers = UserDefaults.standard.array(forKey: alarmTriggersKey) as? [UInt8] {
+            alarmTriggers = Set(savedTriggers.compactMap { MotionEventType(rawValue: $0) })
+        }
+
         if let alarmString = UserDefaults.standard.string(forKey: alarmTypeKey),
            let alarm = AlarmType(rawValue: alarmString) {
             alarmType = alarm
@@ -215,7 +230,8 @@ class SettingsManager {
                        sens: SensitivityLevel? = nil, lights: Bool? = nil, logging: Bool? = nil,
                        disableAlarmConnected: Bool? = nil, debugMode: Bool? = nil,
                        highPerformance: Bool? = nil, liveOrientation: Bool? = nil,
-                       dataLogging: Bool? = nil) {
+                       dataLogging: Bool? = nil, triggers: Set<MotionEventType>? = nil,
+                       preset: String? = nil) {
         if let name = name { deviceName = name }
         if let armed = armed { isArmed = armed }
         if let alarm = alarm { alarmType = alarm }
@@ -227,8 +243,15 @@ class SettingsManager {
         if let highPerformance = highPerformance { highPerformanceMode = highPerformance }
         if let liveOrientation = liveOrientation { liveOrientationEnabled = liveOrientation }
         if let dataLogging = dataLogging { dataLoggingMode = dataLogging }
+        if let triggers = triggers { alarmTriggers = triggers }
+        if let preset = preset { selectedPresetRawValue = preset }
 
         saveSettings()
+    }
+
+    /// Check if a motion type should trigger alarm
+    func shouldTriggerAlarm(for motionType: MotionEventType) -> Bool {
+        alarmTriggers.contains(motionType)
     }
 }
 
