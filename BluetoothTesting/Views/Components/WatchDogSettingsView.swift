@@ -375,6 +375,18 @@ struct WatchDogSettingsView: View {
                 subtitle: "Record accel data to CSV for MLC training",
                 isOn: $dataLoggingMode
             )
+            Button {
+                dismiss()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    UserDefaults.standard.set(false, forKey: "hasSeenTutorial")
+                    NotificationCenter.default.post(name: .showTutorial, object: nil)
+                }
+            } label: {
+                HStack {
+                    Image(systemName: "questionmark.circle")
+                    Text("Show Tutorial")
+                }
+            }
         }
     }
 
