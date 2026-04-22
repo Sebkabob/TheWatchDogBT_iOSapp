@@ -126,6 +126,7 @@ struct AddNewDeviceView: View {
                                 ledColor: glowActive ? .systemBlue : .darkGray,
                                 ledIntensity: glowActive ? 1.0 : 0,
                                 gesturesEnabled: false,
+                                idleWobble: phase == .found(id),
                                 liveQuaternion: nil,
                                 onTap: phase == .found(id) ? { tapToPair(id) } : nil
                             )

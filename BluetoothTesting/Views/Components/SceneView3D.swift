@@ -17,6 +17,7 @@ struct SceneView3D: UIViewRepresentable {
     let ledIntensity: Double
     var gesturesEnabled: Bool = true
     var smoothRotation: Bool = false
+    var idleWobble: Bool = false
     var liveQuaternion: SCNVector4? = nil
     var onTap: (() -> Void)? = nil
 
@@ -37,8 +38,8 @@ struct SceneView3D: UIViewRepresentable {
         let ambientLight = SCNNode()
         ambientLight.light = SCNLight()
         ambientLight.light?.type = .ambient
-        ambientLight.light?.intensity = 150
-        ambientLight.light?.color = UIColor(white: 0.6, alpha: 1.0)
+        ambientLight.light?.intensity = 40
+        ambientLight.light?.color = UIColor(white: 0.5, alpha: 1.0)
         root.addChildNode(ambientLight)
 
         // Key light — strong, from upper-right side
@@ -105,21 +106,30 @@ struct SceneView3D: UIViewRepresentable {
             searchForLED(in: model, coordinator: context.coordinator)
         }
 
-        if let q = liveQuaternion {
-            SCNTransaction.begin()
-            SCNTransaction.animationDuration = 0.15
-            model.orientation = SCNQuaternion(q.x, q.y, q.z, q.w)
-            SCNTransaction.commit()
-        } else {
-            // Smooth transition back to gesture-driven orientation
-            SCNTransaction.begin()
-            SCNTransaction.animationDuration = smoothRotation ? 0.5 : 0
-            model.eulerAngles = SCNVector3(
-                Float(rotationX),
-                Float(rotationY),
-                Float(rotationZ)
-            )
-            SCNTransaction.commit()
+        // Manage idle wobble state
+        if idleWobble && !context.coordinator.isWobbling {
+            context.coordinator.startWobble()
+        } else if !idleWobble && context.coordinator.isWobbling {
+            context.coordinator.stopWobble()
+        }
+
+        // Only set rotation from bindings when not wobbling
+        if !context.coordinator.isWobbling {
+            if let q = liveQuaternion {
+                SCNTransaction.begin()
+                SCNTransaction.animationDuration = 0.15
+                model.orientation = SCNQuaternion(q.x, q.y, q.z, q.w)
+                SCNTransaction.commit()
+            } else {
+                SCNTransaction.begin()
+                SCNTransaction.animationDuration = smoothRotation ? 0.5 : 0
+                model.eulerAngles = SCNVector3(
+                    Float(rotationX),
+                    Float(rotationY),
+                    Float(rotationZ)
+                )
+                SCNTransaction.commit()
+            }
         }
 
         if let ledNode = context.coordinator.ledNode {
@@ -258,6 +268,7 @@ struct SceneView3D: UIViewRepresentable {
 
             for material in geometry.materials {
                 material.lightingModel = .physicallyBased
+                material.diffuse.contents = UIColor(white: 0.08, alpha: 1.0)
                 material.roughness.contents = roughnessMap   // varied matte texture
                 material.metalness.contents = 0.0
                 material.fresnelExponent = 1.0
@@ -444,6 +455,11 @@ struct SceneView3D: UIViewRepresentable {
         var hasSearchedForLED = false
         weak var sceneView: SCNView?
 
+        // Wobble state
+        var isWobbling = false
+        private var displayLink: CADisplayLink?
+        private var wobbleStartTime: CFTimeInterval = 0
+
         // Drag state
         private var dragStartRotationX: Double = 0
         private var dragStartRotationY: Double = 0
@@ -464,6 +480,51 @@ struct SceneView3D: UIViewRepresentable {
 
         deinit {
             springTimer?.invalidate()
+            displayLink?.invalidate()
+        }
+
+        // MARK: - Idle Wobble
+
+        func startWobble() {
+            guard !isWobbling else { return }
+            isWobbling = true
+            wobbleStartTime = CACurrentMediaTime()
+            displayLink = CADisplayLink(target: self, selector: #selector(wobbleFrame))
+            displayLink?.add(to: .main, forMode: .common)
+        }
+
+        func stopWobble() {
+            guard isWobbling else { return }
+            isWobbling = false
+            displayLink?.invalidate()
+            displayLink = nil
+
+            // Smoothly return to base rotation
+            if let model = modelNode {
+                SCNTransaction.begin()
+                SCNTransaction.animationDuration = 0.6
+                model.eulerAngles = SCNVector3(
+                    Float(parent.rotationX),
+                    Float(parent.rotationY),
+                    Float(parent.rotationZ)
+                )
+                SCNTransaction.commit()
+            }
+        }
+
+        @objc private func wobbleFrame() {
+            guard let model = modelNode else { return }
+            let t = CACurrentMediaTime() - wobbleStartTime
+
+            // Ramp up over 1 second for smooth start
+            let ramp = Float(min(t, 1.0))
+
+            // Different frequencies per axis for organic, non-repeating feel
+            let x = Float(sin(t * 1.2) * 0.06) * ramp
+            let y = Float(sin(t * 0.8) * 0.08) * ramp
+            let z = Float(sin(t * 0.5) * 0.04) * ramp
+
+            model.eulerAngles = SCNVector3(x, y, z)
         }
 
         // Only begin gesture if the touch lands on actual 3D geometry
