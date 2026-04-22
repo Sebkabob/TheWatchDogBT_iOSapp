@@ -36,6 +36,9 @@ struct AddNewDeviceView: View {
     @State private var modelVisible = false
     @State private var glowActive = false
     @State private var pairingDone = false
+    @State private var readyToShow = false
+    @State private var pairingStartTime: Date?
+    @State private var statusTextVisible = true
 
     // SceneView3D rotation
     @State private var rotX: Double = 0
@@ -44,7 +47,6 @@ struct AddNewDeviceView: View {
 
     // MARK: - Computed
 
-    /// Available (unbonded) devices sorted by signal strength
     private var availableDevices: [BluetoothDevice] {
         bluetoothManager.discoveredDevices
             .filter { !bondManager.isBonded(deviceID: $0.id) }
@@ -70,35 +72,110 @@ struct AddNewDeviceView: View {
         ZStack {
             Color.black.ignoresSafeArea()
 
+            // Match DevicePageView layout: header → model → controls
             VStack(spacing: 0) {
-                // Top status
-                statusText
-                    .padding(.top, 100)
-                    .animation(.easeInOut(duration: 0.4), value: phase)
 
-                Spacer()
+                // Top spacer — matches DevicePageView header height when connected
+                Color.clear
+                    .frame(height: 36)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 5)
+                    .padding(.bottom, 10)
 
-                // Center: spinner or 3D model
-                centerContent
+                // Model area — fills remaining space, same as DevicePageView's ZStack
+                ZStack {
+                    switch phase {
+                    case .searching:
+                        ProgressView()
+                            .tint(.white.opacity(0.5))
+                            .scaleEffect(1.5)
+                            .transition(.opacity)
 
-                Spacer()
+                    case .found(let id), .pairing(let id), .paired(let id):
+                        ZStack {
+                            // Faint white glow when discovered, blue glow when pairing
+                            if glowActive {
+                                Circle()
+                                    .fill(Color.blue)
+                                    .frame(width: 300, height: 300)
+                                    .blur(radius: 50)
+                                    .phaseAnimator([0.15, 0.35]) { content, phase in
+                                        content.opacity(phase)
+                                    } animation: { _ in
+                                        .easeInOut(duration: 1.2)
+                                    }
+                                    .transition(.opacity)
+                            } else if modelVisible {
+                                Circle()
+                                    .fill(Color.white)
+                                    .frame(width: 320, height: 320)
+                                    .blur(radius: 60)
+                                    .phaseAnimator([0.05, 0.12]) { content, phase in
+                                        content.opacity(phase)
+                                    } animation: { _ in
+                                        .easeInOut(duration: 2.0)
+                                    }
+                                    .transition(.opacity)
+                            }
 
-                // Cancel
-                if phase != .paired(phase.deviceID ?? UUID()) {
-                    Button("Cancel") { onCancel() }
-                        .font(.body)
-                        .foregroundColor(.white.opacity(0.4))
-                        .padding(.bottom, 50)
+                            SceneView3D(
+                                rotationX: $rotX,
+                                rotationY: $rotY,
+                                rotationZ: $rotZ,
+                                usdzFileName: "WatchDogBTCase_V2",
+                                ledColor: glowActive ? .systemBlue : .darkGray,
+                                ledIntensity: glowActive ? 1.0 : 0,
+                                gesturesEnabled: false,
+                                liveQuaternion: nil,
+                                onTap: phase == .found(id) ? { tapToPair(id) } : nil
+                            )
+                            .frame(maxWidth: .infinity)
+                        }
+                        .opacity(modelVisible ? 1 : 0)
+                        .animation(.easeInOut(duration: 0.8), value: modelVisible)
                         .transition(.opacity)
+                    }
+
+                    // Status text overlaid on model area
+                    VStack {
+                        statusText
+                            .padding(.top, 30)
+                            .animation(.easeInOut(duration: 0.4), value: phase)
+                            .opacity(statusTextVisible ? 1 : 0)
+                        Spacer()
+                    }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                // Bottom area — matches DevicePageView control section height
+                VStack(spacing: 12) {
+                    if case .paired = phase {
+                        Color.clear
+                    } else {
+                        Button("Cancel") { onCancel() }
+                            .font(.body)
+                            .foregroundColor(.white.opacity(0.4))
+                            .transition(.opacity)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 20)
+                .frame(height: 170)
             }
         }
         .onAppear {
             bluetoothManager.ensureScanning()
-            checkForDevice()
+            // Show "Searching..." for at least 1 second
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                readyToShow = true
+                checkForDevice()
+            }
         }
         .onChange(of: bluetoothManager.discoveredDevices.count) { _, _ in
-            checkForDevice()
+            if readyToShow {
+                checkForDevice()
+            }
         }
         .onChange(of: bluetoothManager.connectedDevice) { _, connected in
             guard let id = phase.deviceID,
@@ -108,7 +185,6 @@ struct AddNewDeviceView: View {
             completePairing(device: connected)
         }
         .onChange(of: bluetoothManager.isConnecting) { _, connecting in
-            // Connection attempt failed
             if !connecting,
                case .pairing(let id) = phase,
                bluetoothManager.connectedDevice?.id != id {
@@ -134,7 +210,7 @@ struct AddNewDeviceView: View {
             Text("Searching for WatchDogs...")
                 .font(.title3)
                 .foregroundColor(.white.opacity(0.5))
-        case .found(let id):
+        case .found:
             Text("Tap to pair")
                 .font(.title3)
                 .foregroundColor(.white.opacity(0.6))
@@ -151,52 +227,6 @@ struct AddNewDeviceView: View {
         }
     }
 
-    // MARK: - Center Content
-
-    @ViewBuilder
-    private var centerContent: some View {
-        switch phase {
-        case .searching:
-            ProgressView()
-                .tint(.white.opacity(0.5))
-                .scaleEffect(1.5)
-                .transition(.opacity)
-        case .found(let id), .pairing(let id), .paired(let id):
-            VStack(spacing: 20) {
-                ZStack {
-                    // Blue glow behind model
-                    if glowActive {
-                        Circle()
-                            .fill(Color.blue.opacity(0.25))
-                            .frame(width: 300, height: 300)
-                            .blur(radius: 50)
-                            .transition(.opacity)
-                    }
-
-                    SceneView3D(
-                        rotationX: $rotX,
-                        rotationY: $rotY,
-                        rotationZ: $rotZ,
-                        usdzFileName: "WatchDogBTCase_V2",
-                        ledColor: glowActive ? .systemBlue : .darkGray,
-                        ledIntensity: glowActive ? 1.0 : 0,
-                        gesturesEnabled: true,
-                        liveQuaternion: nil,
-                        onTap: phase == .found(id) ? { tapToPair(id) } : nil
-                    )
-                    .frame(height: 350)
-                }
-
-                Text(displayName(for: id))
-                    .font(.title3)
-                    .fontWeight(.medium)
-                    .foregroundColor(.white)
-            }
-            .opacity(modelVisible ? 1 : 0)
-            .animation(.easeInOut(duration: 0.8), value: modelVisible)
-        }
-    }
-
     // MARK: - Actions
 
     private func checkForDevice() {
@@ -206,7 +236,6 @@ struct AddNewDeviceView: View {
         withAnimation(.easeInOut(duration: 0.3)) {
             phase = .found(device.id)
         }
-        // Fade model in after phase changes
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             modelVisible = true
         }
@@ -217,6 +246,7 @@ struct AddNewDeviceView: View {
         guard let device = bleDevice(for: deviceID) else { return }
 
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        pairingStartTime = Date()
 
         withAnimation(.easeInOut(duration: 0.5)) {
             phase = .pairing(deviceID)
@@ -232,15 +262,28 @@ struct AddNewDeviceView: View {
 
         bondManager.addBond(deviceID: device.id, name: device.name)
 
-        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        // Ensure "Pairing..." shows for at least 1 second
+        let elapsed = pairingStartTime.map { Date().timeIntervalSince($0) } ?? 1.0
+        let remaining = max(0, 1.0 - elapsed)
 
-        withAnimation(.easeInOut(duration: 0.4)) {
-            phase = .paired(device.id)
-        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + remaining) {
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
 
-        // Brief pause on "Paired!" then transition
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-            onPaired(device.id)
+            withAnimation(.easeInOut(duration: 0.4)) {
+                phase = .paired(device.id)
+                glowActive = false
+            }
+
+            // Show "Paired!" for 1.25s, then fade text out over 0.25s
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.25) {
+                withAnimation(.easeOut(duration: 0.25)) {
+                    statusTextVisible = false
+                }
+                // After text fades, transition to device page
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    onPaired(device.id)
+                }
+            }
         }
     }
 }

@@ -27,6 +27,7 @@ struct MainAppView: View {
 
     // Pairing overlay
     @State private var showPairing = false
+    @State private var justPairedDeviceID: UUID?
 
     // Overview mode
     @State private var isOverviewMode = false
@@ -69,7 +70,8 @@ struct MainAppView: View {
                     DevicePageView(
                         bluetoothManager: bluetoothManager,
                         deviceID: device.id,
-                        onOverviewRequest: { enterOverviewMode() }
+                        onOverviewRequest: { enterOverviewMode() },
+                        animateEntrance: device.id == justPairedDeviceID
                     )
                     .tag(1 + index)
                 }
@@ -211,14 +213,21 @@ struct MainAppView: View {
     }
 
     private func handlePairingComplete(deviceID: UUID) {
+        justPairedDeviceID = deviceID
+
+        // Navigate to the device page behind the overlay
+        if let page = pageIndex(for: deviceID) {
+            currentPage = page
+        }
+
+        // Fade out the overlay to reveal the device page
         withAnimation(.easeInOut(duration: 0.5)) {
             showPairing = false
         }
-        // Navigate to the new device's page after overlay fades
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            if let page = pageIndex(for: deviceID) {
-                currentPage = page
-            }
+
+        // Clear the entrance flag after controls have animated in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            justPairedDeviceID = nil
         }
     }
 

@@ -15,7 +15,9 @@ struct DevicePageView: View {
     
     let deviceID: UUID
     var onOverviewRequest: (() -> Void)? = nil
+    var animateEntrance: Bool = false
 
+    @State private var controlsRevealed = true
     @State private var isLocked = true
     @State private var holdProgress: CGFloat = 0.0
     @State private var isHolding = false
@@ -54,7 +56,17 @@ struct DevicePageView: View {
 
     private let lightHaptic = UIImpactFeedbackGenerator(style: .light)
     private let heavyHaptic = UIImpactFeedbackGenerator(style: .heavy)
-    
+
+    // MARK: - Init
+
+    init(bluetoothManager: BluetoothManager, deviceID: UUID, onOverviewRequest: (() -> Void)? = nil, animateEntrance: Bool = false) {
+        self.bluetoothManager = bluetoothManager
+        self.deviceID = deviceID
+        self.onOverviewRequest = onOverviewRequest
+        self.animateEntrance = animateEntrance
+        _controlsRevealed = State(initialValue: !animateEntrance)
+    }
+
     // MARK: - Computed Properties
     
     /// Whether THIS device is the currently connected device
@@ -212,7 +224,9 @@ struct DevicePageView: View {
             .padding(.horizontal, 20)
             .padding(.top, 5)
             .padding(.bottom, 10)
-            
+            .opacity(controlsRevealed ? 1 : 0)
+            .animation(.easeInOut(duration: 0.4), value: controlsRevealed)
+
             // MARK: 3D Model Section with Debug Info
             ZStack(alignment: .leading) {
                 if isDeviceInRange {
@@ -288,6 +302,8 @@ struct DevicePageView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .trailing)
                     .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                    .opacity(controlsRevealed ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.4), value: controlsRevealed)
                 }
 
                 // Debug Info Box - Left side (only when connected and debug enabled)
@@ -361,9 +377,11 @@ struct DevicePageView: View {
                         .frame(width: 110)
                         .padding(.leading, 12)
                         .padding(.bottom, 50)
-                        
+
                         Spacer()
                     }
+                    .opacity(controlsRevealed ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.4), value: controlsRevealed)
                 }
             }
             .animation(.easeInOut(duration: 0.5), value: isDeviceInRange)
@@ -476,6 +494,8 @@ struct DevicePageView: View {
                 .padding(.bottom, 20)
             }
             .background(Color(.systemBackground))
+            .opacity(controlsRevealed ? 1 : 0)
+            .animation(.easeInOut(duration: 0.4), value: controlsRevealed)
         }
         .statusBar(hidden: true)
         .sheet(isPresented: $showMotionLogs) {
@@ -485,14 +505,23 @@ struct DevicePageView: View {
         }
         .onAppear {
             isLocked = settingsManager.isArmed
-            
+
             print("🎬 DevicePageView appeared - deviceID=\(deviceID.uuidString.prefix(8)), connected=\(isDeviceConnected), inRange=\(isDeviceInRange)")
-            
+
             // Always try to show model if in range
             updateModelVisibility()
-            
+
             if isDeviceConnected {
                 startGraphUpdates()
+            }
+
+            // Entrance animation after pairing transition
+            if animateEntrance {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    withAnimation(.easeInOut(duration: 0.4)) {
+                        controlsRevealed = true
+                    }
+                }
             }
         }
         .onDisappear {
