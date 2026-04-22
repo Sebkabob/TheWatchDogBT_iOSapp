@@ -25,6 +25,9 @@ struct MainAppView: View {
     @State private var hasInitialized = false
     @State private var scanWatchdogTimer: Timer?
 
+    // Pairing overlay
+    @State private var showPairing = false
+
     // Overview mode
     @State private var isOverviewMode = false
     @State private var deviceToRemove: UUID?
@@ -55,9 +58,9 @@ struct MainAppView: View {
     var body: some View {
         ZStack {
             TabView(selection: $currentPage) {
-                AddDevicePage(bluetoothManager: bluetoothManager, onSheetDismissed: {
-                    if currentPage == 0 && !sortedDevices.isEmpty {
-                        currentPage = sortedDevices.count
+                AddDevicePage(bluetoothManager: bluetoothManager, onAddTapped: {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showPairing = true
                     }
                 })
                     .tag(0)
@@ -89,6 +92,23 @@ struct MainAppView: View {
                     onDismiss: { dismissOverviewMode() }
                 )
                 .transition(.opacity)
+            }
+
+            // Full-screen pairing overlay
+            if showPairing {
+                AddNewDeviceView(
+                    bluetoothManager: bluetoothManager,
+                    onPaired: { deviceID in
+                        handlePairingComplete(deviceID: deviceID)
+                    },
+                    onCancel: {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            showPairing = false
+                        }
+                    }
+                )
+                .transition(.opacity)
+                .zIndex(10)
             }
         }
         .onAppear {
@@ -190,6 +210,18 @@ struct MainAppView: View {
         }
     }
 
+    private func handlePairingComplete(deviceID: UUID) {
+        withAnimation(.easeInOut(duration: 0.5)) {
+            showPairing = false
+        }
+        // Navigate to the new device's page after overlay fades
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            if let page = pageIndex(for: deviceID) {
+                currentPage = page
+            }
+        }
+    }
+
     /// Simple watchdog: every 5 seconds, call ensureScanning().
     /// ensureScanning() is idempotent so this is always safe.
     private func startScanWatchdog() {
@@ -205,13 +237,12 @@ struct MainAppView: View {
 // MARK: - Add Device Page
 struct AddDevicePage: View {
     var bluetoothManager: BluetoothManager
-    var onSheetDismissed: (() -> Void)? = nil
-    @State private var showAddDevice = false
+    var onAddTapped: () -> Void
 
     var body: some View {
         VStack(spacing: 24) {
             Spacer()
-            Button(action: { showAddDevice = true }) {
+            Button(action: { onAddTapped() }) {
                 VStack(spacing: 16) {
                     ZStack {
                         Circle()
@@ -231,11 +262,6 @@ struct AddDevicePage: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .sheet(isPresented: $showAddDevice, onDismiss: {
-            onSheetDismissed?()
-        }) {
-            AddNewDeviceView(bluetoothManager: bluetoothManager)
-        }
     }
 }
 

@@ -131,8 +131,17 @@ struct BondedDevicesListView: View {
                 }
             }
         }
-        .sheet(isPresented: $showAddDevice) {
-            AddNewDeviceView(bluetoothManager: bluetoothManager)
+        .fullScreenCover(isPresented: $showAddDevice) {
+            AddNewDeviceView(
+                bluetoothManager: bluetoothManager,
+                onPaired: { deviceID in
+                    showAddDevice = false
+                    navigationPath.append(deviceID)
+                },
+                onCancel: {
+                    showAddDevice = false
+                }
+            )
         }
         .onAppear {
             print("🏠 BondedDevicesListView: View appeared")

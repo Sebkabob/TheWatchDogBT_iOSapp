@@ -6,382 +6,249 @@
 //
 
 import SwiftUI
+import SceneKit
 
 struct AddNewDeviceView: View {
-    @Environment(\.dismiss) var dismiss
     var bluetoothManager: BluetoothManager
+    var onPaired: (UUID) -> Void
+    var onCancel: () -> Void
+
     private let bondManager = BondManager.shared
     private let nameManager = DeviceNameManager.shared
-    
-    @State private var showErrorAlert = false
-    @State private var errorMessage = ""
-    @State private var bondedDeviceName = ""
-    @State private var connectingDeviceID: UUID?
-    @State private var pairingCompleted = false
-    
-    // Naming prompt for new devices
-    @State private var showNamingPrompt = false
-    @State private var newDeviceName = ""
-    @State private var deviceToPair: BluetoothDevice?
-    
-    // Filter out already bonded devices
+
+    // MARK: - State
+
+    enum PairingPhase: Equatable {
+        case searching
+        case found(UUID)
+        case pairing(UUID)
+        case paired(UUID)
+
+        var deviceID: UUID? {
+            switch self {
+            case .searching: return nil
+            case .found(let id), .pairing(let id), .paired(let id): return id
+            }
+        }
+    }
+
+    @State private var phase: PairingPhase = .searching
+    @State private var modelVisible = false
+    @State private var glowActive = false
+    @State private var pairingDone = false
+
+    // SceneView3D rotation
+    @State private var rotX: Double = 0
+    @State private var rotY: Double = 0
+    @State private var rotZ: Double = 0
+
+    // MARK: - Computed
+
+    /// Available (unbonded) devices sorted by signal strength
     private var availableDevices: [BluetoothDevice] {
-        bluetoothManager.discoveredDevices.filter { device in
-            !bondManager.isBonded(deviceID: device.id)
-        }.sorted { device1, device2 in
-            let name1 = nameManager.getDisplayName(deviceID: device1.id, advertisingName: device1.name)
-            let name2 = nameManager.getDisplayName(deviceID: device2.id, advertisingName: device2.name)
-            return name1 < name2
-        }
+        bluetoothManager.discoveredDevices
+            .filter { !bondManager.isBonded(deviceID: $0.id) }
+            .sorted { $0.rssi > $1.rssi }
     }
-    
+
+    private func displayName(for deviceID: UUID) -> String {
+        if nameManager.hasCustomName(deviceID: deviceID) {
+            if let device = bluetoothManager.discoveredDevices.first(where: { $0.id == deviceID }) {
+                return nameManager.getDisplayName(deviceID: deviceID, advertisingName: device.name)
+            }
+        }
+        return "WatchDog"
+    }
+
+    private func bleDevice(for id: UUID) -> BluetoothDevice? {
+        bluetoothManager.discoveredDevices.first { $0.id == id }
+    }
+
+    // MARK: - Body
+
     var body: some View {
-        NavigationStack {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                // Top status
+                statusText
+                    .padding(.top, 100)
+                    .animation(.easeInOut(duration: 0.4), value: phase)
+
+                Spacer()
+
+                // Center: spinner or 3D model
+                centerContent
+
+                Spacer()
+
+                // Cancel
+                if phase != .paired(phase.deviceID ?? UUID()) {
+                    Button("Cancel") { onCancel() }
+                        .font(.body)
+                        .foregroundColor(.white.opacity(0.4))
+                        .padding(.bottom, 50)
+                        .transition(.opacity)
+                }
+            }
+        }
+        .onAppear {
+            bluetoothManager.ensureScanning()
+            checkForDevice()
+        }
+        .onChange(of: bluetoothManager.discoveredDevices.count) { _, _ in
+            checkForDevice()
+        }
+        .onChange(of: bluetoothManager.connectedDevice) { _, connected in
+            guard let id = phase.deviceID,
+                  case .pairing = phase,
+                  let connected,
+                  connected.id == id else { return }
+            completePairing(device: connected)
+        }
+        .onChange(of: bluetoothManager.isConnecting) { _, connecting in
+            // Connection attempt failed
+            if !connecting,
+               case .pairing(let id) = phase,
+               bluetoothManager.connectedDevice?.id != id {
+                withAnimation(.easeInOut(duration: 0.4)) {
+                    glowActive = false
+                    if !availableDevices.isEmpty {
+                        phase = .found(id)
+                    } else {
+                        modelVisible = false
+                        phase = .searching
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Status Text
+
+    @ViewBuilder
+    private var statusText: some View {
+        switch phase {
+        case .searching:
+            Text("Searching for WatchDogs...")
+                .font(.title3)
+                .foregroundColor(.white.opacity(0.5))
+        case .found(let id):
+            Text("Tap to pair")
+                .font(.title3)
+                .foregroundColor(.white.opacity(0.6))
+        case .pairing:
+            Text("Pairing...")
+                .font(.title3)
+                .fontWeight(.medium)
+                .foregroundColor(.blue)
+        case .paired:
+            Text("Paired!")
+                .font(.title3)
+                .fontWeight(.medium)
+                .foregroundColor(.green)
+        }
+    }
+
+    // MARK: - Center Content
+
+    @ViewBuilder
+    private var centerContent: some View {
+        switch phase {
+        case .searching:
+            ProgressView()
+                .tint(.white.opacity(0.5))
+                .scaleEffect(1.5)
+                .transition(.opacity)
+        case .found(let id), .pairing(let id), .paired(let id):
             VStack(spacing: 20) {
-                // Status indicator
-                HStack {
-                    Circle()
-                        .fill(bluetoothManager.isScanning ? Color.green : Color.gray)
-                        .frame(width: 12, height: 12)
-                    Text(bluetoothManager.isScanning ? "Scanning..." : "Not Scanning")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
-                .padding(.top)
-                
-                // Device list
-                if availableDevices.isEmpty && bluetoothManager.isScanning {
-                    Spacer()
-                    VStack(spacing: 10) {
-                        ProgressView()
-                            .scaleEffect(1.5)
-                        Text("Sniffing for WatchDogs...")
-                            .foregroundColor(.secondary)
-                            .padding()
-                        Text("Make sure your WatchDog is nearby")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                ZStack {
+                    // Blue glow behind model
+                    if glowActive {
+                        Circle()
+                            .fill(Color.blue.opacity(0.25))
+                            .frame(width: 300, height: 300)
+                            .blur(radius: 50)
+                            .transition(.opacity)
                     }
-                    Spacer()
-                } else if availableDevices.isEmpty {
-                    Spacer()
-                    VStack(spacing: 10) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 60))
-                            .foregroundColor(.gray)
-                        Text("No new devices found")
-                            .font(.headline)
-                        Text("All nearby WatchDogs are already bonded")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal)
-                    }
-                    Spacer()
-                } else {
-                    List(availableDevices) { device in
-                        let displayName = nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
-                        NewDeviceRow(
-                            device: device,
-                            displayName: displayName,
-                            isConnecting: connectingDeviceID == device.id
-                        ) {
-                            handleDeviceTap(device)
-                        }
-                    }
+
+                    SceneView3D(
+                        rotationX: $rotX,
+                        rotationY: $rotY,
+                        rotationZ: $rotZ,
+                        usdzFileName: "WatchDogBTCase_V2",
+                        ledColor: glowActive ? .systemBlue : .darkGray,
+                        ledIntensity: glowActive ? 1.0 : 0,
+                        gesturesEnabled: true,
+                        liveQuaternion: nil,
+                        onTap: phase == .found(id) ? { tapToPair(id) } : nil
+                    )
+                    .frame(height: 350)
                 }
-                
-                if !bluetoothManager.isBluetoothReady {
-                    Text("Bluetooth is not available")
-                        .foregroundColor(.red)
-                        .padding()
-                }
+
+                Text(displayName(for: id))
+                    .font(.title3)
+                    .fontWeight(.medium)
+                    .foregroundColor(.white)
             }
-            .navigationTitle("Add WatchDog")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                }
-            }
-            .onAppear {
-                bluetoothManager.startScanning()
-            }
-            .onDisappear {
-                bluetoothManager.stopScanning()
-            }
-            .onChange(of: bluetoothManager.connectedDevice) { _, connectedDevice in
-                // Add bond IMMEDIATELY when connection succeeds
-                if let deviceID = connectingDeviceID,
-                   let connected = connectedDevice,
-                   connected.id == deviceID,
-                   !pairingCompleted {
-                    
-                    print("✅ Device connected - completing pairing")
-                    completePairing(device: connected)
-                }
-            }
-            .alert("Pairing Failed", isPresented: $showErrorAlert) {
-                Button("OK", role: .cancel) {
-                    connectingDeviceID = nil
-                }
-            } message: {
-                Text(errorMessage)
-            }
-            .sheet(isPresented: $showNamingPrompt) {
-                NameYourWatchDogSheet(
-                    deviceName: $newDeviceName,
-                    onSave: {
-                        print("💾 User clicked Save in naming sheet")
-                        // Set custom name then start pairing
-                        if let device = deviceToPair {
-                            let trimmedName = newDeviceName.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if !trimmedName.isEmpty {
-                                nameManager.setCustomName(deviceID: device.id, name: trimmedName)
-                                bondedDeviceName = trimmedName
-                                print("✅ Set custom name: \(trimmedName)")
-                            } else {
-                                bondedDeviceName = device.name
-                            }
-                            startPairing(device: device)
-                        }
-                    },
-                    onSkip: {
-                        print("⏭️ User clicked Skip in naming sheet")
-                        // Don't set custom name, just use BT name and start pairing
-                        if let device = deviceToPair {
-                            bondedDeviceName = device.name
-                            startPairing(device: device)
-                        }
-                    }
-                )
-            }
+            .opacity(modelVisible ? 1 : 0)
+            .animation(.easeInOut(duration: 0.8), value: modelVisible)
         }
     }
-    
-    private func handleDeviceTap(_ device: BluetoothDevice) {
-        let displayName = nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
-        
-        // Check if this device has been named before
-        let hasBeenNamedBefore = nameManager.hasCustomName(deviceID: device.id)
-        
-        if hasBeenNamedBefore {
-            // Already named - just pair directly
-            print("🔗 Device already named - pairing directly with: \(displayName)")
-            bondedDeviceName = displayName
-            startPairing(device: device)
-        } else {
-            // New device - prompt for name FIRST
-            print("📝 New device detected - showing naming prompt BEFORE pairing")
-            deviceToPair = device
-            newDeviceName = device.name  // Pre-fill with BT name
-            bondedDeviceName = device.name  // Default to BT name in case they skip
-            showNamingPrompt = true
+
+    // MARK: - Actions
+
+    private func checkForDevice() {
+        guard case .searching = phase else { return }
+        guard let device = availableDevices.first else { return }
+
+        withAnimation(.easeInOut(duration: 0.3)) {
+            phase = .found(device.id)
+        }
+        // Fade model in after phase changes
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            modelVisible = true
         }
     }
-    
-    private func startPairing(device: BluetoothDevice) {
-        print("🔗 Starting pairing process for: \(bondedDeviceName)")
-        connectingDeviceID = device.id
-        pairingCompleted = false
-        
-        // Connect to device
+
+    private func tapToPair(_ deviceID: UUID) {
+        guard case .found = phase else { return }
+        guard let device = bleDevice(for: deviceID) else { return }
+
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+
+        withAnimation(.easeInOut(duration: 0.5)) {
+            phase = .pairing(deviceID)
+            glowActive = true
+        }
+
         bluetoothManager.connect(to: device)
     }
-    
+
     private func completePairing(device: BluetoothDevice) {
-        guard !pairingCompleted else {
-            print("⚠️ Pairing already completed, skipping")
-            return
-        }
+        guard !pairingDone else { return }
+        pairingDone = true
 
-        pairingCompleted = true
-        print("✅ Pairing complete for: \(device.name)")
-
-        // Add bond IMMEDIATELY
         bondManager.addBond(deviceID: device.id, name: device.name)
 
-        print("✅ Device added to bond list: \(device.name)")
-        print("📋 Total bonded devices: \(bondManager.bondedDevices.count)")
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
 
-        // Clear connecting state
-        connectingDeviceID = nil
-        deviceToPair = nil
-
-        print("✅ Successfully bonded and staying connected to \(bondedDeviceName)")
-
-        // Dismiss immediately — MainAppView will navigate to the new device page.
-        // This avoids showing the empty device list (bonded device is filtered out)
-        // and eliminates the extra alert → dismiss → pager-jump sequence.
-        dismiss()
-    }
-}
-
-struct NewDeviceRow: View {
-    let device: BluetoothDevice
-    let displayName: String
-    let isConnecting: Bool
-    let onTap: () -> Void
-    
-    @State private var isPressed = false
-    
-    var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 8) {
-                    Text(displayName)
-                        .font(.headline)
-                        .foregroundColor(.primary)
-                    
-                    SignalStrengthIndicator(rssi: device.rssi)
-                }
-                
-                Text(String(device.id.uuidString.prefix(8)))
-                    .font(.caption2)
-                    .foregroundColor(.gray)
-                    .monospaced()
-                
-                Text(isConnecting ? "Pairing..." : "Tap to pair")
-                    .font(.caption)
-                    .foregroundColor(isConnecting ? .orange : .blue)
-            }
-            
-            Spacer()
-            
-            if isConnecting {
-                ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: .blue))
-                    .scaleEffect(0.8)
-            } else {
-                Image(systemName: "plus.circle.fill")
-                    .foregroundColor(.blue)
-                    .font(.title2)
-            }
+        withAnimation(.easeInOut(duration: 0.4)) {
+            phase = .paired(device.id)
         }
-        .padding(.vertical, 12)
-        .padding(.horizontal, 16)
-        .background(isPressed ? Color.blue.opacity(0.15) : Color(.systemBackground))
-        .cornerRadius(10)
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.gray.opacity(0.2), lineWidth: 1)
-        )
-        .contentShape(Rectangle())
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in
-                    if !isPressed && !isConnecting {
-                        isPressed = true
-                        let generator = UIImpactFeedbackGenerator(style: .soft)
-                        generator.impactOccurred()
-                    }
-                }
-                .onEnded { _ in
-                    if !isConnecting {
-                        isPressed = false
-                        onTap()
-                    }
-                }
-        )
-        .animation(.easeInOut(duration: 0.05), value: isPressed)
-        .disabled(isConnecting)
+
+        // Brief pause on "Paired!" then transition
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            onPaired(device.id)
+        }
     }
 }
 
 #Preview {
-    AddNewDeviceView(bluetoothManager: BluetoothManager())
-}
-
-// MARK: - Name Your WatchDog Sheet
-struct NameYourWatchDogSheet: View {
-    @Environment(\.dismiss) var dismiss
-    @Binding var deviceName: String
-    let onSave: () -> Void
-    let onSkip: () -> Void
-    
-    private let maxNameLength = 16
-    
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 24) {
-                // Icon
-                Image(systemName: "tag.fill")
-                    .font(.system(size: 60))
-                    .foregroundColor(.blue)
-                    .padding(.top, 40)
-                
-                // Title
-                Text("Name Your WatchDog")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                
-                // Description
-                Text("Give this WatchDog a unique name so you don't mix them up with others.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
-                
-                // Text field
-                VStack(alignment: .leading, spacing: 8) {
-                    TextField("WatchDog Name", text: $deviceName)
-                        .textFieldStyle(.roundedBorder)
-                        .padding(.horizontal, 32)
-                        .onChange(of: deviceName) { _, newValue in
-                            if newValue.count > maxNameLength {
-                                deviceName = String(newValue.prefix(maxNameLength))
-                            }
-                        }
-                    
-                    Text("\(deviceName.count)/\(maxNameLength) characters")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 32)
-                }
-                .padding(.top, 8)
-                
-                Spacer()
-                
-                // Buttons
-                VStack(spacing: 12) {
-                    Button(action: {
-                        dismiss()
-                        // Add delay to allow sheet to fully dismiss before pairing
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                            onSave()
-                        }
-                    }) {
-                        Text("Save Name & Pair")
-                            .font(.headline)
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(Color.blue)
-                            .cornerRadius(12)
-                    }
-                    
-                    Button(action: {
-                        dismiss()
-                        onSkip()
-                    }) {
-                        Text("Skip & Pair Now")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                .padding(.horizontal, 32)
-                .padding(.bottom, 32)
-            }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                }
-            }
-        }
-    }
+    AddNewDeviceView(
+        bluetoothManager: BluetoothManager(),
+        onPaired: { _ in },
+        onCancel: { }
+    )
 }
