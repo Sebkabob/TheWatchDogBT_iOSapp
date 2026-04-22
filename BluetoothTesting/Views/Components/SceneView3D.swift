@@ -18,6 +18,7 @@ struct SceneView3D: UIViewRepresentable {
     var gesturesEnabled: Bool = true
     var smoothRotation: Bool = false
     var idleWobble: Bool = false
+    var wobbleIntensity: Double = 1.0
     var liveQuaternion: SCNVector4? = nil
     var onTap: (() -> Void)? = nil
 
@@ -517,7 +518,8 @@ struct SceneView3D: UIViewRepresentable {
             let t = CACurrentMediaTime() - wobbleStartTime
 
             // Ramp up over 1 second for smooth start
-            let ramp = Float(min(t, 1.0))
+            let intensity = Float(parent.wobbleIntensity)
+            let ramp = Float(min(t, 1.0)) * intensity
 
             // Different frequencies per axis for organic, non-repeating feel
             let x = Float(sin(t * 1.2) * 0.06) * ramp

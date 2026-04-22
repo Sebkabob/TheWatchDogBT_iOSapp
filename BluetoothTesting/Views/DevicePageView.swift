@@ -235,6 +235,8 @@ struct DevicePageView: View {
                         Motion3DView(
                             bluetoothManager: bluetoothManager,
                             allowSettingsTap: isDeviceConnected,
+                            idleWobble: isDeviceConnected,
+                            wobbleIntensity: 0.3,
                             targetDeviceID: deviceID
                         )
                         .frame(maxWidth: .infinity)

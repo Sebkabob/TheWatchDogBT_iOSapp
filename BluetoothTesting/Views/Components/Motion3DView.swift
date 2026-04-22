@@ -21,25 +21,35 @@ struct Motion3DView: View {
     let usdzFileName = "WatchDogBTCase_V2"
     var bluetoothManager: BluetoothManager
     var allowSettingsTap: Bool = true
+    var idleWobble: Bool = false
+    var wobbleIntensity: Double = 1.0
     var targetDeviceID: UUID? = nil
 
     private var settingsManager: SettingsManager { SettingsManager.shared }
     private var isLiveOrientation: Bool { settingsManager.liveOrientationEnabled }
 
+    private var sceneView: some View {
+        let wobbleEnabled = idleWobble && !isLiveOrientation
+        let tapAction: (() -> Void)? = allowSettingsTap ? { showSettings = true } : nil
+        return SceneView3D(
+            rotationX: $currentRotationX,
+            rotationY: $currentRotationY,
+            rotationZ: $currentRotationZ,
+            usdzFileName: usdzFileName,
+            ledColor: ledAnimator.outputColor,
+            ledIntensity: ledAnimator.outputIntensity,
+            gesturesEnabled: !isLiveOrientation,
+            idleWobble: wobbleEnabled,
+            wobbleIntensity: wobbleIntensity,
+            liveQuaternion: liveQuaternion,
+            onTap: tapAction
+        )
+        .ignoresSafeArea()
+    }
+
     var body: some View {
         ZStack {
-            SceneView3D(
-                rotationX: $currentRotationX,
-                rotationY: $currentRotationY,
-                rotationZ: $currentRotationZ,
-                usdzFileName: usdzFileName,
-                ledColor: ledAnimator.outputColor,
-                ledIntensity: ledAnimator.outputIntensity,
-                gesturesEnabled: !isLiveOrientation,
-                liveQuaternion: liveQuaternion,
-                onTap: allowSettingsTap ? { showSettings = true } : nil
-            )
-            .ignoresSafeArea()
+            sceneView
         }
         .sheet(isPresented: $showSettings) {
             WatchDogSettingsView(
