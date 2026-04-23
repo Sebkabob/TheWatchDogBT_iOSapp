@@ -28,6 +28,8 @@ class LEDAnimator {
     var lightsEnabled: Bool = true
     var isArmed: Bool = false
     var isConnected: Bool = false
+    var mlcState: MLCState = .unknown
+    var silenceEnabled: Bool = false
 
     // MARK: - Private animation state
 
@@ -55,7 +57,7 @@ class LEDAnimator {
     // MARK: - State machine
 
     private enum DisplayState: Equatable {
-        case off, findMy, charging, charged, alarmLoud, alarmCalm, locked, rainbow
+        case off, findMy, charging, charged, alarmLoud, alarmCalm, stabilizing, locked, rainbow
     }
 
     private func resolveState() -> DisplayState {
@@ -65,12 +67,15 @@ class LEDAnimator {
         // Priority 2 — Cable plugged + actively charging → orange pulse
         if isCablePlugged && isCharging { return .charging }
 
-        // Priority 3 — Cable plugged + fully charged → green pulse
-        if isCablePlugged && isBatteryFull { return .charged }
+        // Priority 3 — Cable plugged + full → solid green
+        if isCablePlugged && !isCharging { return .charged }
 
-        // Priority 4–6 — Alarm active
+        // Priority 4 — Not connected → off
+        if !isConnected { return .off }
+
+        // Priority 5 — Alarm active
         if isAlarmActive {
-            guard lightsEnabled else { return .off }
+            guard lightsEnabled && !silenceEnabled else { return .off }
             switch alarmType {
             case .loud:          return .alarmLoud
             case .calm, .normal: return .alarmCalm
@@ -78,15 +83,18 @@ class LEDAnimator {
             }
         }
 
-        // Priority 7 — Locked / Armed (no alarm)
+        // Priority 6 — Armed states
         if isArmed {
-            guard isConnected && lightsEnabled else { return .off }
-            return .locked
+            // Stabilizing (transitioning to locked)
+            if mlcState == .stabilizing {
+                return lightsEnabled ? .stabilizing : .off
+            }
+            // Locked
+            return (lightsEnabled && isConnected) ? .locked : .off
         }
 
-        // Priority 8–10 — Connected idle or fully off
-        guard isConnected && lightsEnabled else { return .off }
-        return .rainbow
+        // Priority 7 — Connected idle
+        return lightsEnabled ? .rainbow : .off
     }
 
     // MARK: - Animation tick (~60 fps)
@@ -107,37 +115,42 @@ class LEDAnimator {
             outputColor = .black
 
         case .findMy:
-            // Solid green while Find My is active
+            // Solid green while Find My tone is active
             outputColor = UIColor(red: 0, green: 1, blue: 0, alpha: 1)
             outputIntensity = 1.0
 
         case .charging:
-            // Slow orange pulse, 4 000 ms full cycle (255, 100, 0)
+            // Orange triangular pulse, 4000 ms full cycle (255, 100, 0)
             outputColor = UIColor(red: 1.0, green: 100.0 / 255.0, blue: 0, alpha: 1)
-            outputIntensity = sineValue(t: t, cycle: 4.0)
+            outputIntensity = triangleValue(t: t, cycle: 4.0)
 
         case .charged:
-            // Slow green pulse, 4 000 ms full cycle (0, 255, 0)
+            // Solid green (0, 255, 0)
             outputColor = UIColor(red: 0, green: 1, blue: 0, alpha: 1)
-            outputIntensity = sineValue(t: t, cycle: 4.0)
+            outputIntensity = 1.0
 
         case .alarmLoud:
-            // Amber/yellow binary flash, toggle every 125 ms (255, 225, 0)
+            // Yellow binary flash, 125 ms on/off (255, 225, 0)
             outputColor = UIColor(red: 1.0, green: 225.0 / 255.0, blue: 0, alpha: 1)
             outputIntensity = flashValue(t: t, halfPeriod: 0.125)
 
         case .alarmCalm:
-            // Red binary flash, toggle every 300 ms (255, 0, 0)
+            // Red binary flash, 300 ms on/off (255, 0, 0)
             outputColor = UIColor(red: 1.0, green: 0, blue: 0, alpha: 1)
             outputIntensity = flashValue(t: t, halfPeriod: 0.300)
 
+        case .stabilizing:
+            // Blue triangular pulse, 1000 ms full cycle (0, 0, 255)
+            outputColor = UIColor(red: 0, green: 0, blue: 1, alpha: 1)
+            outputIntensity = triangleValue(t: t, cycle: 1.0)
+
         case .locked:
-            // Slow red pulse, ≈ 1 700 ms cycle (step ±3/10 ms)
+            // Red triangular pulse, ~1700 ms cycle (step ±3/10 ms)
             outputColor = UIColor(red: 1.0, green: 0, blue: 0, alpha: 1)
-            outputIntensity = sineValue(t: t, cycle: 1.7)
+            outputIntensity = triangleValue(t: t, cycle: 1.7)
 
         case .rainbow:
-            // Smooth hue rotation: red→yellow→green→cyan→blue→magenta, 1 500 ms cycle
+            // 6-phase color wheel, ~1530 ms cycle
             let (r, g, b) = rainbowRGB(t: t)
             outputColor = UIColor(red: r, green: g, blue: b, alpha: 1)
             outputIntensity = 1.0
@@ -146,10 +159,15 @@ class LEDAnimator {
 
     // MARK: - Animation helpers
 
-    /// Sine-shaped fade 0 → 1 → 0 over `cycle` seconds, starting at 0.
-    private func sineValue(t: Double, cycle: Double) -> Double {
+    /// Triangular wave 0 → 1 → 0 over `cycle` seconds (matches firmware linear ramp).
+    private func triangleValue(t: Double, cycle: Double) -> Double {
         let phase = t.truncatingRemainder(dividingBy: cycle)
-        return (sin(phase * .pi * 2 / cycle - .pi / 2) + 1) / 2
+        let half = cycle / 2.0
+        if phase < half {
+            return phase / half
+        } else {
+            return 1.0 - (phase - half) / half
+        }
     }
 
     /// Binary on/off: on for `halfPeriod` seconds, off for `halfPeriod` seconds.
@@ -157,10 +175,10 @@ class LEDAnimator {
         return Int(t / halfPeriod) % 2 == 0 ? 1.0 : 0.0
     }
 
-    /// 6-phase hue wheel: each phase is 50 steps × 5 ms = 250 ms, full cycle 1 500 ms.
+    /// 6-phase hue wheel: each phase is 51 steps × 5 ms = 255 ms, full cycle ~1530 ms.
     private func rainbowRGB(t: Double) -> (CGFloat, CGFloat, CGFloat) {
-        let phaseDuration = 0.25           // 250 ms per phase
-        let totalCycle    = 6 * phaseDuration  // 1 500 ms
+        let phaseDuration = 0.255          // 255 ms per phase
+        let totalCycle    = 6 * phaseDuration  // ~1530 ms
         let wrapped  = t.truncatingRemainder(dividingBy: totalCycle)
         let phaseIdx = Int(wrapped / phaseDuration) % 6
         let frac     = CGFloat((wrapped - Double(phaseIdx) * phaseDuration) / phaseDuration)

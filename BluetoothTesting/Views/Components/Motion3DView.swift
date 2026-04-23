@@ -72,9 +72,11 @@ struct Motion3DView: View {
         .onChange(of: bluetoothManager.isAlarmActive)  { syncAnimatorState() }
         .onChange(of: bluetoothManager.isFindMyActive) { syncAnimatorState() }
         .onChange(of: bluetoothManager.connectedDevice?.id) { syncAnimatorState() }
+        .onChange(of: bluetoothManager.mlcState)        { syncAnimatorState() }
         .onChange(of: settingsManager.lightsEnabled)   { syncAnimatorState() }
         .onChange(of: settingsManager.alarmType)       { syncAnimatorState() }
         .onChange(of: settingsManager.isArmed)         { syncAnimatorState() }
+        .onChange(of: settingsManager.disableAlarmWhenConnected) { syncAnimatorState() }
         // Drive model orientation from accelerometer
         .onChange(of: bluetoothManager.debugAccelX) { updateLiveOrientation() }
     }
@@ -90,6 +92,8 @@ struct Motion3DView: View {
         ledAnimator.isBatteryFull  = bluetoothManager.isBatteryFull
         ledAnimator.isAlarmActive  = bluetoothManager.isAlarmActive
         ledAnimator.isFindMyActive = bluetoothManager.isFindMyActive
+        ledAnimator.mlcState       = bluetoothManager.mlcState
+        ledAnimator.silenceEnabled = settingsManager.disableAlarmWhenConnected
     }
 
     private func updateLiveOrientation() {
