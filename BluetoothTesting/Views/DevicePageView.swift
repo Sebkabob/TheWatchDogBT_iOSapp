@@ -502,7 +502,7 @@ struct DevicePageView: View {
         .statusBar(hidden: true)
         .sheet(isPresented: $showMotionLogs) {
             NavigationStack {
-                MotionLogsView(bluetoothManager: bluetoothManager)
+                MotionLogsView(bluetoothManager: bluetoothManager, deviceID: deviceID)
             }
         }
         .onAppear {

@@ -10,6 +10,7 @@ import SwiftUI
 struct MotionLogsView: View {
     @Environment(\.dismiss) var dismiss
     var bluetoothManager: BluetoothManager
+    let deviceID: UUID
     private let motionLogManager = MotionLogManager.shared
     @State private var selectedDate: Date
     @State private var refreshID = UUID()
@@ -19,13 +20,14 @@ struct MotionLogsView: View {
 
     @AppStorage("skipClearEventsConfirmation") private var skipConfirmation = false
 
-    init(bluetoothManager: BluetoothManager) {
+    init(bluetoothManager: BluetoothManager, deviceID: UUID) {
         self.bluetoothManager = bluetoothManager
+        self.deviceID = deviceID
         _selectedDate = State(initialValue: Date())
     }
-    
+
     private var filteredEvents: [MotionEvent] {
-        motionLogManager.getEvents(for: selectedDate)
+        motionLogManager.getEvents(for: selectedDate, deviceID: deviceID)
     }
     
     var body: some View {
@@ -99,12 +101,12 @@ struct MotionLogsView: View {
                 }
             }
             ToolbarItem(placement: .navigationBarTrailing) {
-                if !motionLogManager.motionEvents.isEmpty {
+                if !motionLogManager.eventsForDevice(deviceID).isEmpty {
                     Menu {
-                        if !motionLogManager.getEvents(for: Date()).isEmpty {
+                        if !motionLogManager.getEvents(for: Date(), deviceID: deviceID).isEmpty {
                             Button(role: .destructive, action: {
                                 if skipConfirmation {
-                                    motionLogManager.clearEventsForDate(Date())
+                                    motionLogManager.clearEventsForDate(Date(), deviceID: deviceID)
                                 } else {
                                     showClearTodayConfirmation = true
                                 }
@@ -115,7 +117,7 @@ struct MotionLogsView: View {
 
                         Button(role: .destructive, action: {
                             if skipConfirmation {
-                                motionLogManager.clearAllEvents()
+                                motionLogManager.clearAllEvents(for: deviceID)
                             } else {
                                 showClearAllConfirmation = true
                             }
@@ -130,24 +132,24 @@ struct MotionLogsView: View {
         }
         .alert("Clear All Events?", isPresented: $showClearAllConfirmation) {
             Button("OK", role: .destructive) {
-                motionLogManager.clearAllEvents()
+                motionLogManager.clearAllEvents(for: deviceID)
             }
             Button("No", role: .cancel) { }
             Button("Don't Show This Again", role: .destructive) {
                 skipConfirmation = true
-                motionLogManager.clearAllEvents()
+                motionLogManager.clearAllEvents(for: deviceID)
             }
         } message: {
             Text("Are you sure you want to clear all events?")
         }
         .alert("Clear Today's Events?", isPresented: $showClearTodayConfirmation) {
             Button("OK", role: .destructive) {
-                motionLogManager.clearEventsForDate(Date())
+                motionLogManager.clearEventsForDate(Date(), deviceID: deviceID)
             }
             Button("No", role: .cancel) { }
             Button("Don't Show This Again", role: .destructive) {
                 skipConfirmation = true
-                motionLogManager.clearEventsForDate(Date())
+                motionLogManager.clearEventsForDate(Date(), deviceID: deviceID)
             }
         } message: {
             Text("Are you sure you want to clear today's events?")
@@ -192,27 +194,27 @@ struct MotionLogsView: View {
     private func getEventsPerDay() -> [Date: Int] {
         var eventsPerDay: [Date: Int] = [:]
         let calendar = Calendar.current
-        
-        for event in motionLogManager.motionEvents {
+
+        for event in motionLogManager.eventsForDevice(deviceID) {
             let dayStart = calendar.startOfDay(for: event.timestamp)
             eventsPerDay[dayStart, default: 0] += 1
         }
-        
+
         return eventsPerDay
     }
-    
+
     /// Returns event counts keyed by the first day of each month
     private func getEventsPerMonth() -> [Date: Int] {
         var eventsPerMonth: [Date: Int] = [:]
         let calendar = Calendar.current
-        
-        for event in motionLogManager.motionEvents {
+
+        for event in motionLogManager.eventsForDevice(deviceID) {
             let components = calendar.dateComponents([.year, .month], from: event.timestamp)
             if let monthStart = calendar.date(from: components) {
                 eventsPerMonth[monthStart, default: 0] += 1
             }
         }
-        
+
         return eventsPerMonth
     }
 }
@@ -612,6 +614,6 @@ struct MotionEventRow: View {
 
 #Preview {
     NavigationStack {
-        MotionLogsView(bluetoothManager: BluetoothManager())
+        MotionLogsView(bluetoothManager: BluetoothManager(), deviceID: UUID())
     }
 }

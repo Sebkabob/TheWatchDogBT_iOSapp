@@ -36,53 +36,57 @@ class MotionLogManager {
         print("✅ Added \(events.count) motion events")
     }
     
-    func clearAllEvents() {
-        motionEvents.removeAll()
+    func clearAllEvents(for deviceID: UUID) {
+        motionEvents.removeAll { $0.deviceID == deviceID }
         saveMotionEvents()
-        print("🗑️ Cleared all motion events")
+        print("🗑️ Cleared all motion events for device \(deviceID.uuidString.prefix(8))")
     }
-    
-    func deleteEvents(for date: Date) {
+
+    func deleteEvents(for date: Date, deviceID: UUID) {
         let calendar = Calendar.current
         let dayStart = calendar.startOfDay(for: date)
-        
+
         motionEvents.removeAll { event in
-            calendar.isDate(event.timestamp, inSameDayAs: dayStart)
+            event.deviceID == deviceID && calendar.isDate(event.timestamp, inSameDayAs: dayStart)
         }
-        
+
         saveMotionEvents()
-        print("🗑️ Deleted events for \(dayStart)")
+        print("🗑️ Deleted events for \(dayStart) on device \(deviceID.uuidString.prefix(8))")
     }
-    
-    func clearEventsForDate(_ date: Date) {
+
+    func clearEventsForDate(_ date: Date, deviceID: UUID) {
         let calendar = Calendar.current
         motionEvents.removeAll { event in
-            calendar.isDate(event.timestamp, inSameDayAs: date)
+            event.deviceID == deviceID && calendar.isDate(event.timestamp, inSameDayAs: date)
         }
         saveMotionEvents()
-        print("🗑️ Cleared events for \(date)")
+        print("🗑️ Cleared events for \(date) on device \(deviceID.uuidString.prefix(8))")
     }
-    
+
     // MARK: - Query Methods
-    
-    func getEvents(for date: Date) -> [MotionEvent] {
+
+    func eventsForDevice(_ deviceID: UUID) -> [MotionEvent] {
+        motionEvents.filter { $0.deviceID == deviceID }
+    }
+
+    func getEvents(for date: Date, deviceID: UUID) -> [MotionEvent] {
         let calendar = Calendar.current
         return motionEvents.filter { event in
-            calendar.isDate(event.timestamp, inSameDayAs: date)
+            event.deviceID == deviceID && calendar.isDate(event.timestamp, inSameDayAs: date)
         }
     }
-    
-    func getEventCount(for date: Date) -> Int {
-        return getEvents(for: date).count
+
+    func getEventCount(for date: Date, deviceID: UUID) -> Int {
+        return getEvents(for: date, deviceID: deviceID).count
     }
-    
-    func getMostRecentEventDate() -> Date? {
-        return motionEvents.first?.timestamp
+
+    func getMostRecentEventDate(for deviceID: UUID) -> Date? {
+        return eventsForDevice(deviceID).first?.timestamp
     }
-    
-    func getDatesWithEvents() -> Set<Date> {
+
+    func getDatesWithEvents(for deviceID: UUID) -> Set<Date> {
         let calendar = Calendar.current
-        return Set(motionEvents.map { event in
+        return Set(eventsForDevice(deviceID).map { event in
             calendar.startOfDay(for: event.timestamp)
         })
     }
@@ -90,25 +94,25 @@ class MotionLogManager {
     // MARK: - Sync with WatchDog
     
     /// Process incoming motion event data from WatchDog
-    func processIncomingEvents(data: Data) {
+    func processIncomingEvents(data: Data, deviceID: UUID) {
         guard data.count % 10 == 0 else {
             print("❌ Invalid motion events data length: \(data.count)")
             return
         }
-        
+
         let eventCount = data.count / 10
         var newEvents: [MotionEvent] = []
-        
+
         for i in 0..<eventCount {
             let startIndex = i * 10
             let endIndex = startIndex + 10
             let eventData = data[startIndex..<endIndex]
-            
-            if let event = MotionEvent.decode(from: Data(eventData)) {
+
+            if let event = MotionEvent.decode(from: Data(eventData), deviceID: deviceID) {
                 newEvents.append(event)
             }
         }
-        
+
         if !newEvents.isEmpty {
             addMotionEvents(newEvents)
             print("📥 Synced \(newEvents.count) motion events from WatchDog")

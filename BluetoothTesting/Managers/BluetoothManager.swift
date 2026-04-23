@@ -505,7 +505,8 @@ class BluetoothManager: NSObject {
             }
 
             let config = MotionTypeConfig.convert(firmwareType: motionType)
-            let event = MotionEvent(timestamp: timestamp, eventType: config.eventType, alarmSounded: config.alarmSounded)
+            guard let deviceID = self.connectedDevice?.id else { return }
+            let event = MotionEvent(deviceID: deviceID, timestamp: timestamp, eventType: config.eventType, alarmSounded: config.alarmSounded)
             let charging = (batteryByte & 0x80) != 0
             let battery = Int(batteryByte & 0x7F)
 

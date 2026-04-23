@@ -46,12 +46,14 @@ enum MotionEventType: UInt8, Codable {
 
 struct MotionEvent: Identifiable, Codable {
     let id: UUID
+    let deviceID: UUID
     let timestamp: Date
     let eventType: MotionEventType
     let alarmSounded: Bool
-    
-    init(id: UUID = UUID(), timestamp: Date, eventType: MotionEventType, alarmSounded: Bool) {
+
+    init(id: UUID = UUID(), deviceID: UUID, timestamp: Date, eventType: MotionEventType, alarmSounded: Bool) {
         self.id = id
+        self.deviceID = deviceID
         self.timestamp = timestamp
         self.eventType = eventType
         self.alarmSounded = alarmSounded
@@ -60,12 +62,12 @@ struct MotionEvent: Identifiable, Codable {
     /// Decode from 10-byte data structure from WatchDog
     /// Bytes 0-8: Timestamp (9 bytes)
     /// Byte 9: Event type + alarm flag
-    static func decode(from data: Data) -> MotionEvent? {
+    static func decode(from data: Data, deviceID: UUID) -> MotionEvent? {
         guard data.count == 10 else {
             print("❌ Invalid motion event data length: \(data.count)")
             return nil
         }
-        
+
         // Extract timestamp (first 9 bytes) - assume milliseconds since epoch
         let timestampData = data.prefix(9)
         var timestampValue: UInt64 = 0
@@ -73,15 +75,15 @@ struct MotionEvent: Identifiable, Codable {
             timestampValue |= UInt64(byte) << (index * 8)
         }
         let timestamp = Date(timeIntervalSince1970: TimeInterval(timestampValue) / 1000.0)
-        
+
         // Extract event type and alarm flag from last byte
         let lastByte = data[9]
         let eventTypeBits = lastByte & 0x7F  // Lower 7 bits for event type
         let alarmSounded = (lastByte & 0x80) != 0  // Bit 7 for alarm flag
-        
+
         let eventType = MotionEventType(rawValue: eventTypeBits) ?? .none
-        
-        return MotionEvent(timestamp: timestamp, eventType: eventType, alarmSounded: alarmSounded)
+
+        return MotionEvent(deviceID: deviceID, timestamp: timestamp, eventType: eventType, alarmSounded: alarmSounded)
     }
     
     /// Encode to 10-byte data structure for WatchDog
