@@ -22,6 +22,12 @@ struct SceneView3D: UIViewRepresentable {
     var liveQuaternion: SCNVector4? = nil
     var onTap: (() -> Void)? = nil
 
+    // MARK: - Scene & Texture Cache
+    private static var cachedNormalMap: UIImage?
+    private static var cachedRoughnessMap: UIImage?
+    private static var cachedUsdzNodes: [SCNNode]?
+    private static var cachedUsdzFileName: String?
+
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
     }
@@ -218,26 +224,29 @@ struct SceneView3D: UIViewRepresentable {
     private func createScene() -> SCNScene {
         let scene = SCNScene()
 
-        if let usdzURL = Bundle.main.url(forResource: usdzFileName, withExtension: "usdz") {
-            do {
-                let usdzScene = try SCNScene(url: usdzURL, options: nil)
-
-                let modelNode = SCNNode()
-                modelNode.name = "model"
-
-                for child in usdzScene.rootNode.childNodes {
-                    modelNode.addChildNode(child)
-                }
-
-                modelNode.scale = SCNVector3(0.07, 0.07, 0.07)
-                modelNode.position = SCNVector3(0, 0, 0)
-
-                applyPlasticMaterial(to: modelNode)
-
-                scene.rootNode.addChildNode(modelNode)
-            } catch {
-                addFallbackCube(to: scene)
+        // Load USDZ nodes once, then clone for each instance
+        if Self.cachedUsdzNodes == nil || Self.cachedUsdzFileName != usdzFileName {
+            if let usdzURL = Bundle.main.url(forResource: usdzFileName, withExtension: "usdz"),
+               let usdzScene = try? SCNScene(url: usdzURL, options: nil) {
+                Self.cachedUsdzNodes = usdzScene.rootNode.childNodes.map { $0 }
+                Self.cachedUsdzFileName = usdzFileName
             }
+        }
+
+        if let cachedNodes = Self.cachedUsdzNodes {
+            let modelNode = SCNNode()
+            modelNode.name = "model"
+
+            for child in cachedNodes {
+                modelNode.addChildNode(child.clone())
+            }
+
+            modelNode.scale = SCNVector3(0.07, 0.07, 0.07)
+            modelNode.position = SCNVector3(0, 0, 0)
+
+            applyPlasticMaterial(to: modelNode)
+
+            scene.rootNode.addChildNode(modelNode)
         } else {
             addFallbackCube(to: scene)
         }
@@ -258,8 +267,14 @@ struct SceneView3D: UIViewRepresentable {
     /// procedural normal map so the surface looks like real injection-moulded plastic
     /// instead of perfectly smooth CG.
     private func applyPlasticMaterial(to node: SCNNode) {
-        let normalMap = generateGrainNormalMap(size: 512, scale: 6, strength: 0.6)
-        let roughnessMap = generateRoughnessMap(size: 512, scale: 6)
+        if Self.cachedNormalMap == nil {
+            Self.cachedNormalMap = generateGrainNormalMap(size: 512, scale: 6, strength: 0.6)
+        }
+        if Self.cachedRoughnessMap == nil {
+            Self.cachedRoughnessMap = generateRoughnessMap(size: 512, scale: 6)
+        }
+        let normalMap = Self.cachedNormalMap!
+        let roughnessMap = Self.cachedRoughnessMap!
 
         node.enumerateHierarchy { child, _ in
             guard let geometry = child.geometry else { return }

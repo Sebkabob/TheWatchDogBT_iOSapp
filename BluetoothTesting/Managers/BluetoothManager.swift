@@ -105,7 +105,7 @@ class BluetoothManager: NSObject {
     
     // ── Scan throttle ────────────────────────────────────────────────
     private var lastRSSIUpdate: [UUID: Date] = [:]
-    private let rssiUpdateInterval: TimeInterval = 1.0
+    private let rssiUpdateInterval: TimeInterval = 0.5
     
     // ── Stale device removal ─────────────────────────────────────────
     private let deviceTimeout: TimeInterval = 5.0
@@ -668,11 +668,10 @@ extension BluetoothManager: CBCentralManagerDelegate {
         let deviceID = peripheral.identifier
         let now = Date()
         
-        // Skip RSSI throttle for reconnect target and bonded devices
+        // Skip RSSI throttle only for reconnect target (needs instant detection)
         let isReconnectTarget = isAttemptingReconnect && deviceID == reconnectTargetDeviceID
-        let isBondedDevice = BondManager.shared.isBonded(deviceID: deviceID)
-        
-        if !isReconnectTarget && !isBondedDevice {
+
+        if !isReconnectTarget {
             if let lastUpdate = lastRSSIUpdate[deviceID],
                now.timeIntervalSince(lastUpdate) < rssiUpdateInterval {
                 return
