@@ -50,6 +50,9 @@ struct BondedDevicesListView: View {
                         .padding(.horizontal, 40)
                     
                     Button(action: {
+                        if let device = bluetoothManager.connectedDevice {
+                            bluetoothManager.disconnect(from: device)
+                        }
                         showAddDevice = true
                     }) {
                         HStack {
@@ -124,6 +127,9 @@ struct BondedDevicesListView: View {
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button(action: {
+                    if let device = bluetoothManager.connectedDevice {
+                        bluetoothManager.disconnect(from: device)
+                    }
                     showAddDevice = true
                 }) {
                     Image(systemName: "plus")

@@ -60,6 +60,9 @@ struct MainAppView: View {
         ZStack {
             TabView(selection: $currentPage) {
                 AddDevicePage(bluetoothManager: bluetoothManager, onAddTapped: {
+                    if let device = bluetoothManager.connectedDevice {
+                        bluetoothManager.disconnect(from: device)
+                    }
                     withAnimation(.easeInOut(duration: 0.2)) {
                         showPairing = true
                     }
