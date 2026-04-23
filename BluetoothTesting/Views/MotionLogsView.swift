@@ -87,6 +87,17 @@ struct MotionLogsView: View {
         .navigationTitle("Motion Logs")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                if !Calendar.current.isDate(selectedDate, equalTo: Date(), toGranularity: .month) {
+                    Button {
+                        withAnimation {
+                            selectedDate = Date()
+                        }
+                    } label: {
+                        Text("Today")
+                    }
+                }
+            }
             ToolbarItem(placement: .navigationBarTrailing) {
                 if !motionLogManager.motionEvents.isEmpty {
                     Menu {
@@ -218,10 +229,13 @@ struct MonthYearPickerSheet: View {
     private let calendar = Calendar.current
     private let months = Calendar.current.monthSymbols
     
-    // Year range: 5 years back to current year
+    // Year range: earliest event year to current year
     private var years: [Int] {
         let currentYear = calendar.component(.year, from: Date())
-        return Array((currentYear - 5)...currentYear)
+        let earliestYear = eventsPerMonth.keys
+            .map { calendar.component(.year, from: $0) }
+            .min() ?? currentYear
+        return Array(earliestYear...currentYear)
     }
     
     init(selectedDate: Binding<Date>, eventsPerMonth: [Date: Int]) {

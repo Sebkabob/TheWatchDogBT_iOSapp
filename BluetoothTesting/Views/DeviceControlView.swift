@@ -15,6 +15,7 @@ struct DeviceControlView: View {
     @State private var isLocked = true
     @State private var holdProgress: CGFloat = 0.0
     @State private var isHolding = false
+    @State private var isCompletingHold = false
     @State private var holdTimer: Timer?
     @State private var showMotionLogs = false
     
@@ -310,7 +311,7 @@ struct DeviceControlView: View {
                     isLocked: $isLocked,
                     holdProgress: holdProgress,
                     isDisabled: !isDeviceConnected,
-                    isStabilizing: bluetoothManager.mlcState == .stabilizing
+                    isStabilizing: bluetoothManager.mlcState == .stabilizing || isCompletingHold
                 )
                 .padding(.horizontal, 20)
                 .simultaneousGesture(
@@ -430,6 +431,11 @@ struct DeviceControlView: View {
                 isLocked = newIsArmed
             }
         }
+        .onChange(of: bluetoothManager.mlcState) { _, newState in
+            if newState == .stabilizing {
+                isCompletingHold = false
+            }
+        }
         .onChange(of: bluetoothManager.connectedDevice) { _, device in
             guard !userInitiatedDisconnect else { return }
             
@@ -524,7 +530,8 @@ struct DeviceControlView: View {
         guard isDeviceConnected else { return }
         
         heavyHaptic.impactOccurred(intensity: 1.0)
-        
+
+        isCompletingHold = true
         settingsManager.updateSettings(armed: !isLocked)
         bluetoothManager.sendSettings()
         isLocked.toggle()
