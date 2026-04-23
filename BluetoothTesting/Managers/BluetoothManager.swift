@@ -141,6 +141,7 @@ class BluetoothManager: NSObject {
     private let CMD_CLEAR_LOG: UInt8         = 0xF2
     private let CMD_ACK_EVENT: UInt8         = 0xF3
     private let CMD_PING: UInt8 = 0xFA
+    private let CMD_RESET_DEVICE: UInt8 = 0xFB
     
     var deviceStateText: String {
         let isArmed = (deviceState & 0x01) != 0
@@ -417,6 +418,16 @@ class BluetoothManager: NSObject {
         let data = Data([CMD_PING, 0x01])
         sendData(data)
         print("🔔 Sent ping (play sound)")
+    }
+
+    func sendResetDevice() {
+        guard connectedDevice != nil else {
+            print("❌ Cannot reset - not connected")
+            return
+        }
+        let data = Data([CMD_RESET_DEVICE])
+        sendData(data)
+        print("🔄 Sent device reset command")
     }
 
     // MARK: - Motion Log Sync
@@ -931,6 +942,13 @@ extension BluetoothManager: CBPeripheralDelegate {
             self.hasReceivedInitialState = true
             self.settingsManager.decodeSettings(from: settingsByte)
             if let deviceInfoByte { self.settingsManager.decodeDeviceInfo(from: deviceInfoByte) }
+
+            // Clear alarm when device is no longer armed
+            if !self.settingsManager.isArmed && self.isAlarmActive {
+                self.isAlarmActive = false
+                self.alarmClearTimer?.invalidate()
+                self.alarmClearTimer = nil
+            }
 
             self.updateBatteryState(charging: charging, battery: battery)
             self.debugCurrentDraw = current

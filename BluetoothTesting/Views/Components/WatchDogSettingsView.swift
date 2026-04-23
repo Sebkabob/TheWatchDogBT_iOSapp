@@ -137,6 +137,7 @@ struct WatchDogSettingsView: View {
     @State private var scrolledPreset: WatchDogPreset?
 
     @State private var showForgetConfirmation = false
+    @State private var showResetConfirmation = false
 
     private let maxNameLength = 16
 
@@ -386,6 +387,27 @@ struct WatchDogSettingsView: View {
                     Image(systemName: "questionmark.circle")
                     Text("Show Tutorial")
                 }
+            }
+            Button(role: .destructive) {
+                showResetConfirmation = true
+            } label: {
+                HStack {
+                    Image(systemName: "arrow.clockwise.circle")
+                    Text("Reset Device")
+                }
+            }
+            .disabled(!isConnected)
+            .confirmationDialog(
+                "Reset Device?",
+                isPresented: $showResetConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Reset", role: .destructive) {
+                    bluetoothManager.sendResetDevice()
+                }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("This will immediately reboot the WatchDog. The BLE connection will drop.")
             }
         }
     }
