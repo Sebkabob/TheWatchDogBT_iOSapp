@@ -20,19 +20,20 @@ struct AddNewDeviceView: View {
 
     enum PairingPhase: Equatable {
         case searching
-        case found(UUID)
+        case found
         case pairing(UUID)
         case paired(UUID)
 
         var deviceID: UUID? {
             switch self {
-            case .searching: return nil
-            case .found(let id), .pairing(let id), .paired(let id): return id
+            case .searching, .found: return nil
+            case .pairing(let id), .paired(let id): return id
             }
         }
     }
 
     @State private var phase: PairingPhase = .searching
+    @State private var selectedDeviceIndex: Int = 0
     @State private var modelVisible = false
     @State private var glowActive = false
     @State private var pairingDone = false
@@ -53,11 +54,15 @@ struct AddNewDeviceView: View {
             .sorted { $0.rssi > $1.rssi }
     }
 
+    private var selectedDevice: BluetoothDevice? {
+        guard !availableDevices.isEmpty else { return nil }
+        let index = min(selectedDeviceIndex, availableDevices.count - 1)
+        return availableDevices[index]
+    }
+
     private func displayName(for deviceID: UUID) -> String {
         if nameManager.hasCustomName(deviceID: deviceID) {
-            if let device = bluetoothManager.discoveredDevices.first(where: { $0.id == deviceID }) {
-                return nameManager.getDisplayName(deviceID: deviceID, advertisingName: device.name)
-            }
+            return nameManager.getCustomName(deviceID: deviceID) ?? "WatchDog"
         }
         return "WatchDog"
     }
@@ -72,17 +77,15 @@ struct AddNewDeviceView: View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            // Match DevicePageView layout: header → model → controls
             VStack(spacing: 0) {
 
-                // Top spacer — matches DevicePageView header height when connected
                 Color.clear
                     .frame(height: 36)
                     .padding(.horizontal, 20)
                     .padding(.top, 5)
                     .padding(.bottom, 10)
 
-                // Model area — fills remaining space, same as DevicePageView's ZStack
+                // Model area
                 ZStack {
                     switch phase {
                     case .searching:
@@ -91,50 +94,15 @@ struct AddNewDeviceView: View {
                             .scaleEffect(1.5)
                             .transition(.opacity)
 
-                    case .found(let id), .pairing(let id), .paired(let id):
-                        ZStack {
-                            // Faint white glow when discovered, blue glow when pairing
-                            if glowActive {
-                                Circle()
-                                    .fill(Color.blue)
-                                    .frame(width: 300, height: 300)
-                                    .blur(radius: 50)
-                                    .phaseAnimator([0.15, 0.35]) { content, phase in
-                                        content.opacity(phase)
-                                    } animation: { _ in
-                                        .easeInOut(duration: 1.2)
-                                    }
-                                    .transition(.opacity)
-                            } else if modelVisible {
-                                Circle()
-                                    .fill(Color.white)
-                                    .frame(width: 320, height: 320)
-                                    .blur(radius: 60)
-                                    .phaseAnimator([0.05, 0.12]) { content, phase in
-                                        content.opacity(phase)
-                                    } animation: { _ in
-                                        .easeInOut(duration: 2.0)
-                                    }
-                                    .transition(.opacity)
-                            }
-
-                            SceneView3D(
-                                rotationX: $rotX,
-                                rotationY: $rotY,
-                                rotationZ: $rotZ,
-                                usdzFileName: "WatchDogBTCase_V2",
-                                ledColor: glowActive ? .systemBlue : .darkGray,
-                                ledIntensity: glowActive ? 1.0 : 0,
-                                gesturesEnabled: false,
-                                idleWobble: phase == .found(id),
-                                liveQuaternion: nil,
-                                onTap: phase == .found(id) ? { tapToPair(id) } : nil
-                            )
-                            .frame(maxWidth: .infinity)
+                    case .found:
+                        if let device = selectedDevice {
+                            deviceCarouselView(device: device)
                         }
-                        .opacity(modelVisible ? 1 : 0)
-                        .animation(.easeInOut(duration: 0.8), value: modelVisible)
-                        .transition(.opacity)
+
+                    case .pairing(let id), .paired(let id):
+                        if let device = bleDevice(for: id) ?? selectedDevice {
+                            deviceModelView(device: device, isPairing: phase != .paired(id))
+                        }
                     }
 
                     // Status text overlaid on model area
@@ -148,7 +116,7 @@ struct AddNewDeviceView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                // Bottom area — matches DevicePageView control section height
+                // Bottom area
                 VStack(spacing: 12) {
                     if case .paired = phase {
                         Color.clear
@@ -167,7 +135,6 @@ struct AddNewDeviceView: View {
         }
         .onAppear {
             bluetoothManager.ensureScanning()
-            // Show "Searching..." for at least 1 second
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 readyToShow = true
                 checkForDevice()
@@ -192,7 +159,7 @@ struct AddNewDeviceView: View {
                 withAnimation(.easeInOut(duration: 0.4)) {
                     glowActive = false
                     if !availableDevices.isEmpty {
-                        phase = .found(id)
+                        phase = .found
                     } else {
                         modelVisible = false
                         phase = .searching
@@ -200,6 +167,132 @@ struct AddNewDeviceView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Carousel View
+
+    @ViewBuilder
+    private func deviceCarouselView(device: BluetoothDevice) -> some View {
+        ZStack {
+            // Faint white glow
+            if modelVisible {
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: 320, height: 320)
+                    .blur(radius: 60)
+                    .phaseAnimator([0.05, 0.12]) { content, phase in
+                        content.opacity(phase)
+                    } animation: { _ in
+                        .easeInOut(duration: 2.0)
+                    }
+                    .transition(.opacity)
+            }
+
+            VStack(spacing: 0) {
+                // 3D model
+                SceneView3D(
+                    rotationX: $rotX,
+                    rotationY: $rotY,
+                    rotationZ: $rotZ,
+                    usdzFileName: "WatchDogBTCase_V2",
+                    ledColor: .darkGray,
+                    ledIntensity: 0,
+                    gesturesEnabled: false,
+                    idleWobble: true,
+                    liveQuaternion: nil,
+                    onTap: { tapToPair(device.id) }
+                )
+                .frame(maxWidth: .infinity)
+
+                // Device name + carousel controls
+                HStack(spacing: 20) {
+                    Button {
+                        navigateDevice(direction: -1)
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.title2)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.white.opacity(availableDevices.count > 1 ? 0.6 : 0.15))
+                    }
+                    .disabled(availableDevices.count <= 1)
+
+                    Text(displayName(for: device.id))
+                        .font(.title3)
+                        .fontWeight(.medium)
+                        .foregroundColor(.white)
+                        .frame(minWidth: 120)
+
+                    Button {
+                        navigateDevice(direction: 1)
+                    } label: {
+                        Image(systemName: "chevron.right")
+                            .font(.title2)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.white.opacity(availableDevices.count > 1 ? 0.6 : 0.15))
+                    }
+                    .disabled(availableDevices.count <= 1)
+                }
+                .padding(.bottom, 8)
+
+                // Page dots
+                if availableDevices.count > 1 {
+                    HStack(spacing: 6) {
+                        ForEach(0..<availableDevices.count, id: \.self) { i in
+                            Circle()
+                                .fill(i == clampedIndex ? Color.white : Color.white.opacity(0.3))
+                                .frame(width: 6, height: 6)
+                        }
+                    }
+                }
+            }
+        }
+        .opacity(modelVisible ? 1 : 0)
+        .animation(.easeInOut(duration: 0.8), value: modelVisible)
+        .transition(.opacity)
+    }
+
+    // MARK: - Model View (pairing/paired states)
+
+    @ViewBuilder
+    private func deviceModelView(device: BluetoothDevice, isPairing: Bool) -> some View {
+        ZStack {
+            if glowActive {
+                Circle()
+                    .fill(Color.blue)
+                    .frame(width: 300, height: 300)
+                    .blur(radius: 50)
+                    .phaseAnimator([0.15, 0.35]) { content, phase in
+                        content.opacity(phase)
+                    } animation: { _ in
+                        .easeInOut(duration: 1.2)
+                    }
+                    .transition(.opacity)
+            }
+
+            VStack(spacing: 0) {
+                SceneView3D(
+                    rotationX: $rotX,
+                    rotationY: $rotY,
+                    rotationZ: $rotZ,
+                    usdzFileName: "WatchDogBTCase_V2",
+                    ledColor: glowActive ? .systemBlue : .darkGray,
+                    ledIntensity: glowActive ? 1.0 : 0,
+                    gesturesEnabled: false,
+                    idleWobble: false,
+                    liveQuaternion: nil
+                )
+                .frame(maxWidth: .infinity)
+
+                Text(displayName(for: device.id))
+                    .font(.title3)
+                    .fontWeight(.medium)
+                    .foregroundColor(.white)
+                    .padding(.bottom, 8)
+            }
+        }
+        .opacity(modelVisible ? 1 : 0)
+        .animation(.easeInOut(duration: 0.8), value: modelVisible)
+        .transition(.opacity)
     }
 
     // MARK: - Status Text
@@ -230,12 +323,25 @@ struct AddNewDeviceView: View {
 
     // MARK: - Actions
 
+    private var clampedIndex: Int {
+        guard !availableDevices.isEmpty else { return 0 }
+        return min(selectedDeviceIndex, availableDevices.count - 1)
+    }
+
+    private func navigateDevice(direction: Int) {
+        guard availableDevices.count > 1 else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        let count = availableDevices.count
+        selectedDeviceIndex = (clampedIndex + direction + count) % count
+    }
+
     private func checkForDevice() {
         guard case .searching = phase else { return }
-        guard let device = availableDevices.first else { return }
+        guard !availableDevices.isEmpty else { return }
 
+        selectedDeviceIndex = 0
         withAnimation(.easeInOut(duration: 0.3)) {
-            phase = .found(device.id)
+            phase = .found
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             modelVisible = true
@@ -263,7 +369,6 @@ struct AddNewDeviceView: View {
 
         bondManager.addBond(deviceID: device.id, name: device.name)
 
-        // Ensure "Pairing..." shows for at least 1 second
         let elapsed = pairingStartTime.map { Date().timeIntervalSince($0) } ?? 1.0
         let remaining = max(0, 1.0 - elapsed)
 
@@ -275,12 +380,10 @@ struct AddNewDeviceView: View {
                 glowActive = false
             }
 
-            // Show "Paired!" for 1.25s, then fade text out over 0.25s
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.25) {
                 withAnimation(.easeOut(duration: 0.25)) {
                     statusTextVisible = false
                 }
-                // After text fades, transition to device page
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                     onPaired(device.id)
                 }

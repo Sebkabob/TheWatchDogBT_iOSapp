@@ -106,6 +106,7 @@ struct WatchDogSettingsView: View {
     private let settingsManager = SettingsManager.shared
     private let bondManager = BondManager.shared
     private let nameManager = DeviceNameManager.shared
+    private let notesManager = DeviceNotesManager.shared
     var bluetoothManager: BluetoothManager
 
     var targetDeviceID: UUID? = nil
@@ -138,6 +139,7 @@ struct WatchDogSettingsView: View {
 
     @State private var showForgetConfirmation = false
     @State private var showResetConfirmation = false
+    @State private var deviceNotes: String = ""
 
     private let maxNameLength = 16
 
@@ -409,6 +411,21 @@ struct WatchDogSettingsView: View {
             } message: {
                 Text("This will immediately reboot the WatchDog. The BLE connection will drop.")
             }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Notes")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                TextEditor(text: $deviceNotes)
+                    .font(.body)
+                    .frame(minHeight: 60)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onChange(of: deviceNotes) {
+                        if let deviceID = resolvedDeviceID {
+                            notesManager.setNotes(deviceID: deviceID, text: deviceNotes)
+                        }
+                    }
+            }
         }
     }
 
@@ -472,6 +489,8 @@ struct WatchDogSettingsView: View {
         } else if let device = bluetoothManager.connectedDevice, device.id == deviceID {
             watchDogName = nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
         }
+
+        deviceNotes = notesManager.getNotes(deviceID: deviceID)
 
         sensitivity = settingsManager.sensitivity
         alarmType = settingsManager.alarmType
