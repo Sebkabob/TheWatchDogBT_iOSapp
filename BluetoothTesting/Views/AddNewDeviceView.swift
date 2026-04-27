@@ -206,15 +206,16 @@ struct AddNewDeviceView: View {
 
                 // Device name + carousel controls
                 HStack(spacing: 20) {
-                    Button {
-                        navigateDevice(direction: -1)
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.white.opacity(availableDevices.count > 1 ? 0.6 : 0.15))
+                    if availableDevices.count > 1 {
+                        Button {
+                            navigateDevice(direction: -1)
+                        } label: {
+                            Image(systemName: "chevron.left")
+                                .font(.title2)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.white.opacity(0.6))
+                        }
                     }
-                    .disabled(availableDevices.count <= 1)
 
                     Text(displayName(for: device.id))
                         .font(.title3)
@@ -222,15 +223,16 @@ struct AddNewDeviceView: View {
                         .foregroundColor(.white)
                         .frame(minWidth: 120)
 
-                    Button {
-                        navigateDevice(direction: 1)
-                    } label: {
-                        Image(systemName: "chevron.right")
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.white.opacity(availableDevices.count > 1 ? 0.6 : 0.15))
+                    if availableDevices.count > 1 {
+                        Button {
+                            navigateDevice(direction: 1)
+                        } label: {
+                            Image(systemName: "chevron.right")
+                                .font(.title2)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.white.opacity(0.6))
+                        }
                     }
-                    .disabled(availableDevices.count <= 1)
                 }
                 .padding(.bottom, 8)
 

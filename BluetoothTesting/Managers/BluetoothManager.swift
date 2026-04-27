@@ -748,6 +748,9 @@ extension BluetoothManager: CBCentralManagerDelegate {
                 self.discoveredDevices.append(device)
                 self.connectedDevice = device
             }
+
+            // Load this device's saved settings
+            self.settingsManager.loadDeviceSettings(for: peripheral.identifier)
         }
         
         peripheral.delegate = self

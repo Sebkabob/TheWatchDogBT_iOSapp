@@ -135,7 +135,7 @@ struct WatchDogSettingsView: View {
 
     // Preset state
     @State private var selectedPreset: WatchDogPreset = .maxSecurity
-    @State private var scrolledPreset: WatchDogPreset?
+    @State private var dragOffset: CGFloat = 0
 
     @State private var showForgetConfirmation = false
     @State private var showResetConfirmation = false
@@ -204,36 +204,89 @@ struct WatchDogSettingsView: View {
     // MARK: - Preset Carousel
 
     private var presetCarousel: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            LazyHStack(spacing: 12) {
-                ForEach(WatchDogPreset.allCases, id: \.self) { preset in
+        let presets = WatchDogPreset.allCases
+        let count = presets.count
+        let selectedIdx = presets.firstIndex(of: selectedPreset) ?? 0
+
+        return GeometryReader { geo in
+            let cardWidth = geo.size.width * 0.6
+            let spacing: CGFloat = 12
+            let step = cardWidth + spacing
+            let dragProgress = dragOffset / step
+
+            ZStack {
+                ForEach(presets, id: \.self) { preset in
+                    let index = presets.firstIndex(of: preset)!
+                    let baseDist = circularDistance(from: selectedIdx, to: index, count: count)
+                    let dist = Double(baseDist) + dragProgress
+
                     PresetCard(preset: preset, isSelected: selectedPreset == preset)
-                        .containerRelativeFrame(.horizontal, count: 5, span: 3, spacing: 12)
-                        .onTapGesture {
-                            selectPreset(preset)
-                        }
-                        .scrollTransition { content, phase in
-                            content
-                                .scaleEffect(phase.isIdentity ? 1.0 : 0.88)
-                                .opacity(phase.isIdentity ? 1.0 : 0.5)
-                                .rotation3DEffect(
-                                    .degrees(phase.value * -25),
-                                    axis: (x: 0, y: 1, z: 0),
-                                    perspective: 0.4
-                                )
-                        }
+                        .frame(width: cardWidth)
+                        .scaleEffect(max(0.88, 1.0 - abs(dist) * 0.12))
+                        .opacity(max(0, 1.0 - abs(dist) * 0.5))
+                        .rotation3DEffect(
+                            .degrees(dist * -25),
+                            axis: (x: 0, y: 1, z: 0),
+                            perspective: 0.4
+                        )
+                        .offset(x: dist * step)
+                        .onTapGesture { selectPreset(preset) }
                 }
             }
-            .scrollTargetLayout()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture()
+                    .onChanged { dragOffset = $0.translation.width }
+                    .onEnded { value in
+                        let predicted = value.predictedEndTranslation.width
+                        let goNext = predicted < -(step / 2)
+                        let goPrev = predicted > step / 2
+
+                        if goNext || goPrev {
+                            let nextIdx = goNext
+                                ? (selectedIdx + 1) % count
+                                : (selectedIdx - 1 + count) % count
+                            let targetPreset = presets[nextIdx]
+                            let targetOffset = goNext ? -step : step
+
+                            // Animate drag to the snap position
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                                dragOffset = targetOffset
+                            }
+
+                            // Once settled, swap state instantly (no visual change)
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                                var t = Transaction(animation: nil)
+                                t.disablesAnimations = true
+                                withTransaction(t) {
+                                    selectedPreset = targetPreset
+                                    dragOffset = 0
+                                }
+                                if targetPreset != .custom {
+                                    sensitivity = targetPreset.sensitivity
+                                    alarmType = targetPreset.alarmType
+                                    alarmTriggers = targetPreset.triggers
+                                }
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            }
+                        } else {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                                dragOffset = 0
+                            }
+                        }
+                    }
+            )
         }
-        .scrollTargetBehavior(.viewAligned)
-        .scrollPosition(id: $scrolledPreset)
-        .contentMargins(.horizontal, 20, for: .scrollContent)
-        .frame(height: 170)
-        .onChange(of: scrolledPreset) { _, newPreset in
-            guard let newPreset, newPreset != selectedPreset else { return }
-            selectPreset(newPreset)
-        }
+        .frame(height: 180)
+        .padding(.vertical, 4)
+    }
+
+    private func circularDistance(from: Int, to: Int, count: Int) -> Int {
+        let raw = to - from
+        if raw > count / 2 { return raw - count }
+        if raw < -(count / 2) { return raw + count }
+        return raw
     }
 
     private func selectPreset(_ preset: WatchDogPreset) {
@@ -492,6 +545,9 @@ struct WatchDogSettingsView: View {
 
         deviceNotes = notesManager.getNotes(deviceID: deviceID)
 
+        // Load this device's saved settings
+        settingsManager.loadDeviceSettings(for: deviceID)
+
         sensitivity = settingsManager.sensitivity
         alarmType = settingsManager.alarmType
         lightsEnabled = settingsManager.lightsEnabled
@@ -505,7 +561,6 @@ struct WatchDogSettingsView: View {
 
         if let preset = WatchDogPreset(rawValue: settingsManager.selectedPresetRawValue) {
             selectedPreset = preset
-            scrolledPreset = preset
         }
     }
 
