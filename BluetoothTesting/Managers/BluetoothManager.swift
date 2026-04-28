@@ -26,6 +26,108 @@ import CoreBluetooth
 import Observation
 import SwiftUI
 
+enum UnpairError: LocalizedError {
+    case notConnected
+    case ackTimeout
+
+    var errorDescription: String? {
+        switch self {
+        case .notConnected: return "WatchDog is not connected."
+        case .ackTimeout:   return "WatchDog did not confirm unpair within 2 seconds."
+        }
+    }
+}
+
+enum DiagnosticError: LocalizedError {
+    case notConnected
+    case timeout
+    case malformedResponse
+
+    var errorDescription: String? {
+        switch self {
+        case .notConnected:      return "WatchDog is not connected."
+        case .timeout:           return "No response from device."
+        case .malformedResponse: return "Malformed diagnostic response."
+        }
+    }
+}
+
+enum AdvMode: Equatable {
+    case undirectedOpen
+    case directed
+    case undirectedWithFAL
+    case stopped
+    case unknown(UInt8)
+
+    init(rawValue: UInt8) {
+        switch rawValue {
+        case 0x00: self = .undirectedOpen
+        case 0x01: self = .directed
+        case 0x02: self = .undirectedWithFAL
+        case 0x03: self = .stopped
+        default:   self = .unknown(rawValue)
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .undirectedOpen:    return "undirectedOpen"
+        case .directed:          return "directed"
+        case .undirectedWithFAL: return "undirectedWithFAL"
+        case .stopped:           return "stopped"
+        case .unknown(let v):    return String(format: "unknown (0x%02X)", v)
+        }
+    }
+}
+
+struct DiagnosticSnapshot {
+    let bondedPeerCount: UInt8
+    let advMode: AdvMode
+    let authFailCount: UInt8
+    let pendingUnbond: Bool
+    let bondedPeerAddrType: UInt8   // 0xFF means no bond
+    let bondedPeerAddress: [UInt8]  // 6 bytes (LSB-first as received)
+    let loyaltyFwVersion: UInt8
+    let rawBytes: [UInt8]
+
+    var hasBond: Bool { bondedPeerAddrType != 0xFF }
+
+    var bondedPeerAddressString: String {
+        bondedPeerAddress.reversed()
+            .map { String(format: "%02X", $0) }
+            .joined(separator: ":")
+    }
+
+    var addrTypeDescription: String {
+        switch bondedPeerAddrType {
+        case 0x00: return "public"
+        case 0x01: return "random"
+        case 0xFF: return "none"
+        default:   return String(format: "0x%02X", bondedPeerAddrType)
+        }
+    }
+
+    var rawHexString: String {
+        rawBytes.map { String(format: "%02X", $0) }.joined(separator: " ")
+    }
+
+    /// Expects a 13-byte payload: [0xE5, fwVer, peerCount, advMode, authFail, pendingUnbond, addrType, addr0..addr5]
+    init?(data: Data) {
+        guard data.count == 13, data[0] == BluetoothManager.RESP_DIAGNOSTIC else {
+            return nil
+        }
+        let bytes = [UInt8](data)
+        self.rawBytes = bytes
+        self.loyaltyFwVersion   = bytes[1]
+        self.bondedPeerCount    = bytes[2]
+        self.advMode            = AdvMode(rawValue: bytes[3])
+        self.authFailCount      = bytes[4]
+        self.pendingUnbond      = bytes[5] != 0
+        self.bondedPeerAddrType = bytes[6]
+        self.bondedPeerAddress  = Array(bytes[7..<13])
+    }
+}
+
 enum MLCState: UInt8 {
     case stationary   = 0
     case doorOpen     = 1
@@ -138,8 +240,10 @@ class BluetoothManager: NSObject {
     private let RESP_EVENT_DATA: UInt8      = 0xE1
     private let RESP_NO_MORE_EVENTS: UInt8  = 0xE2
     private let RESP_LOG_CLEARED: UInt8     = 0xE3
+    private let RESP_UNPAIR_ACK: UInt8      = 0xE4
+    static let RESP_DIAGNOSTIC: UInt8       = 0xE5
     private let MOTION_ALERT_MARKER: UInt8  = 0xFF
-    
+
     // Motion log command opcodes
     private let CMD_REQUEST_LOG_COUNT: UInt8 = 0xF0
     private let CMD_REQUEST_EVENT: UInt8     = 0xF1
@@ -148,6 +252,19 @@ class BluetoothManager: NSObject {
     private let CMD_PING: UInt8 = 0xFA
     private let CMD_RESET_DEVICE: UInt8 = 0xFB
     private let CMD_DRAIN_MODE: UInt8 = 0xFC
+    private let CMD_UNPAIR_DEVICE: UInt8 = 0xFD
+    static let CMD_READ_DIAGNOSTIC: UInt8 = 0xFE
+
+    // ── Unpair flow state ────────────────────────────────────────────
+    private var unpairCompletion: ((Result<Void, Error>) -> Void)?
+    private var unpairTimer: Timer?
+    private var pendingUnpairDeviceID: UUID?
+    private let unpairAckTimeout: TimeInterval = 2.0
+
+    // ── Diagnostic flow state ────────────────────────────────────────
+    private var diagnosticCompletion: ((Result<DiagnosticSnapshot, Error>) -> Void)?
+    private var diagnosticTimer: Timer?
+    private let diagnosticTimeout: TimeInterval = 2.0
     
     var deviceStateText: String {
         let isArmed = (deviceState & 0x01) != 0
@@ -455,6 +572,151 @@ class BluetoothManager: NSObject {
         let data = Data([CMD_DRAIN_MODE, 0x00])
         sendData(data)
         print("🔋 Sent drain mode STOP")
+    }
+
+    // MARK: - Unpair (0xFD → 0xE4 0x01)
+
+    /// Send the unbond command to the WatchDog and tear down the local bond.
+    /// Calls `completion` on the main thread with `.success` once the device
+    /// acks `[0xE4, 0x01]` (or `.failure(.ackTimeout)` after 2s). The peripheral
+    /// is disconnected and per-device state is cleared in both paths — firmware
+    /// Strategy B recovers if the ack is missed.
+    func unpairDevice(completion: @escaping (Result<Void, Error>) -> Void) {
+        guard let peripheral = connectedDevice?.peripheral,
+              let writeChar = writeCharacteristic else {
+            completion(.failure(UnpairError.notConnected))
+            return
+        }
+
+        guard unpairCompletion == nil else {
+            print("⚠️ Unpair already in progress")
+            return
+        }
+
+        pendingUnpairDeviceID = peripheral.identifier
+        unpairCompletion = completion
+
+        let data = Data([CMD_UNPAIR_DEVICE])
+        peripheral.writeValue(data, for: writeChar, type: .withResponse)
+        let hexString = data.map { String(format: "%02X", $0) }.joined(separator: " ")
+        DispatchQueue.main.async {
+            self.lastSentData = "0x\(hexString) (\(data.count) bytes)"
+        }
+        print("📤 Sent unpair (0xFD)")
+
+        DispatchQueue.main.async {
+            self.unpairTimer?.invalidate()
+            self.unpairTimer = Timer.scheduledTimer(withTimeInterval: self.unpairAckTimeout, repeats: false) { [weak self] _ in
+                guard let self = self else { return }
+                print("⏱️ Unpair ack timeout")
+                self.finishUnpair(result: .failure(UnpairError.ackTimeout))
+            }
+        }
+    }
+
+    private func handleUnpairAck() {
+        guard unpairCompletion != nil else { return }
+        print("✅ Received unpair ack [0xE4, 0x01]")
+        finishUnpair(result: .success(()))
+    }
+
+    private func finishUnpair(result: Result<Void, Error>) {
+        guard let completion = unpairCompletion else { return }
+        unpairCompletion = nil
+        unpairTimer?.invalidate()
+        unpairTimer = nil
+
+        let deviceID = pendingUnpairDeviceID
+        pendingUnpairDeviceID = nil
+
+        suppressAutoReconnect = true
+        stopReconnecting()
+
+        if let peripheral = connectedDevice?.peripheral {
+            centralManager.cancelPeripheralConnection(peripheral)
+        }
+
+        if let deviceID = deviceID {
+            clearLocalStateAfterUnpair(for: deviceID)
+        }
+
+        DispatchQueue.main.async {
+            completion(result)
+        }
+    }
+
+    // MARK: - Diagnostic (0xFE → 0xE5 …)
+
+    /// Request a one-shot diagnostic snapshot from the WatchDog.
+    /// `completion` fires on the main thread with the parsed snapshot or an error.
+    func requestDiagnostic(completion: @escaping (Result<DiagnosticSnapshot, Error>) -> Void) {
+        guard let peripheral = connectedDevice?.peripheral,
+              let writeChar = writeCharacteristic else {
+            completion(.failure(DiagnosticError.notConnected))
+            return
+        }
+
+        guard diagnosticCompletion == nil else {
+            print("⚠️ Diagnostic already in progress")
+            return
+        }
+
+        diagnosticCompletion = completion
+
+        let data = Data([BluetoothManager.CMD_READ_DIAGNOSTIC])
+        peripheral.writeValue(data, for: writeChar, type: .withResponse)
+        let hexString = data.map { String(format: "%02X", $0) }.joined(separator: " ")
+        DispatchQueue.main.async {
+            self.lastSentData = "0x\(hexString) (\(data.count) bytes)"
+        }
+        print("📤 Sent diagnostic request (0xFE)")
+
+        DispatchQueue.main.async {
+            self.diagnosticTimer?.invalidate()
+            self.diagnosticTimer = Timer.scheduledTimer(withTimeInterval: self.diagnosticTimeout, repeats: false) { [weak self] _ in
+                guard let self = self else { return }
+                print("⏱️ Diagnostic timeout")
+                self.finishDiagnostic(result: .failure(DiagnosticError.timeout))
+            }
+        }
+    }
+
+    private func handleDiagnosticResponse(data: Data) {
+        guard diagnosticCompletion != nil else { return }
+        guard let snapshot = DiagnosticSnapshot(data: data) else {
+            print("❌ Malformed diagnostic response: \(data.map { String(format: "%02X", $0) }.joined(separator: " "))")
+            finishDiagnostic(result: .failure(DiagnosticError.malformedResponse))
+            return
+        }
+        print("✅ Received diagnostic [\(snapshot.rawHexString)]")
+        finishDiagnostic(result: .success(snapshot))
+    }
+
+    private func finishDiagnostic(result: Result<DiagnosticSnapshot, Error>) {
+        guard let completion = diagnosticCompletion else { return }
+        diagnosticCompletion = nil
+        diagnosticTimer?.invalidate()
+        diagnosticTimer = nil
+        DispatchQueue.main.async {
+            completion(result)
+        }
+    }
+
+    private func clearLocalStateAfterUnpair(for deviceID: UUID) {
+        DispatchQueue.main.async {
+            if self.reconnectTargetDeviceID == deviceID {
+                self.reconnectTargetDeviceID = nil
+                self.isAttemptingReconnect = false
+            }
+            self.watchDogIdentifiers.removeValue(forKey: deviceID)
+
+            if NavigationStateManager.shared.lastDeviceID == deviceID {
+                NavigationStateManager.shared.saveDeviceList()
+            }
+
+            MotionLogManager.shared.clearAllEvents(for: deviceID)
+            BondManager.shared.removeBond(deviceID: deviceID)
+        }
     }
 
     // MARK: - Motion Log Sync
@@ -937,6 +1199,25 @@ extension BluetoothManager: CBPeripheralDelegate {
             return
         }
         
+        // ─── Unpair ack (0xE4 0x01) ───
+        if firstByte == RESP_UNPAIR_ACK {
+            if data.count >= 2 && data[1] == 0x01 {
+                DispatchQueue.main.async {
+                    self.handleUnpairAck()
+                }
+            }
+            return
+        }
+
+        // ─── Diagnostic response (0xE5 …) ───
+        if firstByte == BluetoothManager.RESP_DIAGNOSTIC {
+            let snapshot = data
+            DispatchQueue.main.async {
+                self.handleDiagnosticResponse(data: snapshot)
+            }
+            return
+        }
+
         // ─── Motion log response (0xE0–0xE3) ───
         if firstByte >= 0xE0 && firstByte <= 0xE3 {
             handleMotionLogResponse(data: data)

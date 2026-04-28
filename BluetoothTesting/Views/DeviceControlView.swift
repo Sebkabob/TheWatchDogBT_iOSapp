@@ -60,6 +60,17 @@ struct DeviceControlView: View {
     @State private var csvShareURL: URL?
     @State private var showShareSheet = false
 
+    // Unpair flow
+    @State private var showUnpairConfirm = false
+    @State private var isUnpairing = false
+    @State private var showUnpairSuccess = false
+    @State private var unpairFailureMessage: String?
+
+    // Diagnostic flow
+    @State private var isFetchingDiagnostic = false
+    @State private var diagnosticSnapshot: DiagnosticSnapshot?
+    @State private var diagnosticErrorMessage: String?
+
     private let lightHaptic = UIImpactFeedbackGenerator(style: .light)
     private let heavyHaptic = UIImpactFeedbackGenerator(style: .heavy)
     
@@ -402,9 +413,107 @@ struct DeviceControlView: View {
                     }
                 }
                 .padding(.horizontal, 20)
-                .padding(.bottom, 20)
+
+                if isDeviceConnected {
+                    Button(role: .destructive) {
+                        showUnpairConfirm = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "personalhotspot.slash")
+                            Text("Unpair WatchDog")
+                        }
+                        .font(.subheadline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                    }
+                    .disabled(isUnpairing)
+                    .padding(.horizontal, 20)
+
+                    Button {
+                        performDiagnostic()
+                    } label: {
+                        HStack(spacing: 6) {
+                            if isFetchingDiagnostic {
+                                ProgressView().scaleEffect(0.7)
+                            } else {
+                                Image(systemName: "stethoscope")
+                            }
+                            Text("Diagnostics")
+                        }
+                        .font(.subheadline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                    }
+                    .disabled(isFetchingDiagnostic || isUnpairing)
+                    .padding(.horizontal, 20)
+                }
             }
+            .padding(.bottom, 20)
             .background(Color(.systemBackground))
+        }
+        .overlay {
+            if isUnpairing {
+                ZStack {
+                    Color.black.opacity(0.4).ignoresSafeArea()
+                    VStack(spacing: 14) {
+                        ProgressView().scaleEffect(1.4)
+                        Text("Unpairing…")
+                            .font(.subheadline)
+                            .foregroundColor(.white)
+                    }
+                    .padding(24)
+                    .background(Color.black.opacity(0.7))
+                    .cornerRadius(12)
+                }
+            }
+        }
+        .alert("Unpair WatchDog?", isPresented: $showUnpairConfirm) {
+            Button("Unpair", role: .destructive) { performUnpair() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will unpair the WatchDog from this iPhone. You'll also need to remove it from Settings → Bluetooth.")
+        }
+        .alert("WatchDog Unpaired", isPresented: $showUnpairSuccess) {
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+                finishUnpairSession()
+            }
+            Button("Done", role: .cancel) { finishUnpairSession() }
+        } message: {
+            Text("Now go to Settings → Bluetooth, tap the (i) next to your WatchDog, and tap 'Forget This Device'.")
+        }
+        .alert(
+            "Unpair Sent",
+            isPresented: Binding(
+                get: { unpairFailureMessage != nil },
+                set: { if !$0 { unpairFailureMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {
+                unpairFailureMessage = nil
+                finishUnpairSession()
+            }
+        } message: {
+            Text(unpairFailureMessage ?? "")
+        }
+        .sheet(item: Binding(
+            get: { diagnosticSnapshot.map { DiagnosticSheetItem(snapshot: $0) } },
+            set: { newValue in if newValue == nil { diagnosticSnapshot = nil } }
+        )) { item in
+            DeviceDiagnosticView(snapshot: item.snapshot)
+        }
+        .alert(
+            "Diagnostics Failed",
+            isPresented: Binding(
+                get: { diagnosticErrorMessage != nil },
+                set: { if !$0 { diagnosticErrorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { diagnosticErrorMessage = nil }
+        } message: {
+            Text(diagnosticErrorMessage ?? "")
         }
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
@@ -626,6 +735,52 @@ struct DeviceControlView: View {
         let cutoff = Date().addingTimeInterval(-180)
         history.removeAll { $0.date < cutoff }
     }
+
+    private func performUnpair() {
+        guard !isUnpairing else { return }
+        isUnpairing = true
+        userInitiatedDisconnect = true
+        bluetoothManager.unpairDevice { result in
+            DispatchQueue.main.async {
+                isUnpairing = false
+                switch result {
+                case .success:
+                    showUnpairSuccess = true
+                case .failure:
+                    unpairFailureMessage = "Unpair sent but no confirmation received. The WatchDog will reset its pairing automatically after a few failed reconnects. You can still remove it from Settings → Bluetooth now."
+                }
+            }
+        }
+    }
+
+    private func finishUnpairSession() {
+        userInitiatedDisconnect = true
+        bluetoothManager.stopReconnecting()
+        NavigationStateManager.shared.saveDeviceList()
+        dismiss()
+    }
+
+    private func performDiagnostic() {
+        guard !isFetchingDiagnostic else { return }
+        isFetchingDiagnostic = true
+        bluetoothManager.requestDiagnostic { result in
+            DispatchQueue.main.async {
+                isFetchingDiagnostic = false
+                switch result {
+                case .success(let snapshot):
+                    diagnosticSnapshot = snapshot
+                case .failure(let error):
+                    diagnosticErrorMessage = (error as? LocalizedError)?.errorDescription
+                        ?? "No response from device."
+                }
+            }
+        }
+    }
+}
+
+private struct DiagnosticSheetItem: Identifiable {
+    let id = UUID()
+    let snapshot: DiagnosticSnapshot
 }
 
 struct DebugInfoRow: View {
