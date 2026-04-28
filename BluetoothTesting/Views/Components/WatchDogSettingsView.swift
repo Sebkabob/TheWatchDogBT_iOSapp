@@ -175,6 +175,8 @@ struct WatchDogSettingsView: View {
                     }
 
                     forgetDeviceSection
+
+                    deviceIdentifierSection
                 }
 
                 applyButton
@@ -497,6 +499,25 @@ struct WatchDogSettingsView: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
+    }
+
+    private var deviceIdentifierSection: some View {
+        Section {
+            EmptyView()
+        } footer: {
+            if let label = watchDogIdentifierLabel {
+                Text(label)
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
+        }
+    }
+
+    private var watchDogIdentifierLabel: String? {
+        guard let deviceID = resolvedDeviceID,
+              let id = bluetoothManager.watchDogIdentifiers[deviceID] else { return nil }
+        return String(format: "WatchDog #%04X", id)
     }
 
     private var applyButton: some View {

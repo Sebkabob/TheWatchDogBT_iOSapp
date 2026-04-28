@@ -75,6 +75,7 @@ class BluetoothManager: NSObject {
     var isFindMyActive: Bool = false
     var mlcState: MLCState = .unknown
     var lastMotionType: MotionEventType = .none
+    var watchDogIdentifiers: [UUID: UInt16] = [:]
     private var alarmClearTimer: Timer?
 
     // Debug data
@@ -976,7 +977,15 @@ extension BluetoothManager: CBPeripheralDelegate {
 
         let deviceInfoByte: UInt8? = data.count >= 14 ? data[13] : nil
 
+        let watchDogID: UInt16? = data.count >= 16
+            ? (UInt16(data[15]) << 8) | UInt16(data[14])
+            : nil
+        let peripheralID = peripheral.identifier
+
         DispatchQueue.main.async {
+            if let watchDogID {
+                self.watchDogIdentifiers[peripheralID] = watchDogID
+            }
             self.deviceState = settingsByte
             self.hasReceivedInitialState = true
             self.settingsManager.decodeSettings(from: settingsByte)
