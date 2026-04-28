@@ -90,6 +90,9 @@ class BluetoothManager: NSObject {
     var connectionStartTime: Date?
     var connectionDuration: TimeInterval = 0
 
+    // Battery diagnostic (BQ27427 fuel gauge telemetry)
+    var batteryDiagnostic: BatteryDiagnostic?
+
     // Motion log sync state
     var pendingEventCount: Int = 0
     var isSyncingMotionLogs: Bool = false
@@ -102,6 +105,7 @@ class BluetoothManager: NSObject {
     private var notifyCharacteristic: CBCharacteristic?
     
     private let targetServiceUUID = CBUUID(string: "183E")
+    private let batteryDiagCharacteristicUUID = CBUUID(string: "00000000-0000-0000-0000-000000004442")
     
     // ── Scan throttle ────────────────────────────────────────────────
     private var lastRSSIUpdate: [UUID: Date] = [:]
@@ -142,6 +146,7 @@ class BluetoothManager: NSObject {
     private let CMD_ACK_EVENT: UInt8         = 0xF3
     private let CMD_PING: UInt8 = 0xFA
     private let CMD_RESET_DEVICE: UInt8 = 0xFB
+    private let CMD_DRAIN_MODE: UInt8 = 0xFC
     
     var deviceStateText: String {
         let isArmed = (deviceState & 0x01) != 0
@@ -355,6 +360,7 @@ class BluetoothManager: NSObject {
         isFindMyActive = false
         mlcState = .unknown
         lastMotionType = .none
+        batteryDiagnostic = nil
         alarmClearTimer?.invalidate()
         alarmClearTimer = nil
         debugCurrentDraw = 0.0
@@ -428,6 +434,26 @@ class BluetoothManager: NSObject {
         let data = Data([CMD_RESET_DEVICE])
         sendData(data)
         print("🔄 Sent device reset command")
+    }
+
+    func sendStartDrain() {
+        guard connectedDevice != nil else {
+            print("❌ Cannot start drain - not connected")
+            return
+        }
+        let data = Data([CMD_DRAIN_MODE, 0x01])
+        sendData(data)
+        print("🔋 Sent drain mode START")
+    }
+
+    func sendStopDrain() {
+        guard connectedDevice != nil else {
+            print("❌ Cannot stop drain - not connected")
+            return
+        }
+        let data = Data([CMD_DRAIN_MODE, 0x00])
+        sendData(data)
+        print("🔋 Sent drain mode STOP")
     }
 
     // MARK: - Motion Log Sync
@@ -864,9 +890,19 @@ extension BluetoothManager: CBPeripheralDelegate {
             print("❌ Error reading characteristic: \(error.localizedDescription)")
             return
         }
-        
+
         guard let data = characteristic.value, data.count >= 1 else { return }
-        
+
+        // ─── Battery diagnostic characteristic (BQ27427 telemetry) ───
+        if characteristic.uuid == batteryDiagCharacteristicUUID {
+            if let diag = BatteryDiagnostic(data) {
+                DispatchQueue.main.async {
+                    self.batteryDiagnostic = diag
+                }
+            }
+            return
+        }
+
         let firstByte = data[0]
         
         // ─── Motion alert (0xFF) ───

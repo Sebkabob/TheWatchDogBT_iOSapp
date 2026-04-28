@@ -25,6 +25,7 @@ struct DevicePageView: View {
     
     // Sheets
     @State private var showMotionLogs = false
+    @State private var showBatteryDiag = false
     
     // Track model visibility with animation
     @State private var showModel = false
@@ -371,6 +372,20 @@ struct DevicePageView: View {
                                     showShareSheet = true
                                 }
                             }
+
+                            Divider()
+
+                            Button {
+                                showBatteryDiag = true
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "battery.100.bolt")
+                                    Text("Gauge Health")
+                                }
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundColor(.orange)
+                            }
+                            .buttonStyle(.plain)
                         }
                         .padding(8)
                         .background(Color(.systemBackground).opacity(0.9))
@@ -503,6 +518,11 @@ struct DevicePageView: View {
         .sheet(isPresented: $showMotionLogs) {
             NavigationStack {
                 MotionLogsView(bluetoothManager: bluetoothManager, deviceID: deviceID)
+            }
+        }
+        .sheet(isPresented: $showBatteryDiag) {
+            NavigationStack {
+                BatteryDiagnosticView(bluetoothManager: bluetoothManager)
             }
         }
         .onAppear {
