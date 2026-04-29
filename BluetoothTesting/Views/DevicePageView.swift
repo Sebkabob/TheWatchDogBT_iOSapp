@@ -55,6 +55,12 @@ struct DevicePageView: View {
     @State private var csvShareURL: URL?
     @State private var showShareSheet = false
 
+    // Diagnostic flow
+    @State private var isFetchingDiagnostic = false
+    @State private var diagnosticSnapshot: DiagnosticSnapshot?
+    @State private var showDiagnostic = false
+    @State private var diagnosticErrorMessage: String?
+
     private let lightHaptic = UIImpactFeedbackGenerator(style: .light)
     private let heavyHaptic = UIImpactFeedbackGenerator(style: .heavy)
 
@@ -386,6 +392,23 @@ struct DevicePageView: View {
                                 .foregroundColor(.orange)
                             }
                             .buttonStyle(.plain)
+
+                            Button {
+                                performDiagnostic()
+                            } label: {
+                                HStack(spacing: 4) {
+                                    if isFetchingDiagnostic {
+                                        ProgressView().scaleEffect(0.5)
+                                    } else {
+                                        Image(systemName: "stethoscope")
+                                    }
+                                    Text("Diagnostics")
+                                }
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundColor(.yellow)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isFetchingDiagnostic)
                         }
                         .padding(8)
                         .background(Color(.systemBackground).opacity(0.9))
@@ -610,6 +633,42 @@ struct DevicePageView: View {
         .sheet(isPresented: $showShareSheet) {
             if let url = csvShareURL {
                 ShareSheet(activityItems: [url])
+            }
+        }
+        .sheet(isPresented: $showDiagnostic, onDismiss: { diagnosticSnapshot = nil }) {
+            if let snapshot = diagnosticSnapshot {
+                DeviceDiagnosticView(snapshot: snapshot)
+            }
+        }
+        .alert(
+            "Diagnostics Failed",
+            isPresented: Binding(
+                get: { diagnosticErrorMessage != nil },
+                set: { if !$0 { diagnosticErrorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { diagnosticErrorMessage = nil }
+        } message: {
+            Text(diagnosticErrorMessage ?? "")
+        }
+    }
+
+    // MARK: - Diagnostic
+
+    private func performDiagnostic() {
+        guard !isFetchingDiagnostic else { return }
+        isFetchingDiagnostic = true
+        bluetoothManager.requestDiagnostic { result in
+            DispatchQueue.main.async {
+                isFetchingDiagnostic = false
+                switch result {
+                case .success(let snapshot):
+                    diagnosticSnapshot = snapshot
+                    showDiagnostic = true
+                case .failure(let error):
+                    diagnosticErrorMessage = (error as? LocalizedError)?.errorDescription
+                        ?? "No response from device."
+                }
             }
         }
     }
