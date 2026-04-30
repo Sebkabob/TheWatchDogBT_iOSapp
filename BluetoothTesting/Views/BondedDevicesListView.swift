@@ -313,14 +313,26 @@ struct BondedDevicesListView: View {
     private func forgetDevice(_ device: BondedDevice) {
         let displayName = nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
         print("🗑️ Forgetting device: \(displayName)")
-        
-        if bluetoothManager.connectedDevice?.id == device.id,
-           let connectedDevice = bluetoothManager.connectedDevice {
-            bluetoothManager.disconnect(from: connectedDevice)
-        }
-        
-        bondManager.removeBond(deviceID: device.id)
         deviceToDelete = nil
+
+        let isConnected = bluetoothManager.connectedDevice?.id == device.id
+
+        let completion: (Result<Void, Error>) -> Void = { result in
+            switch result {
+            case .success:
+                print("✅ Forget: UNBOND acked, local state cleared")
+            case .failure(let error):
+                print("⚠️ Forget: UNBOND failed — \(error.localizedDescription)")
+                // Strategy B: firmware will recover via cable-hold reset
+                // or a future claim that overwrites the EEPROM.
+            }
+        }
+
+        if isConnected {
+            bluetoothManager.unpairDevice(completion: completion)
+        } else {
+            bluetoothManager.unpairDeviceWhileDisconnected(deviceID: device.id, completion: completion)
+        }
     }
 }
 

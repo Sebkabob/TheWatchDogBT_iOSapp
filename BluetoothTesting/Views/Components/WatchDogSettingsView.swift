@@ -625,11 +625,21 @@ struct WatchDogSettingsView: View {
     private func forgetDevice() {
         guard let deviceID = resolvedDeviceID else { return }
 
-        if let device = bluetoothManager.connectedDevice, device.id == deviceID {
-            bluetoothManager.disconnect(from: device)
+        let completion: (Result<Void, Error>) -> Void = { result in
+            switch result {
+            case .success:
+                print("✅ Forget (settings): UNBOND acked")
+            case .failure(let error):
+                print("⚠️ Forget (settings): UNBOND failed — \(error.localizedDescription)")
+            }
         }
 
-        bondManager.removeBond(deviceID: deviceID)
+        if let device = bluetoothManager.connectedDevice, device.id == deviceID {
+            bluetoothManager.unpairDevice(completion: completion)
+        } else {
+            bluetoothManager.unpairDeviceWhileDisconnected(deviceID: deviceID, completion: completion)
+        }
+
         dismiss()
     }
 }

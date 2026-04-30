@@ -291,6 +291,14 @@ class BluetoothManager: NSObject {
     private var diagnosticCompletion: ((Result<DiagnosticSnapshot, Error>) -> Void)?
     private var diagnosticTimer: Timer?
     private let diagnosticTimeout: TimeInterval = 2.0
+
+    // ── Unpair-while-disconnected state ──────────────────────────────
+    // Set by unpairDeviceWhileDisconnected; consumed by didDiscoverCharacteristicsFor
+    // *instead of* the normal CLAIM/VERIFY handshake.
+    private var pendingUnbondAfterConnect: UUID?
+    private var pendingUnbondCompletion:   ((Result<Void, Error>) -> Void)?
+    private var unpairConnectTimer:        Timer?
+    private let unpairConnectTimeout:      TimeInterval = 8.0
     
     var deviceStateText: String {
         let isArmed = (deviceState & 0x01) != 0
@@ -658,6 +666,42 @@ class BluetoothManager: NSObject {
         }
     }
 
+    /// Connect to a previously-bonded device specifically to send UNBOND, then
+    /// disconnect and clear local state. Used by "Forget" UI when the device
+    /// isn't currently connected so the firmware EEPROM is actually wiped.
+    func unpairDeviceWhileDisconnected(deviceID: UUID, completion: @escaping (Result<Void, Error>) -> Void) {
+        if connectedDevice?.peripheral.identifier == deviceID {
+            unpairDevice(completion: completion)
+            return
+        }
+
+        guard pendingUnbondCompletion == nil else {
+            print("⚠️ Unpair-while-disconnected already in progress")
+            return
+        }
+
+        pendingUnbondAfterConnect = deviceID
+        pendingUnbondCompletion   = completion
+
+        connectByID(deviceID)
+
+        DispatchQueue.main.async {
+            self.unpairConnectTimer?.invalidate()
+            self.unpairConnectTimer = Timer.scheduledTimer(withTimeInterval: self.unpairConnectTimeout, repeats: false) { [weak self] _ in
+                guard let self = self,
+                      self.pendingUnbondAfterConnect == deviceID,
+                      let cb = self.pendingUnbondCompletion else { return }
+                print("⏱️ Unpair-while-disconnected: connect timeout")
+                self.pendingUnbondAfterConnect = nil
+                self.pendingUnbondCompletion = nil
+                self.unpairConnectTimer = nil
+                self.suppressAutoReconnect = true
+                self.stopReconnecting()
+                cb(.failure(UnpairError.notConnected))
+            }
+        }
+    }
+
     private func handleUnpairAck() {
         guard unpairCompletion != nil else { return }
         print("✅ Received unpair ack [0xE4, 0x01]")
@@ -708,6 +752,9 @@ class BluetoothManager: NSObject {
         let opcode: UInt8 = isFirstClaim ? CMD_CLAIM_DEVICE : CMD_VERIFY_OWNER
         var payload = Data([opcode])
         payload.append(token)
+
+        let tokenHex = token.map { String(format: "%02X", $0) }.joined()
+        print("📋 Loyalty: token=\(tokenHex) opcode=\(isFirstClaim ? "CLAIM" : "VERIFY")")
 
         peripheral.writeValue(payload, for: writeChar, type: .withResponse)
         DispatchQueue.main.async { [weak self] in
@@ -1294,8 +1341,21 @@ extension BluetoothManager: CBPeripheralDelegate {
         }
         
         // Loyalty handshake — gates all subsequent normal commands.
+        // Exception: if the user invoked unpair-while-disconnected and we
+        // connected specifically to send UNBOND, route there instead.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            self?.startLoyaltyHandshake()
+            guard let self = self else { return }
+            if let pending = self.pendingUnbondAfterConnect,
+               pending == peripheral.identifier {
+                self.pendingUnbondAfterConnect = nil
+                self.unpairConnectTimer?.invalidate()
+                self.unpairConnectTimer = nil
+                let cb = self.pendingUnbondCompletion ?? { _ in }
+                self.pendingUnbondCompletion = nil
+                self.unpairDevice(completion: cb)
+            } else {
+                self.startLoyaltyHandshake()
+            }
         }
     }
     
