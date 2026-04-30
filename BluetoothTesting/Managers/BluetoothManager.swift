@@ -252,8 +252,34 @@ class BluetoothManager: NSObject {
     private let CMD_PING: UInt8 = 0xFA
     private let CMD_RESET_DEVICE: UInt8 = 0xFB
     private let CMD_DRAIN_MODE: UInt8 = 0xFC
-    private let CMD_UNPAIR_DEVICE: UInt8 = 0xFD
     static let CMD_READ_DIAGNOSTIC: UInt8 = 0xFE
+
+    // ── Loyalty token opcodes (iOS → APPTOWD) ─────────────────────────
+    private let CMD_UNBOND_DEVICE: UInt8 = 0xC0
+    private let CMD_CLAIM_DEVICE:  UInt8 = 0xC1
+    private let CMD_VERIFY_OWNER:  UInt8 = 0xC2
+
+    // ── Loyalty token responses (firmware → iOS via DEVICESTATUS) ─────
+    private let RESP_CLAIM_OK:  UInt8 = 0xE7
+    private let RESP_REJECT:    UInt8 = 0xE8
+    private let RESP_VERIFY_OK: UInt8 = 0xE9
+    // RESP_UNPAIR_ACK (0xE4) already declared above — reused for UNBOND_OK
+
+    // ── Loyalty handshake state ──────────────────────────────────────
+    enum LoyaltyState: Equatable {
+        case idle
+        case awaitingClaimAck
+        case awaitingVerifyAck
+        case verified
+        case rejected
+        case awaitingUnbondAck
+    }
+
+    var loyaltyState: LoyaltyState = .idle
+    var notYourDeviceAlert: String?
+
+    private var loyaltyTimer: Timer?
+    private let loyaltyTimeout: TimeInterval = 1.5
 
     // ── Unpair flow state ────────────────────────────────────────────
     private var unpairCompletion: ((Result<Void, Error>) -> Void)?
@@ -488,6 +514,9 @@ class BluetoothManager: NSObject {
         pendingEventCount = 0
         isSyncingMotionLogs = false
         stopMotionLogPolling()
+        loyaltyTimer?.invalidate()
+        loyaltyTimer = nil
+        loyaltyState = .idle
     }
     
     // MARK: - Battery / charging state helper
@@ -510,20 +539,33 @@ class BluetoothManager: NSObject {
 
     // MARK: - Data Sending
 
+    /// Send a regular (non-loyalty) command. Prepends the 4-byte loyalty
+    /// token; drops the write if the loyalty handshake hasn't completed.
+    /// Loyalty opcodes (CLAIM/VERIFY/UNBOND) bypass this and write directly.
     func sendData(_ data: Data) {
         guard let characteristic = writeCharacteristic,
               let peripheral = connectedDevice?.peripheral else {
             print("❌ No writable characteristic found")
             return
         }
-        
-        peripheral.writeValue(data, for: characteristic, type: .withResponse)
-        
-        let hexString = data.map { String(format: "%02X", $0) }.joined(separator: " ")
-        DispatchQueue.main.async {
-            self.lastSentData = "0x\(hexString) (\(data.count) bytes)"
+        guard let token = LoyaltyTokenStore.shared.token else {
+            print("❌ sendData: no loyalty token available")
+            return
         }
-        print("📤 Sent: 0x\(hexString) (\(data.count) bytes)")
+        guard loyaltyState == .verified else {
+            print("⚠️ sendData dropped — loyalty not verified (state=\(loyaltyState))")
+            return
+        }
+
+        var prefixed = token
+        prefixed.append(data)
+        peripheral.writeValue(prefixed, for: characteristic, type: .withResponse)
+
+        let hexString = prefixed.map { String(format: "%02X", $0) }.joined(separator: " ")
+        DispatchQueue.main.async {
+            self.lastSentData = "0x\(hexString) (\(prefixed.count) bytes)"
+        }
+        print("📤 Sent: 0x\(hexString) (\(prefixed.count) bytes)")
     }
     
     func sendSettings() {
@@ -583,7 +625,8 @@ class BluetoothManager: NSObject {
     /// Strategy B recovers if the ack is missed.
     func unpairDevice(completion: @escaping (Result<Void, Error>) -> Void) {
         guard let peripheral = connectedDevice?.peripheral,
-              let writeChar = writeCharacteristic else {
+              let writeChar = writeCharacteristic,
+              let token     = LoyaltyTokenStore.shared.token else {
             completion(.failure(UnpairError.notConnected))
             return
         }
@@ -596,13 +639,14 @@ class BluetoothManager: NSObject {
         pendingUnpairDeviceID = peripheral.identifier
         unpairCompletion = completion
 
-        let data = Data([CMD_UNPAIR_DEVICE])
+        var data = Data([CMD_UNBOND_DEVICE])
+        data.append(token)
         peripheral.writeValue(data, for: writeChar, type: .withResponse)
         let hexString = data.map { String(format: "%02X", $0) }.joined(separator: " ")
         DispatchQueue.main.async {
             self.lastSentData = "0x\(hexString) (\(data.count) bytes)"
         }
-        print("📤 Sent unpair (0xFD)")
+        print("📤 Sent unbond (0xC0 + token)")
 
         DispatchQueue.main.async {
             self.unpairTimer?.invalidate()
@@ -645,13 +689,122 @@ class BluetoothManager: NSObject {
         }
     }
 
+    // MARK: - Loyalty Handshake (CLAIM/VERIFY/REJECT)
+
+    private func startLoyaltyHandshake() {
+        guard let peripheral = connectedDevice?.peripheral,
+              let writeChar  = writeCharacteristic,
+              let token      = LoyaltyTokenStore.shared.token else {
+            print("❌ Loyalty handshake: missing prerequisites")
+            return
+        }
+
+        // Re-read bond state at the latest possible moment. If we just
+        // unpaired, BondManager will already reflect the removal. A stale
+        // isBonded() value would cause us to send VERIFY against an empty
+        // EEPROM and get REJECTed — the reported re-pair-after-unpair bug.
+        let isFirstClaim = !BondManager.shared.isBonded(deviceID: peripheral.identifier)
+
+        let opcode: UInt8 = isFirstClaim ? CMD_CLAIM_DEVICE : CMD_VERIFY_OWNER
+        var payload = Data([opcode])
+        payload.append(token)
+
+        peripheral.writeValue(payload, for: writeChar, type: .withResponse)
+        DispatchQueue.main.async { [weak self] in
+            self?.loyaltyState = isFirstClaim ? .awaitingClaimAck : .awaitingVerifyAck
+            self?.startLoyaltyTimer()
+            let hex = payload.map { String(format: "%02X", $0) }.joined(separator: " ")
+            self?.lastSentData = "0x\(hex) (\(payload.count) bytes)"
+        }
+        print("📤 Loyalty: sent \(isFirstClaim ? "CLAIM" : "VERIFY") (deviceID bond=\(BondManager.shared.isBonded(deviceID: peripheral.identifier)))")
+    }
+
+    private func startLoyaltyTimer() {
+        loyaltyTimer?.invalidate()
+        loyaltyTimer = Timer.scheduledTimer(withTimeInterval: loyaltyTimeout, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            DispatchQueue.main.async {
+                print("⏱️ Loyalty: timeout in state \(self.loyaltyState)")
+                self.handleLoyaltyTimeout()
+            }
+        }
+    }
+
+    private func handleLoyaltyTimeout() {
+        switch loyaltyState {
+        case .awaitingClaimAck, .awaitingVerifyAck:
+            notYourDeviceAlert = "Couldn't reach this WatchDog. Try again."
+            if let peripheral = connectedDevice?.peripheral {
+                centralManager.cancelPeripheralConnection(peripheral)
+            }
+            loyaltyState = .idle
+        default:
+            break
+        }
+    }
+
+    private func handleClaimOk() {
+        print("✅ Loyalty: CLAIM_OK")
+        loyaltyTimer?.invalidate(); loyaltyTimer = nil
+        loyaltyState = .verified
+        if let peripheral = connectedDevice?.peripheral {
+            let name = connectedDevice?.name ?? "WatchDog"
+            BondManager.shared.addBond(deviceID: peripheral.identifier, name: name)
+        }
+        onLoyaltyVerifiedHook()
+    }
+
+    private func handleVerifyOk() {
+        print("✅ Loyalty: VERIFY_OK")
+        loyaltyTimer?.invalidate(); loyaltyTimer = nil
+        loyaltyState = .verified
+        onLoyaltyVerifiedHook()
+    }
+
+    private func handleReject() {
+        print("⛔️ Loyalty: REJECT — not this iPhone's WatchDog")
+        loyaltyTimer?.invalidate(); loyaltyTimer = nil
+        loyaltyState = .rejected
+
+        let rejectedID = connectedDevice?.peripheral.identifier
+        let wasBonded  = rejectedID.map { BondManager.shared.isBonded(deviceID: $0) } ?? false
+
+        DispatchQueue.main.async { [weak self] in
+            if wasBonded, let id = rejectedID {
+                // We thought we owned this WatchDog but the firmware says no.
+                // Most likely cause: device was hardware-reset (cable-hold) on
+                // the firmware side and is now unowned. Clear local bond so
+                // the user can re-claim it on the next tap.
+                BondManager.shared.removeBond(deviceID: id)
+                self?.notYourDeviceAlert = "This WatchDog has been reset. Tap it again to re-pair."
+            } else {
+                self?.notYourDeviceAlert = "Oops! Not your device!"
+            }
+        }
+
+        if let peripheral = connectedDevice?.peripheral {
+            suppressAutoReconnect = true
+            centralManager.cancelPeripheralConnection(peripheral)
+        }
+    }
+
+    /// Called once after CLAIM_OK or VERIFY_OK. Triggers the deferred
+    /// "we're now ready to send normal commands" work that used to run
+    /// unconditionally 1.0 s post-connect.
+    private func onLoyaltyVerifiedHook() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self = self, self.connectedDevice != nil else { return }
+            self.requestMotionLogCount()
+        }
+    }
+
     // MARK: - Diagnostic (0xFE → 0xE5 …)
 
     /// Request a one-shot diagnostic snapshot from the WatchDog.
     /// `completion` fires on the main thread with the parsed snapshot or an error.
     func requestDiagnostic(completion: @escaping (Result<DiagnosticSnapshot, Error>) -> Void) {
-        guard let peripheral = connectedDevice?.peripheral,
-              let writeChar = writeCharacteristic else {
+        guard connectedDevice?.peripheral != nil,
+              writeCharacteristic != nil else {
             completion(.failure(DiagnosticError.notConnected))
             return
         }
@@ -663,12 +816,7 @@ class BluetoothManager: NSObject {
 
         diagnosticCompletion = completion
 
-        let data = Data([BluetoothManager.CMD_READ_DIAGNOSTIC])
-        peripheral.writeValue(data, for: writeChar, type: .withResponse)
-        let hexString = data.map { String(format: "%02X", $0) }.joined(separator: " ")
-        DispatchQueue.main.async {
-            self.lastSentData = "0x\(hexString) (\(data.count) bytes)"
-        }
+        sendData(Data([BluetoothManager.CMD_READ_DIAGNOSTIC]))
         print("📤 Sent diagnostic request (0xFE)")
 
         DispatchQueue.main.async {
@@ -703,12 +851,16 @@ class BluetoothManager: NSObject {
     }
 
     private func clearLocalStateAfterUnpair(for deviceID: UUID) {
-        DispatchQueue.main.async {
-            if self.reconnectTargetDeviceID == deviceID {
-                self.reconnectTargetDeviceID = nil
-                self.isAttemptingReconnect = false
+        // Synchronous main-thread cleanup: must complete before any
+        // re-pair attempt can read BondManager. Otherwise a fast retap
+        // would see isBonded=true and send VERIFY against an empty EEPROM.
+        let work = { [self] in
+            if reconnectTargetDeviceID == deviceID {
+                reconnectTargetDeviceID = nil
+                isAttemptingReconnect = false
             }
-            self.watchDogIdentifiers.removeValue(forKey: deviceID)
+            watchDogIdentifiers.removeValue(forKey: deviceID)
+            loyaltyState = .idle
 
             if NavigationStateManager.shared.lastDeviceID == deviceID {
                 NavigationStateManager.shared.saveDeviceList()
@@ -716,6 +868,12 @@ class BluetoothManager: NSObject {
 
             MotionLogManager.shared.clearAllEvents(for: deviceID)
             BondManager.shared.removeBond(deviceID: deviceID)
+        }
+
+        if Thread.isMainThread {
+            work()
+        } else {
+            DispatchQueue.main.sync(execute: work)
         }
     }
 
@@ -1135,10 +1293,9 @@ extension BluetoothManager: CBPeripheralDelegate {
             }
         }
         
-        // One-shot sync on connect
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            guard let self = self, self.connectedDevice != nil else { return }
-            self.requestMotionLogCount()
+        // Loyalty handshake — gates all subsequent normal commands.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.startLoyaltyHandshake()
         }
     }
     
@@ -1167,7 +1324,24 @@ extension BluetoothManager: CBPeripheralDelegate {
         }
 
         let firstByte = data[0]
-        
+
+        // ─── Loyalty handshake responses ───
+        if data.count >= 2 {
+            switch firstByte {
+            case RESP_CLAIM_OK:
+                DispatchQueue.main.async { self.handleClaimOk() }
+                return
+            case RESP_VERIFY_OK:
+                DispatchQueue.main.async { self.handleVerifyOk() }
+                return
+            case RESP_REJECT:
+                DispatchQueue.main.async { self.handleReject() }
+                return
+            default:
+                break
+            }
+        }
+
         // ─── Motion alert (0xFF) ───
         if firstByte == MOTION_ALERT_MARKER {
             let motionType: MotionEventType

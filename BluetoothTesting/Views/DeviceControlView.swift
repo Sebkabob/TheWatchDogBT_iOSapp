@@ -515,6 +515,22 @@ struct DeviceControlView: View {
         } message: {
             Text(diagnosticErrorMessage ?? "")
         }
+        .alert(
+            "Oops!",
+            isPresented: Binding(
+                get: { bluetoothManager.notYourDeviceAlert != nil },
+                set: { if !$0 { bluetoothManager.notYourDeviceAlert = nil } }
+            ),
+            presenting: bluetoothManager.notYourDeviceAlert
+        ) { _ in
+            Button("OK", role: .cancel) {
+                bluetoothManager.notYourDeviceAlert = nil
+                userInitiatedDisconnect = true
+                dismiss()
+            }
+        } message: { msg in
+            Text(msg)
+        }
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
         .statusBar(hidden: true)

@@ -145,10 +145,10 @@ struct AddNewDeviceView: View {
                 checkForDevice()
             }
         }
-        .onChange(of: bluetoothManager.connectedDevice) { _, connected in
-            guard let id = phase.deviceID,
-                  case .pairing = phase,
-                  let connected,
+        .onChange(of: bluetoothManager.loyaltyState) { _, state in
+            guard state == .verified,
+                  case .pairing(let id) = phase,
+                  let connected = bluetoothManager.connectedDevice,
                   connected.id == id else { return }
             completePairing(device: connected)
         }
@@ -166,6 +166,25 @@ struct AddNewDeviceView: View {
                     }
                 }
             }
+        }
+        .alert(
+            "Oops!",
+            isPresented: Binding(
+                get: { bluetoothManager.notYourDeviceAlert != nil },
+                set: { if !$0 { bluetoothManager.notYourDeviceAlert = nil } }
+            ),
+            presenting: bluetoothManager.notYourDeviceAlert
+        ) { _ in
+            Button("OK", role: .cancel) {
+                bluetoothManager.notYourDeviceAlert = nil
+                withAnimation(.easeInOut(duration: 0.4)) {
+                    glowActive = false
+                    modelVisible = false
+                    phase = .searching
+                }
+            }
+        } message: { msg in
+            Text(msg)
         }
     }
 
@@ -369,7 +388,7 @@ struct AddNewDeviceView: View {
         guard !pairingDone else { return }
         pairingDone = true
 
-        bondManager.addBond(deviceID: device.id, name: device.name)
+        // Bond is added by BluetoothManager.handleClaimOk after CLAIM_OK.
 
         let elapsed = pairingStartTime.map { Date().timeIntervalSince($0) } ?? 1.0
         let remaining = max(0, 1.0 - elapsed)
