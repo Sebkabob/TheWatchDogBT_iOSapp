@@ -825,7 +825,7 @@ class BluetoothManager: NSObject {
                 BondManager.shared.removeBond(deviceID: id)
                 self?.notYourDeviceAlert = "This WatchDog has been reset. Tap it again to re-pair."
             } else {
-                self?.notYourDeviceAlert = "Oops! Not your device!"
+                self?.notYourDeviceAlert = "Not your device!"
             }
         }
 
