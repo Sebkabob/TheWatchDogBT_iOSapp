@@ -166,7 +166,6 @@ class BluetoothManager: NSObject {
     var isScanning = false
     var isBluetoothReady = false
     var connectedDevice: BluetoothDevice?
-    var lastSentData: String = ""
     var deviceState: UInt8 = 0
     var hasReceivedInitialState = false
     var batteryLevel: Int = -1
@@ -501,7 +500,6 @@ class BluetoothManager: NSObject {
         connectedDevice = nil
         writeCharacteristic = nil
         notifyCharacteristic = nil
-        lastSentData = ""
         deviceState = 0
         hasReceivedInitialState = false
         batteryLevel = -1
@@ -568,12 +566,7 @@ class BluetoothManager: NSObject {
         var prefixed = token
         prefixed.append(data)
         peripheral.writeValue(prefixed, for: characteristic, type: .withResponse)
-
-        let hexString = prefixed.map { String(format: "%02X", $0) }.joined(separator: " ")
-        DispatchQueue.main.async {
-            self.lastSentData = "0x\(hexString) (\(prefixed.count) bytes)"
-        }
-        print("📤 Sent: 0x\(hexString) (\(prefixed.count) bytes)")
+        print("📤 Sent: \(prefixed.count) bytes")
     }
     
     func sendSettings() {
@@ -651,10 +644,6 @@ class BluetoothManager: NSObject {
         var data = Data([CMD_UNBOND_DEVICE])
         data.append(token)
         peripheral.writeValue(data, for: writeChar, type: .withResponse)
-        let hexString = data.map { String(format: "%02X", $0) }.joined(separator: " ")
-        DispatchQueue.main.async {
-            self.lastSentData = "0x\(hexString) (\(data.count) bytes)"
-        }
         print("📤 Sent unbond (0xC0 + token)")
 
         DispatchQueue.main.async {
@@ -761,8 +750,6 @@ class BluetoothManager: NSObject {
         DispatchQueue.main.async { [weak self] in
             self?.loyaltyState = isFirstClaim ? .awaitingClaimAck : .awaitingVerifyAck
             self?.startLoyaltyTimer()
-            let hex = payload.map { String(format: "%02X", $0) }.joined(separator: " ")
-            self?.lastSentData = "0x\(hex) (\(payload.count) bytes)"
         }
         print("📤 Loyalty: sent \(isFirstClaim ? "CLAIM" : "VERIFY") (deviceID bond=\(BondManager.shared.isBonded(deviceID: peripheral.identifier)))")
     }
@@ -1529,9 +1516,12 @@ extension BluetoothManager: CBPeripheralDelegate {
             self.accelYHistory.append((date: now, value: Double(accelY)))
             self.accelZHistory.append((date: now, value: Double(accelZ)))
             let cutoff = now.addingTimeInterval(-self.accelHistoryDuration)
-            self.accelXHistory.removeAll { $0.date < cutoff }
-            self.accelYHistory.removeAll { $0.date < cutoff }
-            self.accelZHistory.removeAll { $0.date < cutoff }
+            // All three arrays append in lockstep, so they share the same cutoff index.
+            if let dropCount = self.accelXHistory.firstIndex(where: { $0.date >= cutoff }), dropCount > 0 {
+                self.accelXHistory.removeFirst(dropCount)
+                self.accelYHistory.removeFirst(dropCount)
+                self.accelZHistory.removeFirst(dropCount)
+            }
         }
     }
     

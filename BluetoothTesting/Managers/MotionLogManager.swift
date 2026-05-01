@@ -23,19 +23,12 @@ class MotionLogManager {
     // MARK: - Motion Event Management
     
     func addMotionEvent(_ event: MotionEvent) {
-        motionEvents.append(event)
-        motionEvents.sort { $0.timestamp > $1.timestamp }  // Most recent first
+        let insertIndex = motionEvents.firstIndex { $0.timestamp <= event.timestamp } ?? motionEvents.endIndex
+        motionEvents.insert(event, at: insertIndex)
         saveMotionEvents()
         print("✅ Added motion event: \(event.eventType.displayName) at \(event.timestamp)")
     }
-    
-    func addMotionEvents(_ events: [MotionEvent]) {
-        motionEvents.append(contentsOf: events)
-        motionEvents.sort { $0.timestamp > $1.timestamp }
-        saveMotionEvents()
-        print("✅ Added \(events.count) motion events")
-    }
-    
+
     func clearAllEvents(for deviceID: UUID) {
         motionEvents.removeAll { $0.deviceID == deviceID }
         saveMotionEvents()
@@ -77,34 +70,6 @@ class MotionLogManager {
         return Set(eventsForDevice(deviceID).map { event in
             calendar.startOfDay(for: event.timestamp)
         })
-    }
-    
-    // MARK: - Sync with WatchDog
-    
-    /// Process incoming motion event data from WatchDog
-    func processIncomingEvents(data: Data, deviceID: UUID) {
-        guard data.count % 10 == 0 else {
-            print("❌ Invalid motion events data length: \(data.count)")
-            return
-        }
-
-        let eventCount = data.count / 10
-        var newEvents: [MotionEvent] = []
-
-        for i in 0..<eventCount {
-            let startIndex = i * 10
-            let endIndex = startIndex + 10
-            let eventData = data[startIndex..<endIndex]
-
-            if let event = MotionEvent.decode(from: Data(eventData), deviceID: deviceID) {
-                newEvents.append(event)
-            }
-        }
-
-        if !newEvents.isEmpty {
-            addMotionEvents(newEvents)
-            print("📥 Synced \(newEvents.count) motion events from WatchDog")
-        }
     }
     
     // MARK: - Persistence

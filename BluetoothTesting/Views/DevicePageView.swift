@@ -589,6 +589,8 @@ struct DevicePageView: View {
         }
         .onDisappear {
             stopGraphUpdates()
+            devTapResetTask?.cancel()
+            devTapResetTask = nil
         }
         .onChange(of: lockSyncSignal) { _, _ in
             syncLockedFromDeviceIfApplicable()

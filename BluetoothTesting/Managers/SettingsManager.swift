@@ -38,7 +38,6 @@ class SettingsManager {
     private let lightsKey = "watchdog_lights"
     private let loggingKey = "watchdog_logging"
     private let disableAlarmWhenConnectedKey = "watchdog_disable_alarm_connected"
-    private let highPerformanceModeKey = "watchdog_high_performance_mode"
     private let alarmTriggersKey = "watchdog_alarm_triggers"
     private let selectedPresetKey = "watchdog_selected_preset"
 
@@ -227,7 +226,6 @@ class SettingsManager {
         ud.set(lightsEnabled, forKey: deviceKey(lightsKey, deviceID))
         ud.set(loggingEnabled, forKey: deviceKey(loggingKey, deviceID))
         ud.set(disableAlarmWhenConnected, forKey: deviceKey(disableAlarmWhenConnectedKey, deviceID))
-        ud.set(highPerformanceMode, forKey: deviceKey(highPerformanceModeKey, deviceID))
         ud.set(alarmTriggers.map { $0.rawValue }, forKey: deviceKey(alarmTriggersKey, deviceID))
         ud.set(selectedPresetRawValue, forKey: deviceKey(selectedPresetKey, deviceID))
     }

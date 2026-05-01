@@ -476,7 +476,8 @@ struct CalendarView: View {
         var currentDate = monthInterval.start
         while currentDate < monthInterval.end {
             days.append(currentDate)
-            currentDate = calendar.date(byAdding: .day, value: 1, to: currentDate)!
+            guard let next = calendar.date(byAdding: .day, value: 1, to: currentDate) else { break }
+            currentDate = next
         }
         
         return days
