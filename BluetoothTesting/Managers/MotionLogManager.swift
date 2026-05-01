@@ -42,18 +42,6 @@ class MotionLogManager {
         print("🗑️ Cleared all motion events for device \(deviceID.uuidString.prefix(8))")
     }
 
-    func deleteEvents(for date: Date, deviceID: UUID) {
-        let calendar = Calendar.current
-        let dayStart = calendar.startOfDay(for: date)
-
-        motionEvents.removeAll { event in
-            event.deviceID == deviceID && calendar.isDate(event.timestamp, inSameDayAs: dayStart)
-        }
-
-        saveMotionEvents()
-        print("🗑️ Deleted events for \(dayStart) on device \(deviceID.uuidString.prefix(8))")
-    }
-
     func clearEventsForDate(_ date: Date, deviceID: UUID) {
         let calendar = Calendar.current
         motionEvents.removeAll { event in

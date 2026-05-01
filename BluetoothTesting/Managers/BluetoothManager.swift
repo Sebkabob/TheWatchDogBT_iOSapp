@@ -641,6 +641,7 @@ class BluetoothManager: NSObject {
 
         guard unpairCompletion == nil else {
             print("⚠️ Unpair already in progress")
+            completion(.failure(UnpairError.notConnected))
             return
         }
 

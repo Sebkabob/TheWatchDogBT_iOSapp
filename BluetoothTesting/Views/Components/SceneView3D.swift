@@ -39,7 +39,7 @@ struct SceneView3D: UIViewRepresentable {
         sceneView.allowsCameraControl = false
         sceneView.backgroundColor = .clear
 
-        let root = sceneView.scene!.rootNode
+        guard let root = sceneView.scene?.rootNode else { return sceneView }
 
         // Low ambient so shadows stay dramatic
         let ambientLight = SCNNode()
