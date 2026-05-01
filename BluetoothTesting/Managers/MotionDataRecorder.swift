@@ -13,9 +13,11 @@ class MotionDataRecorder {
     var isRecording = false
     var sampleCount = 0
 
-    private var samples: [(timestamp: Int, x: Float, y: Float, z: Float)] = []
+    private static let sampleInterval: TimeInterval = 0.04
+
+    private var samples: [(x: Int, y: Int, z: Int)] = []
     private var startDate: Date?
-    private var recordingStartTime: Date?
+    private var lastSampleTime: Date?
 
     private init() {}
 
@@ -23,14 +25,20 @@ class MotionDataRecorder {
         samples.removeAll()
         sampleCount = 0
         startDate = Date()
-        recordingStartTime = Date()
+        lastSampleTime = nil
         isRecording = true
     }
 
     func addSample(x: Float, y: Float, z: Float) {
-        guard isRecording, let start = recordingStartTime else { return }
-        let elapsed = Int(Date().timeIntervalSince(start) * 1000)
-        samples.append((timestamp: elapsed, x: x, y: y, z: z))
+        guard isRecording else { return }
+        let now = Date()
+        if let last = lastSampleTime, now.timeIntervalSince(last) < Self.sampleInterval {
+            return
+        }
+        lastSampleTime = now
+        samples.append((x: Int((x * 1000).rounded()),
+                        y: Int((y * 1000).rounded()),
+                        z: Int((z * 1000).rounded())))
         sampleCount = samples.count
     }
 
@@ -48,12 +56,10 @@ class MotionDataRecorder {
         let dir = FileManager.default.temporaryDirectory
         let fileURL = dir.appendingPathComponent(fileName)
 
-        var csv = "# Sensor: LIS2DUX12\n"
-        csv += "# Columns: [Acceleration X, Acceleration Y, Acceleration Z]\n"
-        csv += "Timestamp,AccX,AccY,AccZ\n"
+        var csv = "acc_x[mg],acc_y[mg],acc_z[mg]\n"
 
         for s in samples {
-            csv += "\(s.timestamp),\(String(format: "%.4f", s.x)),\(String(format: "%.4f", s.y)),\(String(format: "%.4f", s.z))\n"
+            csv += "\(s.x),\(s.y),\(s.z)\n"
         }
 
         do {

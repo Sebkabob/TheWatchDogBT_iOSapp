@@ -56,6 +56,18 @@ class SettingsManager {
     private func deviceKey(_ base: String, _ deviceID: UUID) -> String {
         "\(deviceID.uuidString)_\(base)"
     }
+
+    /// Read a device's persisted armed state without mutating the shared in-memory state.
+    func persistedArmed(for deviceID: UUID) -> Bool {
+        let ud = UserDefaults.standard
+        let key = deviceKey(armedKey, deviceID)
+        return ud.object(forKey: key) != nil ? ud.bool(forKey: key) : false
+    }
+
+    /// Write a device's armed state directly to UserDefaults without touching the shared in-memory state.
+    func setPersistedArmed(_ value: Bool, for deviceID: UUID) {
+        UserDefaults.standard.set(value, forKey: deviceKey(armedKey, deviceID))
+    }
     
     // MARK: - Byte Encoding/Decoding
     
@@ -190,9 +202,7 @@ class SettingsManager {
             ? ud.bool(forKey: deviceKey(disableAlarmWhenConnectedKey, deviceID))
             : false
 
-        highPerformanceMode = ud.object(forKey: deviceKey(highPerformanceModeKey, deviceID)) != nil
-            ? ud.bool(forKey: deviceKey(highPerformanceModeKey, deviceID))
-            : false
+        highPerformanceMode = devModeUnlocked
 
         if let saved = ud.array(forKey: deviceKey(alarmTriggersKey, deviceID)) as? [UInt8] {
             alarmTriggers = Set(saved.compactMap { MotionEventType(rawValue: $0) })

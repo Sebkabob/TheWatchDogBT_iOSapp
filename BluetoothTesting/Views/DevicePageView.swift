@@ -112,32 +112,45 @@ struct DevicePageView: View {
         return "WatchDog"
     }
     
+    private var isShowingLiveDeviceState: Bool {
+        bluetoothManager.connectedDevice?.id == deviceID && bluetoothManager.hasReceivedInitialState
+    }
+
     private var statusText: String {
-        if !isDeviceConnected {
-            return "Unknown"
-        }
-        if bluetoothManager.mlcState == .stabilizing {
+        if bluetoothManager.mlcState == .stabilizing && isShowingLiveDeviceState {
             return "Locking"
         }
-        return bluetoothManager.deviceStateText
+        return isLocked ? "Locked" : "Unlocked"
     }
 
     private var statusColor: Color {
-        if !isDeviceConnected {
-            return .gray
-        }
-        if bluetoothManager.mlcState == .stabilizing {
+        if bluetoothManager.mlcState == .stabilizing && isShowingLiveDeviceState {
             return .blue
         }
-        let isArmed = (bluetoothManager.deviceState & 0x01) != 0
-        return isArmed ? .red : .green
+        return isLocked ? .red : .green
     }
-    
+
     private var mlcIndicatorVisible: Bool {
+        guard isShowingLiveDeviceState else { return false }
         let mlc = bluetoothManager.mlcState
         if mlc == .unknown { return false }
-        if mlc == .stationary && !settingsManager.isArmed { return false }
+        if mlc == .stationary && !isLocked { return false }
         return true
+    }
+
+    private var lockSyncSignal: String {
+        let connID = bluetoothManager.connectedDevice?.id.uuidString ?? "-"
+        let received = bluetoothManager.hasReceivedInitialState ? "1" : "0"
+        return "\(connID)|\(bluetoothManager.deviceState)|\(received)"
+    }
+
+    private func syncLockedFromDeviceIfApplicable() {
+        guard isShowingLiveDeviceState else { return }
+        let armed = (bluetoothManager.deviceState & 0x01) != 0
+        if isLocked != armed {
+            isLocked = armed
+        }
+        settingsManager.setPersistedArmed(armed, for: deviceID)
     }
 
     private var connectionTimeString: String {
@@ -200,6 +213,8 @@ struct DevicePageView: View {
                                 if devTapCount >= 10 {
                                     devTapCount = 0
                                     settingsManager.devModeUnlocked.toggle()
+                                    settingsManager.updateSettings(highPerformance: settingsManager.devModeUnlocked)
+                                    if isDeviceConnected { bluetoothManager.sendSettings() }
                                     devModeToast = settingsManager.devModeUnlocked ? "Dev mode on" : "Dev mode off"
                                 }
                                 devTapResetTask = Task {
@@ -549,7 +564,10 @@ struct DevicePageView: View {
             }
         }
         .onAppear {
-            isLocked = settingsManager.isArmed
+            isLocked = settingsManager.persistedArmed(for: deviceID)
+            if isShowingLiveDeviceState {
+                isLocked = (bluetoothManager.deviceState & 0x01) != 0
+            }
 
             print("🎬 DevicePageView appeared - deviceID=\(deviceID.uuidString.prefix(8)), connected=\(isDeviceConnected), inRange=\(isDeviceInRange)")
 
@@ -572,10 +590,8 @@ struct DevicePageView: View {
         .onDisappear {
             stopGraphUpdates()
         }
-        .onChange(of: settingsManager.isArmed) { _, newIsArmed in
-            if isLocked != newIsArmed {
-                isLocked = newIsArmed
-            }
+        .onChange(of: lockSyncSignal) { _, _ in
+            syncLockedFromDeviceIfApplicable()
         }
         .onChange(of: isDeviceConnected) { _, connected in
             if connected {
@@ -749,7 +765,7 @@ struct DevicePageView: View {
 
         // Drive the fill bar with a repeating timer (~60fps)
         // This avoids relying on withAnimation which can be disrupted by the TabView
-        let remainingDuration: Double = 0.91
+        let remainingDuration: Double = isLocked ? 0.6 : 0.91
         let interval: Double = 1.0 / 60.0
         let increment: CGFloat = CGFloat(interval / remainingDuration) * (1.0 - 0.09)
 
@@ -785,14 +801,16 @@ struct DevicePageView: View {
         
         heavyHaptic.impactOccurred(intensity: 1.0)
         
-        settingsManager.updateSettings(armed: !isLocked)
+        let newArmed = !isLocked
+        settingsManager.updateSettings(armed: newArmed)
+        settingsManager.setPersistedArmed(newArmed, for: deviceID)
         bluetoothManager.sendSettings()
-        isLocked.toggle()
-        
+        isLocked = newArmed
+
         isHolding = false
         holdTimer?.invalidate()
         holdTimer = nil
-        
+
         withAnimation(.easeOut(duration: 0.3)) {
             holdProgress = 0.0
         }

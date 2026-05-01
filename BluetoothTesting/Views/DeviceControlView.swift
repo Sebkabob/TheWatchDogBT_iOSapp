@@ -100,31 +100,44 @@ struct DeviceControlView: View {
     }
     
     private var statusText: String {
-        if !isDeviceConnected {
-            return "Unknown"
-        }
-        if bluetoothManager.mlcState == .stabilizing {
+        if bluetoothManager.mlcState == .stabilizing && isShowingLiveDeviceState {
             return "Locking"
         }
-        return bluetoothManager.deviceStateText
+        return isLocked ? "Locked" : "Unlocked"
+    }
+
+    private var isShowingLiveDeviceState: Bool {
+        bluetoothManager.connectedDevice?.id == deviceID && bluetoothManager.hasReceivedInitialState
     }
 
     private var statusColor: Color {
-        if !isDeviceConnected {
-            return .gray
-        }
-        if bluetoothManager.mlcState == .stabilizing {
+        if bluetoothManager.mlcState == .stabilizing && isShowingLiveDeviceState {
             return .blue
         }
-        let isArmed = (bluetoothManager.deviceState & 0x01) != 0
-        return isArmed ? .red : .green
+        return isLocked ? .red : .green
     }
 
     private var mlcIndicatorVisible: Bool {
+        guard isShowingLiveDeviceState else { return false }
         let mlc = bluetoothManager.mlcState
         if mlc == .unknown { return false }
-        if mlc == .stationary && !settingsManager.isArmed { return false }
+        if mlc == .stationary && !isLocked { return false }
         return true
+    }
+
+    private var lockSyncSignal: String {
+        let connID = bluetoothManager.connectedDevice?.id.uuidString ?? "-"
+        let received = bluetoothManager.hasReceivedInitialState ? "1" : "0"
+        return "\(connID)|\(bluetoothManager.deviceState)|\(received)"
+    }
+
+    private func syncLockedFromDeviceIfApplicable() {
+        guard isShowingLiveDeviceState else { return }
+        let armed = (bluetoothManager.deviceState & 0x01) != 0
+        if isLocked != armed {
+            isLocked = armed
+        }
+        settingsManager.setPersistedArmed(armed, for: deviceID)
     }
 
     var body: some View {
@@ -172,6 +185,8 @@ struct DeviceControlView: View {
                                 if devTapCount >= 10 {
                                     devTapCount = 0
                                     settingsManager.devModeUnlocked.toggle()
+                                    settingsManager.updateSettings(highPerformance: settingsManager.devModeUnlocked)
+                                    if isDeviceConnected { bluetoothManager.sendSettings() }
                                     devModeToast = settingsManager.devModeUnlocked ? "Dev mode on" : "Dev mode off"
                                 }
                                 devTapResetTask = Task {
@@ -536,7 +551,10 @@ struct DeviceControlView: View {
         .statusBar(hidden: true)
         .onAppear {
             userInitiatedDisconnect = false
-            isLocked = settingsManager.isArmed
+            isLocked = settingsManager.persistedArmed(for: deviceID)
+            if isShowingLiveDeviceState {
+                isLocked = (bluetoothManager.deviceState & 0x01) != 0
+            }
             startedConnected = isDeviceConnected
             
             // Save nav state: we're on a device control view
@@ -566,10 +584,8 @@ struct DeviceControlView: View {
             stopGraphUpdates()
             bluetoothManager.stopReconnecting()
         }
-        .onChange(of: settingsManager.isArmed) { _, newIsArmed in
-            if isLocked != newIsArmed {
-                isLocked = newIsArmed
-            }
+        .onChange(of: lockSyncSignal) { _, _ in
+            syncLockedFromDeviceIfApplicable()
         }
         .onChange(of: bluetoothManager.mlcState) { _, newState in
             if newState == .stabilizing {
@@ -650,11 +666,13 @@ struct DeviceControlView: View {
         heavyHaptic.prepare()
         lightHaptic.impactOccurred()
 
-        withAnimation(.linear(duration: 0.91)) {
+        let holdDuration: Double = isLocked ? 0.6 : 0.91
+
+        withAnimation(.linear(duration: holdDuration)) {
             holdProgress = 1.0
         }
 
-        holdTimer = Timer.scheduledTimer(withTimeInterval: 0.91, repeats: false) { _ in
+        holdTimer = Timer.scheduledTimer(withTimeInterval: holdDuration, repeats: false) { _ in
             if self.isHolding {
                 self.completeHold()
             }
@@ -677,9 +695,11 @@ struct DeviceControlView: View {
         heavyHaptic.impactOccurred(intensity: 1.0)
 
         isCompletingHold = true
-        settingsManager.updateSettings(armed: !isLocked)
+        let newArmed = !isLocked
+        settingsManager.updateSettings(armed: newArmed)
+        settingsManager.setPersistedArmed(newArmed, for: deviceID)
         bluetoothManager.sendSettings()
-        isLocked.toggle()
+        isLocked = newArmed
         
         isHolding = false
         holdTimer?.invalidate()

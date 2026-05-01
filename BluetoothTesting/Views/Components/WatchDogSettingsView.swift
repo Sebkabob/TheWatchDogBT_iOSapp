@@ -128,7 +128,6 @@ struct WatchDogSettingsView: View {
     @State private var loggingEnabled: Bool = false
     @State private var disableAlarmWhenConnected: Bool = false
     @State private var debugModeEnabled: Bool = false
-    @State private var highPerformanceMode: Bool = false
     @State private var liveOrientationEnabled: Bool = false
     @State private var dataLoggingMode: Bool = false
     @State private var alarmTriggers: Set<MotionEventType> = []
@@ -414,11 +413,6 @@ struct WatchDogSettingsView: View {
     private var debugSection: some View {
         Section(header: Text("Debug Tools")) {
             SettingToggleRow(
-                title: "High Performance",
-                subtitle: "50Hz updates · Higher battery usage",
-                isOn: $highPerformanceMode
-            )
-            SettingToggleRow(
                 title: "Live Orientation",
                 subtitle: "3D model mirrors real device orientation",
                 isOn: $liveOrientationEnabled
@@ -575,7 +569,6 @@ struct WatchDogSettingsView: View {
         loggingEnabled = settingsManager.loggingEnabled
         disableAlarmWhenConnected = settingsManager.disableAlarmWhenConnected
         debugModeEnabled = settingsManager.debugModeEnabled
-        highPerformanceMode = settingsManager.highPerformanceMode
         liveOrientationEnabled = settingsManager.liveOrientationEnabled
         dataLoggingMode = settingsManager.dataLoggingMode
         alarmTriggers = settingsManager.alarmTriggers
@@ -605,7 +598,7 @@ struct WatchDogSettingsView: View {
             logging: loggingEnabled,
             disableAlarmConnected: disableAlarmWhenConnected,
             debugMode: debugModeEnabled,
-            highPerformance: highPerformanceMode,
+            highPerformance: settingsManager.devModeUnlocked,
             liveOrientation: liveOrientationEnabled,
             dataLogging: dataLoggingMode,
             triggers: alarmTriggers,
