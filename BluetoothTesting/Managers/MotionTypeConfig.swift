@@ -18,12 +18,4 @@ struct MotionTypeConfig {
         let triggers = SettingsManager.shared.shouldTriggerAlarm(for: eventType)
         return (eventType, triggers)
     }
-
-    /// Get display name for a firmware motion type
-    static func getDisplayName(for firmwareType: UInt8) -> String {
-        let eventType = MotionEventType(rawValue: firmwareType) ?? .none
-        return eventType == .none && firmwareType != 0
-            ? "Unknown Motion Type \(firmwareType)"
-            : eventType.displayName
-    }
 }

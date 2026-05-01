@@ -349,11 +349,6 @@ class BluetoothManager: NSObject {
         }
     }
 
-    /// Legacy compatibility — calls ensureScanning()
-    func startScanning() {
-        ensureScanning()
-    }
-    
     func stopScanning() {
         centralManager.stopScan()
         DispatchQueue.main.async {
@@ -363,23 +358,12 @@ class BluetoothManager: NSObject {
         }
         print("🛑 Stopped scanning")
     }
-    
+
     /// Legacy compatibility
     func startBackgroundScanning() {
         ensureScanning()
     }
-    
-    func stopBackgroundScanning() {
-        // In the new model, we almost never want to stop scanning.
-        // Only stop if explicitly told to (e.g. AddNewDeviceView cleanup).
-        // The pager model needs scanning always active.
-    }
 
-    /// Legacy compatibility
-    func resumeBackgroundScanning() {
-        ensureScanning()
-    }
-    
     // MARK: - Connection
     
     func connect(to device: BluetoothDevice) {

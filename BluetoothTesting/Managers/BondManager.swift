@@ -70,20 +70,6 @@ class BondManager {
         }
     }
     
-    func clearRSSI(deviceID: UUID) {
-        if let index = bondedDevices.firstIndex(where: { $0.id == deviceID }) {
-            bondedDevices[index].currentRSSI = nil
-            bondedDevices[index].lastSeen = nil
-        }
-    }
-    
-    func clearAllRSSI() {
-        for index in bondedDevices.indices {
-            bondedDevices[index].currentRSSI = nil
-            bondedDevices[index].lastSeen = nil
-        }
-    }
-    
     func isBonded(deviceID: UUID) -> Bool {
         return bondedDevices.contains(where: { $0.id == deviceID })
     }

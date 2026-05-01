@@ -57,14 +57,6 @@ class MotionLogManager {
         }
     }
 
-    func getEventCount(for date: Date, deviceID: UUID) -> Int {
-        return getEvents(for: date, deviceID: deviceID).count
-    }
-
-    func getMostRecentEventDate(for deviceID: UUID) -> Date? {
-        return eventsForDevice(deviceID).first?.timestamp
-    }
-
     func getDatesWithEvents(for deviceID: UUID) -> Set<Date> {
         let calendar = Calendar.current
         return Set(eventsForDevice(deviceID).map { event in

@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import SceneKit
 
 struct AddNewDeviceView: View {
     var bluetoothManager: BluetoothManager
