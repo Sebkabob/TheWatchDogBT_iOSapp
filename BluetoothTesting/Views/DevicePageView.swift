@@ -569,7 +569,7 @@ struct DevicePageView: View {
                 isLocked = (bluetoothManager.deviceState & 0x01) != 0
             }
 
-            print("🎬 DevicePageView appeared - deviceID=\(deviceID.uuidString.prefix(8)), connected=\(isDeviceConnected), inRange=\(isDeviceInRange)")
+            Log.info(.view, "DevicePage appeared [\(deviceID.uuidString.prefix(8))] · connected=\(isDeviceConnected) inRange=\(isDeviceInRange)")
 
             // Always try to show model if in range
             updateModelVisibility()
@@ -599,7 +599,7 @@ struct DevicePageView: View {
             if connected {
                 // Connection succeeded — clear the connecting flag
                 isConnectingThisDevice = false
-                print("🔄 Device connected, fading in model")
+                Log.info(.view, "Device connected · fading in model")
                 withAnimation(.easeInOut(duration: 1.0)) {
                     showModel = true
                 }
@@ -607,7 +607,7 @@ struct DevicePageView: View {
             } else {
                 // Device disconnected
                 isConnectingThisDevice = false
-                print("📵 Device disconnected")
+                Log.info(.view, "Device disconnected")
                 updateModelVisibility()
                 stopGraphUpdates()
             }
@@ -621,7 +621,7 @@ struct DevicePageView: View {
         .onChange(of: bluetoothManager.isConnecting) { _, connecting in
             if !connecting && isConnectingThisDevice && !isDeviceConnected {
                 // Connection attempt finished without success
-                print("⚠️ Connection attempt ended without success")
+                Log.warn(.view, "Connection attempt ended without success")
                 isConnectingThisDevice = false
             }
         }
@@ -716,7 +716,7 @@ struct DevicePageView: View {
         
         // If connected to another device, disconnect first
         if let currentDevice = bluetoothManager.connectedDevice, currentDevice.id != deviceID {
-            print("🔌 Disconnecting from \(currentDevice.name) before connecting to new device")
+            Log.info(.view, "Disconnecting from \(currentDevice.name) before connecting to new device")
             bluetoothManager.disconnect(from: currentDevice)
             
             // Delay to let disconnect complete
@@ -734,7 +734,7 @@ struct DevicePageView: View {
     
     private func disconnectDevice() {
         if let device = bluetoothManager.connectedDevice, device.id == deviceID {
-            print("🔌 User disconnecting from \(device.name)")
+            Log.info(.view, "User disconnecting from \(device.name)")
             // Do NOT set suppressAutoReconnect here — MainAppView.ensureScanningActive()
             // will clear it anyway, and we need scanning to continue so the device
             // shows as "in range" after disconnecting.
@@ -745,7 +745,7 @@ struct DevicePageView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 self.bluetoothManager.suppressAutoReconnect = false
                 if self.bluetoothManager.isBluetoothReady && !self.bluetoothManager.isScanning {
-                    print("🔍 Restarting scan after disconnect")
+                    Log.info(.view, "Restarting scan after disconnect")
                     self.bluetoothManager.startBackgroundScanning()
                 }
             }

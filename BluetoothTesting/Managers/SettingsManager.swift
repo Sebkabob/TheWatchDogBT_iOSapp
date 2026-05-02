@@ -125,41 +125,35 @@ class SettingsManager {
     /// Decodes deviceInfo byte from WatchDog
     func decodeDeviceInfo(from byte: UInt8) {
         highPerformanceMode = (byte & (1 << 0)) != 0
-        print("  High Performance Mode: \(highPerformanceMode)")
+        Log.info(.settings, "deviceInfo · highPerformance=\(highPerformanceMode)")
         saveDeviceSettings()
     }
 
     /// Decodes a byte from WatchDog into settings
     func decodeSettings(from byte: UInt8) {
-        print("📥 Decoding settings byte: 0x\(String(format: "%02X", byte))")
-        
         // Bit 0: Armed
         isArmed = (byte & (1 << 0)) != 0
-        
+
         // Bits 1-2: Alarm Type
         let alarmBits = (byte >> 1) & 0b11
         alarmType = AlarmType.from(bitValue: alarmBits)
-        
+
         // Bits 3-4: Sensitivity
         let sensitivityBits = (byte >> 3) & 0b11
         sensitivity = SensitivityLevel.from(bitValue: sensitivityBits)
-        
+
         // Bit 5: Lights
         lightsEnabled = (byte & (1 << 5)) != 0
-        
+
         // Bit 6: Logging
         loggingEnabled = (byte & (1 << 6)) != 0
-        
+
         // Bit 7: Disable Alarm When Connected
         disableAlarmWhenConnected = (byte & (1 << 7)) != 0
-        
-        print("  Armed: \(isArmed)")
-        print("  Alarm: \(alarmType.rawValue)")
-        print("  Sensitivity: \(sensitivity.rawValue)")
-        print("  Lights: \(lightsEnabled)")
-        print("  Logging: \(loggingEnabled)")
-        print("  Disable Alarm When Connected: \(disableAlarmWhenConnected)")
-        
+
+        let lockGlyph = isArmed ? "🔒 Armed" : "🔓 Idle"
+        Log.rx(.settings, "0x\(String(format: "%02X", byte)) · \(lockGlyph) · alarm=\(alarmType.rawValue) · sens=\(sensitivity.rawValue) · lights=\(lightsEnabled ? "on" : "off") · log=\(loggingEnabled ? "on" : "off") · disableWhenConn=\(disableAlarmWhenConnected)")
+
         // Save to UserDefaults (WatchDog is source of truth)
         saveDeviceSettings()
     }

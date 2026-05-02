@@ -32,22 +32,22 @@ class BondManager {
     func addBond(deviceID: UUID, name: String) {
         // Check if already bonded
         if bondedDevices.contains(where: { $0.id == deviceID }) {
-            print("⚠️ Device already bonded: \(name)")
+            Log.warn(.bond, "Already bonded · \(name)")
             return
         }
-        
+
         let newBond = BondedDevice(id: deviceID, name: name)
         bondedDevices.append(newBond)
         saveBonds()
-        print("✅ Added bond: \(name) [\(deviceID.uuidString.prefix(8))]")
+        Log.ok(.bond, "Added · \(name) [\(deviceID.uuidString.prefix(8))]")
     }
-    
+
     func removeBond(deviceID: UUID) {
         if let index = bondedDevices.firstIndex(where: { $0.id == deviceID }) {
             let name = bondedDevices[index].name
             bondedDevices.remove(at: index)
             saveBonds()
-            print("🗑️ Removed bond: \(name) [\(deviceID.uuidString.prefix(8))]")
+            Log.ok(.bond, "Removed · \(name) [\(deviceID.uuidString.prefix(8))]")
             // Note: We intentionally do NOT remove custom name - it persists
         }
     }
@@ -65,7 +65,7 @@ class BondManager {
             if bondedDevices[index].name != name {
                 bondedDevices[index].name = name
                 saveBonds()
-                print("✏️ Updated advertising name to: \(name)")
+                Log.info(.name, "Updated advertising name · \(name)")
             }
         }
     }
@@ -96,7 +96,7 @@ class BondManager {
                 bondedDevices[index].lastSeen = now
             }
         }
-        print("🔄 Refreshed bonded device timestamps for foreground return")
+        Log.info(.bond, "Refreshed timestamps for foreground return")
     }
 
     // MARK: - Stale Device Check
@@ -106,7 +106,7 @@ class BondManager {
         staleCheckTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             self?.checkForStaleDevices()
         }
-        print("🔄 Started stale device check timer")
+        Log.info(.bond, "Started stale device check timer")
     }
     
     private func checkForStaleDevices() {
@@ -118,7 +118,7 @@ class BondManager {
                 let timeSinceLastSeen = now.timeIntervalSince(lastSeen)
 
                 if timeSinceLastSeen > staleTimeout {
-                    print("🕐 Device went out of range: \(bondedDevices[index].name) (last seen \(String(format: "%.1f", timeSinceLastSeen))s ago)")
+                    Log.info(.bond, "Out of range · \(bondedDevices[index].name) (last seen \(String(format: "%.1f", timeSinceLastSeen))s ago)")
                     bondedDevices[index].currentRSSI = nil
                     bondedDevices[index].lastSeen = nil
                 }
@@ -137,24 +137,24 @@ class BondManager {
             let encoder = JSONEncoder()
             let data = try encoder.encode(bondedDevices)
             UserDefaults.standard.set(data, forKey: bondsKey)
-            print("💾 Saved \(bondedDevices.count) bonds")
+            Log.info(.persist, "Saved \(bondedDevices.count) bonds")
         } catch {
-            print("❌ Failed to save bonds: \(error)")
+            Log.err(.persist, "Save bonds · \(error)")
         }
     }
-    
+
     private func loadBonds() {
         guard let data = UserDefaults.standard.data(forKey: bondsKey) else {
-            print("📭 No saved bonds found")
+            Log.info(.persist, "No saved bonds")
             return
         }
-        
+
         do {
             let decoder = JSONDecoder()
             bondedDevices = try decoder.decode([BondedDevice].self, from: data)
-            print("📬 Loaded \(bondedDevices.count) bonds")
+            Log.info(.persist, "Loaded \(bondedDevices.count) bonds")
         } catch {
-            print("❌ Failed to load bonds: \(error)")
+            Log.err(.persist, "Load bonds · \(error)")
             bondedDevices = []
         }
     }

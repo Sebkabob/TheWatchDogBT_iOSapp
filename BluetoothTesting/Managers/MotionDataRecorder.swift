@@ -64,10 +64,10 @@ class MotionDataRecorder {
 
         do {
             try csv.write(to: fileURL, atomically: true, encoding: .utf8)
-            print("📝 CSV saved: \(fileURL.lastPathComponent) (\(samples.count) samples)")
+            Log.ok(.persist, "CSV saved · \(fileURL.lastPathComponent) (\(samples.count) samples)")
             return fileURL
         } catch {
-            print("❌ Failed to write CSV: \(error)")
+            Log.err(.persist, "Write CSV · \(error)")
             return nil
         }
     }

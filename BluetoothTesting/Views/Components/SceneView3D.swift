@@ -157,15 +157,15 @@ struct SceneView3D: UIViewRepresentable {
                 if name == "empty_4" || name.uppercased().contains("LED") || name.uppercased().contains("LIGHT") {
                     if coordinator.ledNode == nil {
                         coordinator.ledNode = childNode
-                        print("✅ LED node found: \(name)")
+                        Log.ok(.scene, "LED node found · \(name)")
                     }
                 }
             }
         }
 
-        print("🔍 All scene nodes: \(allNodes.joined(separator: ", "))")
+        Log.info(.scene, "Scene nodes · \(allNodes.joined(separator: ", "))")
         if coordinator.ledNode == nil {
-            print("❌ LED node not found in scene")
+            Log.err(.scene, "LED node not found in scene")
         }
     }
 

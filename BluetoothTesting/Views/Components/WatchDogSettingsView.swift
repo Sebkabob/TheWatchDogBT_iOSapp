@@ -509,9 +509,8 @@ struct WatchDogSettingsView: View {
     }
 
     private var watchDogIdentifierLabel: String? {
-        guard let deviceID = resolvedDeviceID,
-              let id = bluetoothManager.watchDogIdentifiers[deviceID] else { return nil }
-        return String(format: "WatchDog #%04X", id)
+        guard let deviceID = resolvedDeviceID else { return nil }
+        return bluetoothManager.deviceHeader(for: deviceID)
     }
 
     private var applyButton: some View {
@@ -621,9 +620,9 @@ struct WatchDogSettingsView: View {
         let completion: (Result<Void, Error>) -> Void = { result in
             switch result {
             case .success:
-                print("✅ Forget (settings): UNBOND acked")
+                Log.ok(.bond, "Forget (settings) · UNBOND acked")
             case .failure(let error):
-                print("⚠️ Forget (settings): UNBOND failed — \(error.localizedDescription)")
+                Log.warn(.bond, "Forget (settings) · UNBOND failed · \(error.localizedDescription)")
             }
         }
 

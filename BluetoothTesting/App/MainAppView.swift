@@ -153,7 +153,7 @@ struct MainAppView: View {
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
-                print("🔄 App became active — ensuring BLE scan")
+                Log.info(.view, "App became active · ensuring BLE scan")
                 bondManager.refreshTimestampsForForegroundReturn()
                 bluetoothManager.handleAppBecameActive()
             }
@@ -299,7 +299,7 @@ struct AboutPage: View {
             Text("WatchDog")
                 .font(.title2)
                 .fontWeight(.bold)
-            Text("Version 1.0")
+            Text("Version \(AppVersion.displayString)")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
             Text("Sebastian Forenza 2026")

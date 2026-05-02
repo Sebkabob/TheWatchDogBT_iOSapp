@@ -71,11 +71,11 @@ struct BatteryDiagnostic {
         case 3:  requiredLength = 30
         case 11: requiredLength = 51
         default:
-            print("⚠️ BatteryDiagnostic: unknown version \(v), dropping packet (len=\(data.count))")
+            Log.warn(.battery, "Unknown packet version \(v) · dropping (len=\(data.count))")
             return nil
         }
         guard data.count >= requiredLength else {
-            print("⚠️ BatteryDiagnostic: v\(v) needs \(requiredLength) bytes, got \(data.count)")
+            Log.warn(.battery, "v\(v) needs \(requiredLength) bytes, got \(data.count)")
             return nil
         }
 
