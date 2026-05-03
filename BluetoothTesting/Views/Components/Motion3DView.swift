@@ -10,7 +10,6 @@ struct Motion3DView: View {
     @State private var currentRotationX: Double = 0
     @State private var currentRotationY: Double = 0
     @State private var currentRotationZ: Double = 0
-    @State private var showSettings = false
     @State private var ledAnimator = LEDAnimator()
     @State private var liveQuaternion: SCNVector4? = nil
     @State private var smoothedGX: Double = 0
@@ -20,17 +19,16 @@ struct Motion3DView: View {
 
     let usdzFileName = "WatchDogBTCase_V2"
     var bluetoothManager: BluetoothManager
-    var allowSettingsTap: Bool = true
+    var onSettingsTap: (() -> Void)? = nil
     var idleWobble: Bool = false
     var wobbleIntensity: Double = 1.0
-    var targetDeviceID: UUID? = nil
+    var inSettingsMode: Bool = false
 
     private var settingsManager: SettingsManager { SettingsManager.shared }
     private var isLiveOrientation: Bool { settingsManager.liveOrientationEnabled }
 
     private var sceneView: some View {
         let wobbleEnabled = idleWobble && !isLiveOrientation
-        let tapAction: (() -> Void)? = allowSettingsTap ? { showSettings = true } : nil
         return SceneView3D(
             rotationX: $currentRotationX,
             rotationY: $currentRotationY,
@@ -42,7 +40,8 @@ struct Motion3DView: View {
             idleWobble: wobbleEnabled,
             wobbleIntensity: wobbleIntensity,
             liveQuaternion: liveQuaternion,
-            onTap: tapAction
+            onTap: onSettingsTap,
+            inSettingsMode: inSettingsMode
         )
         .ignoresSafeArea()
     }
@@ -50,12 +49,6 @@ struct Motion3DView: View {
     var body: some View {
         ZStack {
             sceneView
-        }
-        .sheet(isPresented: $showSettings) {
-            WatchDogSettingsView(
-                bluetoothManager: bluetoothManager,
-                targetDeviceID: targetDeviceID
-            )
         }
         .onAppear {
             syncAnimatorState()

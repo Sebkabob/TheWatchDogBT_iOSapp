@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import SceneKit
 
 struct DevicePageView: View {
     var bluetoothManager: BluetoothManager
@@ -15,6 +16,7 @@ struct DevicePageView: View {
     
     let deviceID: UUID
     var onOverviewRequest: (() -> Void)? = nil
+    var onSettingsModeChange: ((Bool) -> Void)? = nil
     var animateEntrance: Bool = false
 
     @State private var controlsRevealed = true
@@ -34,9 +36,6 @@ struct DevicePageView: View {
     // Cleared when connection succeeds or fails.
     @State private var isConnectingThisDevice = false
 
-    // Ping animation state
-    @State private var isPinging = false
-    
     // Debug graph history (last 3 minutes)
     @State private var currentHistory: [(date: Date, value: Double)] = []
     @State private var voltageHistory: [(date: Date, value: Double)] = []
@@ -61,15 +60,23 @@ struct DevicePageView: View {
     @State private var showDiagnostic = false
     @State private var diagnosticErrorMessage: String?
 
+    // Settings mode (model slides right, settings panel fades in on the left)
+    @State private var inSettingsMode = false
+    @State private var settingsContentVisible = false
+    @State private var editableName: String = ""
+    @State private var showForgetConfirmation = false
+    private let maxNameLength = 16
+
     private let lightHaptic = UIImpactFeedbackGenerator(style: .light)
     private let heavyHaptic = UIImpactFeedbackGenerator(style: .heavy)
 
     // MARK: - Init
 
-    init(bluetoothManager: BluetoothManager, deviceID: UUID, onOverviewRequest: (() -> Void)? = nil, animateEntrance: Bool = false) {
+    init(bluetoothManager: BluetoothManager, deviceID: UUID, onOverviewRequest: (() -> Void)? = nil, onSettingsModeChange: ((Bool) -> Void)? = nil, animateEntrance: Bool = false) {
         self.bluetoothManager = bluetoothManager
         self.deviceID = deviceID
         self.onOverviewRequest = onOverviewRequest
+        self.onSettingsModeChange = onSettingsModeChange
         self.animateEntrance = animateEntrance
         _controlsRevealed = State(initialValue: !animateEntrance)
     }
@@ -246,8 +253,9 @@ struct DevicePageView: View {
             .padding(.horizontal, 20)
             .padding(.top, 5)
             .padding(.bottom, 10)
-            .opacity(controlsRevealed ? 1 : 0)
+            .opacity((controlsRevealed && !inSettingsMode) ? 1 : 0)
             .animation(.easeInOut(duration: 0.4), value: controlsRevealed)
+            .animation(.easeInOut(duration: 0.3), value: inSettingsMode)
 
             // MARK: 3D Model Section with Debug Info
             ZStack(alignment: .leading) {
@@ -256,13 +264,12 @@ struct DevicePageView: View {
                     if showModel {
                         Motion3DView(
                             bluetoothManager: bluetoothManager,
-                            allowSettingsTap: isDeviceConnected,
+                            onSettingsTap: isDeviceConnected ? { toggleSettingsMode() } : nil,
                             idleWobble: isDeviceConnected,
                             wobbleIntensity: 0.3,
-                            targetDeviceID: deviceID
+                            inSettingsMode: inSettingsMode
                         )
                         .frame(maxWidth: .infinity)
-                        // Dim the model slightly when not connected to hint it's a preview
                         .opacity(isDeviceConnected ? 1.0 : 0.6)
                         .transition(.opacity)
                     } else {
@@ -282,54 +289,6 @@ struct DevicePageView: View {
                     .transition(.opacity)
                 }
                 
-                // Ping (Find Device) button - Right side, only when connected
-                if isDeviceConnected {
-                    VStack {
-                        Spacer()
-
-                        Button {
-                            triggerPing()
-                        } label: {
-                            ZStack {
-                                // Ripple rings that expand outward when pinging
-                                ForEach(0..<3, id: \.self) { i in
-                                    Circle()
-                                        .stroke(Color.accentColor, lineWidth: 1.5)
-                                        .frame(width: 44, height: 44)
-                                        .scaleEffect(isPinging ? 1.8 + CGFloat(i) * 0.5 : 1.0)
-                                        .opacity(isPinging ? 0.0 : 0.6)
-                                        .animation(
-                                            isPinging
-                                                ? .easeOut(duration: 0.9).delay(Double(i) * 0.12)
-                                                : .easeIn(duration: 0.2),
-                                            value: isPinging
-                                        )
-                                }
-
-                                Circle()
-                                    .fill(.ultraThinMaterial)
-                                    .frame(width: 44, height: 44)
-                                    .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
-
-                                Image(systemName: isPinging ? "speaker.wave.3.fill" : "speaker.wave.2.fill")
-                                    .font(.system(size: 18, weight: .semibold))
-                                    .foregroundStyle(Color.accentColor)
-                                    .contentTransition(.symbolEffect(.replace))
-                                    .symbolEffect(.bounce, value: isPinging)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.trailing, 16)
-                        .padding(.bottom, 200)
-
-                        Spacer()
-                    }
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
-                    .opacity(controlsRevealed ? 1 : 0)
-                    .animation(.easeInOut(duration: 0.4), value: controlsRevealed)
-                }
-
                 // Debug Info Box - Left side (only when connected and debug enabled)
                 if isDeviceConnected && settingsManager.debugModeEnabled {
                     VStack(alignment: .leading, spacing: 0) {
@@ -435,8 +394,9 @@ struct DevicePageView: View {
 
                         Spacer()
                     }
-                    .opacity(controlsRevealed ? 1 : 0)
+                    .opacity((controlsRevealed && !inSettingsMode) ? 1 : 0)
                     .animation(.easeInOut(duration: 0.4), value: controlsRevealed)
+                    .animation(.easeInOut(duration: 0.3), value: inSettingsMode)
                 }
             }
             .animation(.easeInOut(duration: 0.5), value: isDeviceInRange)
@@ -446,6 +406,7 @@ struct DevicePageView: View {
             .simultaneousGesture(
                 LongPressGesture(minimumDuration: 0.5)
                     .onEnded { _ in
+                        guard !inSettingsMode else { return }
                         onOverviewRequest?()
                     }
             )
@@ -549,10 +510,12 @@ struct DevicePageView: View {
                 .padding(.bottom, 20)
             }
             .background(Color(.systemBackground))
-            .opacity(controlsRevealed ? 1 : 0)
+            .opacity((controlsRevealed && !inSettingsMode) ? 1 : 0)
             .animation(.easeInOut(duration: 0.4), value: controlsRevealed)
+            .animation(.easeInOut(duration: 0.3), value: inSettingsMode)
         }
         .statusBar(hidden: true)
+        .overlay(alignment: .topLeading) { settingsModeOverlay }
         .sheet(isPresented: $showMotionLogs) {
             NavigationStack {
                 MotionLogsView(bluetoothManager: bluetoothManager, deviceID: deviceID)
@@ -668,6 +631,12 @@ struct DevicePageView: View {
             Button("OK", role: .cancel) { diagnosticErrorMessage = nil }
         } message: {
             Text(diagnosticErrorMessage ?? "")
+        }
+        .alert("Forget WatchDog?", isPresented: $showForgetConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Forget Device", role: .destructive) { forgetDevice() }
+        } message: {
+            Text("Are you sure you want to forget \(displayName)? You'll need to pair again to reconnect.")
         }
     }
 
@@ -818,20 +787,6 @@ struct DevicePageView: View {
         }
     }
     
-    // MARK: - Ping
-
-    private func triggerPing() {
-        guard isDeviceConnected, !isPinging else { return }
-
-        lightHaptic.impactOccurred()
-        bluetoothManager.sendPing()
-
-        isPinging = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            isPinging = false
-        }
-    }
-
     // MARK: - Battery
     
     private var batteryIcon: String {
@@ -897,6 +852,268 @@ struct DevicePageView: View {
         let cutoff = Date().addingTimeInterval(-180)
         history.removeAll { $0.date < cutoff }
     }
+
+    // MARK: - Settings Mode
+
+    private func toggleSettingsMode() {
+        if inSettingsMode {
+            // Exit: fade settings panel out first, then slide model back
+            withAnimation(.easeInOut(duration: 0.2)) {
+                settingsContentVisible = false
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                inSettingsMode = false
+                onSettingsModeChange?(false)
+            }
+        } else {
+            // Enter: kick off slide + control fade, then fade panel in once
+            // the model has cleared the left half of the screen
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            settingsManager.loadDeviceSettings(for: deviceID)
+            editableName = displayName
+            inSettingsMode = true
+            onSettingsModeChange?(true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    settingsContentVisible = true
+                }
+            }
+        }
+    }
+
+    // MARK: - Settings Bindings
+
+    private var sensitivityBinding: Binding<SensitivityLevel> {
+        Binding(
+            get: { settingsManager.sensitivity },
+            set: { newValue in
+                settingsManager.updateSettings(sens: newValue)
+                if isDeviceConnected { bluetoothManager.sendSettings() }
+            }
+        )
+    }
+
+    private var alarmTypeBinding: Binding<AlarmType> {
+        Binding(
+            get: { settingsManager.alarmType },
+            set: { newValue in
+                settingsManager.updateSettings(alarm: newValue)
+                if isDeviceConnected { bluetoothManager.sendSettings() }
+            }
+        )
+    }
+
+    private var silentWhenConnectedBinding: Binding<Bool> {
+        Binding(
+            get: { settingsManager.disableAlarmWhenConnected },
+            set: { newValue in
+                settingsManager.updateSettings(disableAlarmConnected: newValue)
+                if isDeviceConnected { bluetoothManager.sendSettings() }
+            }
+        )
+    }
+
+    private var lightsEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { settingsManager.lightsEnabled },
+            set: { newValue in
+                settingsManager.updateSettings(lights: newValue)
+                if isDeviceConnected { bluetoothManager.sendSettings() }
+            }
+        )
+    }
+
+    private var loggingEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { settingsManager.loggingEnabled },
+            set: { newValue in
+                settingsManager.updateSettings(logging: newValue)
+                if isDeviceConnected { bluetoothManager.sendSettings() }
+            }
+        )
+    }
+
+    private func forgetDevice() {
+        let completion: (Result<Void, Error>) -> Void = { result in
+            switch result {
+            case .success:
+                Log.ok(.bond, "Forget (panel) · UNBOND acked")
+            case .failure(let error):
+                Log.warn(.bond, "Forget (panel) · UNBOND failed · \(error.localizedDescription)")
+            }
+        }
+        if let device = bluetoothManager.connectedDevice, device.id == deviceID {
+            bluetoothManager.unpairDevice(completion: completion)
+        } else {
+            bluetoothManager.unpairDeviceWhileDisconnected(deviceID: deviceID, completion: completion)
+        }
+        toggleSettingsMode()
+    }
+
+    private func commitDeviceName(_ value: String) {
+        let limited = String(value.prefix(maxNameLength))
+        if limited != editableName { editableName = limited }
+        let trimmed = limited.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            nameManager.removeCustomName(deviceID: deviceID)
+        } else {
+            nameManager.setCustomName(deviceID: deviceID, name: trimmed)
+        }
+    }
+
+    @ViewBuilder
+    private var settingsModeOverlay: some View {
+        GeometryReader { geo in
+            VStack(spacing: 0) {
+                // Top bar — full width. Back's vertical position matches what
+                // it had in the previous overlay layout (10pt of vertical
+                // padding around .body text), and Settings centers on screen
+                // at the same Y as Back.
+                HStack(alignment: .firstTextBaseline, spacing: 0) {
+                    Button(action: { toggleSettingsMode() }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "chevron.left")
+                            Text("Back")
+                        }
+                        .font(.body)
+                        .foregroundColor(.primary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Text("Settings")
+                        .font(.body)
+                        .fontWeight(.bold)
+                        .foregroundColor(.primary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+
+                    Color.clear.frame(maxWidth: .infinity, maxHeight: 0)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+
+                // Content panel — left half, opaque so the model can't bleed
+                // through. Inner content is constrained narrower (~2/3 of the
+                // panel) so it stays well clear of the model. The settings
+                // group is vertically centered to roughly line up with the 3D
+                // model in the body underneath.
+                HStack(spacing: 0) {
+                    VStack(alignment: .leading, spacing: 24) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Device Name")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                            TextField("WatchDog", text: $editableName)
+                                .textFieldStyle(.plain)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 10)
+                                .background(Color(.systemGray5))
+                                .cornerRadius(10)
+                                .submitLabel(.done)
+                                .onChange(of: editableName) { _, newValue in
+                                    commitDeviceName(newValue)
+                                }
+                        }
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Sensitivity")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                            AnimatedSegmentedControl(
+                                selection: sensitivityBinding,
+                                options: SensitivityLevel.allCases
+                            )
+                        }
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Alarm Loudness")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                            AnimatedSegmentedControl(
+                                selection: alarmTypeBinding,
+                                options: AlarmType.allCases
+                            )
+                        }
+
+                        Toggle(isOn: silentWhenConnectedBinding) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Silent When Connected")
+                                    .font(.subheadline)
+                                Text("Disable alarm when phone is connected")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+
+                        Toggle("LED Lights", isOn: lightsEnabledBinding)
+                            .font(.subheadline)
+
+                        Toggle(isOn: loggingEnabledBinding) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Motion Logging")
+                                    .font(.subheadline)
+                                Text("Records motion events. Syncs when in range.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+
+                        VStack(spacing: 8) {
+                            Button(action: {
+                                guard isDeviceConnected else { return }
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                bluetoothManager.sendPing()
+                            }) {
+                                HStack {
+                                    Image(systemName: "speaker.wave.2.fill")
+                                    Text("Ping This Device")
+                                }
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .foregroundColor(.blue)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(Color(white: 0.2))
+                                .cornerRadius(10)
+                            }
+                            .disabled(!isDeviceConnected)
+
+                            Button(action: { showForgetConfirmation = true }) {
+                                HStack {
+                                    Image(systemName: "trash.fill")
+                                    Text("Forget This Device")
+                                }
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .foregroundColor(.red)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(Color(white: 0.2))
+                                .cornerRadius(10)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .frame(width: geo.size.width * 0.67, alignment: .leading)
+                    .frame(maxHeight: .infinity, alignment: .center)
+                    .padding(.bottom, 160)
+                    .background(Color(.systemBackground))
+
+                    Spacer()
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if let label = bluetoothManager.deviceHeader(for: deviceID) {
+                    Text(label)
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.bottom, 30)
+                }
+            }
+            .opacity(settingsContentVisible ? 1 : 0)
+            .allowsHitTesting(inSettingsMode)
+        }
+    }
 }
 
 #Preview {
@@ -904,4 +1121,66 @@ struct DevicePageView: View {
         bluetoothManager: BluetoothManager(),
         deviceID: UUID()
     )
+}
+
+// MARK: - CubeTestView (debug stand-in for Motion3DView)
+// Minimal SCNView with a single rotating cube and basic lighting.
+// Used to isolate whether the slide-bump is from the WatchDog USDZ
+// asset/shadows/wobble or from SCNView ↔ SwiftUI transform interaction.
+
+struct CubeTestView: UIViewRepresentable {
+    var onTap: (() -> Void)?
+
+    func makeUIView(context: Context) -> SCNView {
+        let view = SCNView()
+        view.backgroundColor = .clear
+        view.allowsCameraControl = false
+        view.antialiasingMode = .multisampling4X
+
+        let scene = SCNScene()
+
+        let box = SCNBox(width: 2, height: 2, length: 2, chamferRadius: 0.15)
+        box.firstMaterial?.diffuse.contents = UIColor.systemBlue
+        box.firstMaterial?.specular.contents = UIColor.white
+        let boxNode = SCNNode(geometry: box)
+        boxNode.runAction(.repeatForever(.rotateBy(x: 0, y: .pi * 2, z: 0, duration: 8)))
+        scene.rootNode.addChildNode(boxNode)
+
+        let camera = SCNNode()
+        camera.camera = SCNCamera()
+        camera.position = SCNVector3(0, 0, 6)
+        scene.rootNode.addChildNode(camera)
+
+        let omni = SCNNode()
+        omni.light = SCNLight()
+        omni.light?.type = .omni
+        omni.light?.intensity = 800
+        omni.position = SCNVector3(3, 5, 5)
+        scene.rootNode.addChildNode(omni)
+
+        let ambient = SCNNode()
+        ambient.light = SCNLight()
+        ambient.light?.type = .ambient
+        ambient.light?.intensity = 200
+        scene.rootNode.addChildNode(ambient)
+
+        view.scene = scene
+
+        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap))
+        view.addGestureRecognizer(tap)
+
+        return view
+    }
+
+    func updateUIView(_ uiView: SCNView, context: Context) {
+        context.coordinator.onTap = onTap
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(onTap: onTap) }
+
+    final class Coordinator: NSObject {
+        var onTap: (() -> Void)?
+        init(onTap: (() -> Void)?) { self.onTap = onTap }
+        @objc func handleTap() { onTap?() }
+    }
 }

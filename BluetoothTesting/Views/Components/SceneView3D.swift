@@ -21,6 +21,7 @@ struct SceneView3D: UIViewRepresentable {
     var wobbleIntensity: Double = 1.0
     var liveQuaternion: SCNVector4? = nil
     var onTap: (() -> Void)? = nil
+    var inSettingsMode: Bool = false
 
     // MARK: - Scene & Texture Cache
     private static var cachedNormalMap: UIImage?
@@ -57,7 +58,8 @@ struct SceneView3D: UIViewRepresentable {
         keyLight.light?.color = UIColor(white: 0.95, alpha: 1.0)
         keyLight.light?.castsShadow = true
         keyLight.light?.shadowRadius = 3
-        keyLight.light?.shadowSampleCount = 8
+        keyLight.light?.shadowSampleCount = 16
+        keyLight.light?.shadowBias = 2
         keyLight.eulerAngles = SCNVector3(-0.5, 0.8, 0)
         root.addChildNode(keyLight)
 
@@ -107,6 +109,26 @@ struct SceneView3D: UIViewRepresentable {
         context.coordinator.parent = self
 
         guard let model = context.coordinator.modelNode else { return }
+
+        // Settings-mode slide: animate the model node inside the scene
+        // (SCNTransaction → CAAnimation on the CAMetalLayer-rendered geometry)
+        // instead of via a SwiftUI transform on the SCNView's layer. The
+        // SCNView's bounds and layer transform stay constant, which dodges
+        // the mid-slide bump we got from SwiftUI's .scaleEffect/.offset path.
+        if context.coordinator.lastInSettingsMode != inSettingsMode {
+            context.coordinator.lastInSettingsMode = inSettingsMode
+            let baseScale: Float = 0.07
+            let zoomedScale: Float = baseScale * 1.5
+            let shiftX: Float = 2.5
+
+            SCNTransaction.begin()
+            SCNTransaction.animationDuration = 0.5
+            SCNTransaction.animationTimingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            model.position = SCNVector3(inSettingsMode ? shiftX : 0, 0, 0)
+            let s = inSettingsMode ? zoomedScale : baseScale
+            model.scale = SCNVector3(s, s, s)
+            SCNTransaction.commit()
+        }
 
         if !context.coordinator.hasSearchedForLED {
             context.coordinator.hasSearchedForLED = true
@@ -470,11 +492,13 @@ struct SceneView3D: UIViewRepresentable {
         var ledNode: SCNNode?
         var hasSearchedForLED = false
         weak var sceneView: SCNView?
+        var lastInSettingsMode: Bool? = nil
 
         // Wobble state
         var isWobbling = false
         private var displayLink: CADisplayLink?
         private var wobbleStartTime: CFTimeInterval = 0
+        private var currentTilt: Float = 0
 
         // Drag state
         private var dragStartRotationX: Double = 0
@@ -541,7 +565,12 @@ struct SceneView3D: UIViewRepresentable {
             let y = Float(sin(t * 0.8) * 0.08) * ramp
             let z = Float(sin(t * 0.5) * 0.04) * ramp
 
-            model.eulerAngles = SCNVector3(x, y, z)
+            // Settings-mode tilt: −7° on Y so the model's left side comes
+            // forward. Exponentially eases toward target so transitions are smooth.
+            let targetTilt: Float = parent.inSettingsMode ? -(7 * .pi / 180) : 0
+            currentTilt += (targetTilt - currentTilt) * 0.08
+
+            model.eulerAngles = SCNVector3(x, y + currentTilt, z)
         }
 
         // Only begin gesture if the touch lands on actual 3D geometry

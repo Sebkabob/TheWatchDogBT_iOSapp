@@ -32,6 +32,9 @@ struct MainAppView: View {
     // Overview mode
     @State private var isOverviewMode = false
     @State private var deviceToRemove: UUID?
+
+    // Per-device settings overlay state — used to lock TabView paging
+    @State private var settingsOverlayActive = false
     
     private var sortedDevices: [BondedDevice] {
         bondManager.bondedDevices.sorted { $0.dateAdded < $1.dateAdded }
@@ -74,6 +77,7 @@ struct MainAppView: View {
                         bluetoothManager: bluetoothManager,
                         deviceID: device.id,
                         onOverviewRequest: { enterOverviewMode() },
+                        onSettingsModeChange: { active in settingsOverlayActive = active },
                         animateEntrance: device.id == justPairedDeviceID
                     )
                     .tag(1 + index)
@@ -83,6 +87,7 @@ struct MainAppView: View {
                     .tag(1 + sortedDevices.count)
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
+            .scrollDisabled(settingsOverlayActive)
             .ignoresSafeArea()
             .scaleEffect(isOverviewMode ? 0.85 : 1.0)
             .opacity(isOverviewMode ? 0 : 1)
