@@ -25,6 +25,8 @@ struct Motion3DView: View {
     var inSettingsMode: Bool = false
     var applyPlasticTexture: Bool = true
     var modelYOffset: Float = 0
+    var passesEmptyTaps: Bool = false
+    var pcbLightingMode: Bool = false
 
     private var settingsManager: SettingsManager { SettingsManager.shared }
     private var isLiveOrientation: Bool { settingsManager.liveOrientationEnabled }
@@ -45,7 +47,9 @@ struct Motion3DView: View {
             onTap: onSettingsTap,
             inSettingsMode: inSettingsMode,
             applyPlasticTexture: applyPlasticTexture,
-            modelYOffset: modelYOffset
+            modelYOffset: modelYOffset,
+            passesEmptyTaps: passesEmptyTaps,
+            pcbLightingMode: pcbLightingMode
         )
         .ignoresSafeArea()
     }

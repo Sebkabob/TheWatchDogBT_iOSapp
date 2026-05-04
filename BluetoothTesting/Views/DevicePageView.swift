@@ -265,17 +265,6 @@ struct DevicePageView: View {
                     if showModel {
                         ZStack {
                             Motion3DView(
-                                usdzFileName: "WatchDogBTCase_V2",
-                                bluetoothManager: bluetoothManager,
-                                onSettingsTap: isDeviceConnected ? { handleModelTap() } : nil,
-                                idleWobble: isDeviceConnected,
-                                wobbleIntensity: 0.3,
-                                inSettingsMode: inSettingsMode
-                            )
-                            .opacity(showingPCBView ? 0.4 : 1)
-                            .allowsHitTesting(!showingPCBView)
-
-                            Motion3DView(
                                 usdzFileName: "WatchDogBTPCB",
                                 bluetoothManager: bluetoothManager,
                                 onSettingsTap: { handleModelTap() },
@@ -283,10 +272,23 @@ struct DevicePageView: View {
                                 wobbleIntensity: 0.3,
                                 inSettingsMode: inSettingsMode,
                                 applyPlasticTexture: false,
-                                modelYOffset: -2.45
+                                modelYOffset: -2.45,
+                                passesEmptyTaps: true,
+                                pcbLightingMode: true
                             )
                             .opacity(showingPCBView ? 1 : 0)
                             .allowsHitTesting(showingPCBView)
+
+                            Motion3DView(
+                                usdzFileName: "WatchDogBTCase_V2",
+                                bluetoothManager: bluetoothManager,
+                                onSettingsTap: isDeviceConnected ? { handleModelTap() } : nil,
+                                idleWobble: isDeviceConnected,
+                                wobbleIntensity: 0.3,
+                                inSettingsMode: inSettingsMode,
+                                passesEmptyTaps: true
+                            )
+                            .opacity(showingPCBView ? 0.4 : 1)
                         }
                         .animation(.easeInOut(duration: 0.2), value: showingPCBView)
                         .frame(maxWidth: .infinity)

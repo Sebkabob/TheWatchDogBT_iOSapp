@@ -27,6 +27,12 @@ struct SceneView3D: UIViewRepresentable {
     var applyPlasticTexture: Bool = true
     /// Vertical offset applied to the model node, in scene units. Negative = down.
     var modelYOffset: Float = 0
+    /// When true, taps in regions with no model geometry pass through to views
+    /// stacked beneath this one (used so dim case taps register in PCB mode).
+    var passesEmptyTaps: Bool = false
+    /// When true, scene lights are reduced and the LED casts an extra omni point
+    /// light around itself to illuminate nearby geometry.
+    var pcbLightingMode: Bool = false
 
     // MARK: - Scene & Texture Cache
     private static var cachedNormalMap: UIImage?
@@ -39,7 +45,7 @@ struct SceneView3D: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> SCNView {
-        let sceneView = SCNView()
+        let sceneView: SCNView = passesEmptyTaps ? PassthroughSCNView() : SCNView()
         sceneView.scene = createScene()
         sceneView.autoenablesDefaultLighting = false
         sceneView.allowsCameraControl = false
@@ -47,11 +53,14 @@ struct SceneView3D: UIViewRepresentable {
 
         guard let root = sceneView.scene?.rootNode else { return sceneView }
 
+        // Multiplier so PCB-lighting mode renders darker overall.
+        let lightScale: CGFloat = pcbLightingMode ? 0.12 : 1.0
+
         // Low ambient so shadows stay dramatic
         let ambientLight = SCNNode()
         ambientLight.light = SCNLight()
         ambientLight.light?.type = .ambient
-        ambientLight.light?.intensity = 40
+        ambientLight.light?.intensity = 40 * lightScale
         ambientLight.light?.color = UIColor(white: 0.5, alpha: 1.0)
         root.addChildNode(ambientLight)
 
@@ -59,7 +68,7 @@ struct SceneView3D: UIViewRepresentable {
         let keyLight = SCNNode()
         keyLight.light = SCNLight()
         keyLight.light?.type = .directional
-        keyLight.light?.intensity = 1200
+        keyLight.light?.intensity = 1200 * lightScale
         keyLight.light?.color = UIColor(white: 0.95, alpha: 1.0)
         keyLight.light?.castsShadow = true
         keyLight.light?.shadowRadius = 3
@@ -72,7 +81,7 @@ struct SceneView3D: UIViewRepresentable {
         let fillLight = SCNNode()
         fillLight.light = SCNLight()
         fillLight.light?.type = .directional
-        fillLight.light?.intensity = 400
+        fillLight.light?.intensity = 400 * lightScale
         fillLight.light?.color = UIColor(red: 0.85, green: 0.9, blue: 1.0, alpha: 1.0)
         fillLight.eulerAngles = SCNVector3(0.3, -0.7, 0)
         root.addChildNode(fillLight)
@@ -81,7 +90,7 @@ struct SceneView3D: UIViewRepresentable {
         let rimLight = SCNNode()
         rimLight.light = SCNLight()
         rimLight.light?.type = .directional
-        rimLight.light?.intensity = 600
+        rimLight.light?.intensity = 600 * lightScale
         rimLight.light?.color = UIColor(white: 0.9, alpha: 1.0)
         rimLight.eulerAngles = SCNVector3(-0.2, Float.pi, 0)
         root.addChildNode(rimLight)
@@ -196,11 +205,24 @@ struct SceneView3D: UIViewRepresentable {
         }
     }
 
+    /// Per-color compensation so red/green/yellow LEDs cast equal-looking light.
+    /// SCNLight scales intensity by the color's RGB channels, so a low-luminance
+    /// color (red ≈ 0.21) emits far less than a high-luminance color (yellow ≈ 0.93).
+    /// We divide by Rec. 709 luminance to normalise perceived brightness.
+    private func luminanceCompensation(for color: UIColor) -> CGFloat {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        color.getRed(&r, green: &g, blue: &b, alpha: &a)
+        let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        // Floor avoids division blow-ups for near-black colors.
+        return 1.0 / max(lum, 0.05)
+    }
+
     private func updateLED(node: SCNNode, color: UIColor, intensity: Double) {
         guard let material = node.geometry?.firstMaterial else { return }
 
         if intensity > 0.0 {
             let brightness = CGFloat(intensity)
+            let comp = luminanceCompensation(for: color)
 
             // Subtle glow on the lens surface only
             material.emission.contents = color
@@ -232,8 +254,32 @@ struct SceneView3D: UIViewRepresentable {
             }
 
             if let lightNode = node.childNode(withName: "ledLight", recursively: false) {
-                lightNode.light?.intensity = CGFloat(intensity * 12)
+                lightNode.light?.intensity = CGFloat(intensity * 6) * comp
                 lightNode.light?.color = color
+            }
+
+            // PCB mode: add an omni point light at the LED so nearby components
+            // are bathed in its glow, not just the camera-facing cone.
+            if pcbLightingMode {
+                if node.childNode(withName: "ledOmniLight", recursively: false) == nil {
+                    let omni = SCNNode()
+                    omni.name = "ledOmniLight"
+                    omni.light = SCNLight()
+                    omni.light?.type = .omni
+                    let (min, max) = node.boundingBox
+                    omni.position = SCNVector3(
+                        (min.x + max.x) / 2,
+                        (min.y + max.y) / 2,
+                        (min.z + max.z) / 2
+                    )
+                    omni.light?.attenuationStartDistance = 0.2
+                    omni.light?.attenuationEndDistance = 4.0
+                    node.addChildNode(omni)
+                }
+                if let omni = node.childNode(withName: "ledOmniLight", recursively: false) {
+                    omni.light?.intensity = CGFloat(intensity * 20) * comp
+                    omni.light?.color = color
+                }
             }
 
         } else {
@@ -244,6 +290,9 @@ struct SceneView3D: UIViewRepresentable {
 
             if let lightNode = node.childNode(withName: "ledLight", recursively: false) {
                 lightNode.light?.intensity = 0
+            }
+            if let omni = node.childNode(withName: "ledOmniLight", recursively: false) {
+                omni.light?.intensity = 0
             }
         }
     }
@@ -666,4 +715,15 @@ struct SceneView3D: UIViewRepresentable {
         ledIntensity: 0.5
     )
     .frame(width: 300, height: 400)
+}
+
+/// SCNView subclass that only claims a touch when the touch lands on actual
+/// 3D geometry. Empty regions return false from `point(inside:)` so UIKit
+/// continues hit-testing siblings stacked beneath in the view hierarchy.
+final class PassthroughSCNView: SCNView {
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        guard super.point(inside: point, with: event) else { return false }
+        let hits = self.hitTest(point, options: nil)
+        return !hits.isEmpty
+    }
 }
