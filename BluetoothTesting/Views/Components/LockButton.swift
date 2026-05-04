@@ -22,8 +22,9 @@ struct LockButton: View {
     }
 
     private var buttonText: String {
+        let loc = LocalizationManager.shared
         if isStabilizing { return "Stabilizing..." }
-        return isLocked ? "Hold to Unlock" : "Hold to Lock"
+        return isLocked ? loc.t(.holdToUnlock) : loc.t(.holdToLock)
     }
 
     private var buttonIcon: String {

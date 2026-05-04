@@ -191,19 +191,19 @@ struct MainAppView: View {
                 currentPage = max(0, totalPages - 1)
             }
         }
-        .alert("Remove WatchDog?", isPresented: Binding(
+        .alert(LocalizationManager.shared.t(.removeWatchDogTitle), isPresented: Binding(
             get: { deviceToRemove != nil },
             set: { if !$0 { deviceToRemove = nil } }
         )) {
-            Button("Cancel", role: .cancel) { deviceToRemove = nil }
-            Button("Remove", role: .destructive) {
+            Button(LocalizationManager.shared.t(.cancel), role: .cancel) { deviceToRemove = nil }
+            Button(LocalizationManager.shared.t(.remove), role: .destructive) {
                 if let id = deviceToRemove {
                     removeDevice(id)
                     deviceToRemove = nil
                 }
             }
         } message: {
-            Text("Are you sure you want to remove \(deviceToRemoveName)?")
+            Text(String(format: LocalizationManager.shared.t(.removeWatchDogMessage), deviceToRemoveName))
         }
     }
     
@@ -292,7 +292,7 @@ struct AddDevicePage: View {
                             .font(.system(size: 50, weight: .light))
                             .foregroundColor(.blue)
                     }
-                    Text("Add a WatchDog")
+                    Text(LocalizationManager.shared.t(.addAWatchDog))
                         .font(.title3)
                         .fontWeight(.semibold)
                         .foregroundColor(.primary)
@@ -308,34 +308,149 @@ struct AddDevicePage: View {
 // MARK: - About Page
 struct AboutPage: View {
     @Environment(\.colorScheme) var colorScheme
-    
+    @State private var showAppSettings = false
+
     var body: some View {
-        VStack(spacing: 20) {
-            Spacer()
-            if colorScheme == .light {
-                Image("AppLogoDark")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 120, height: 120)
-                    .colorInvert()
-            } else {
-                Image("AppLogoDark")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 120, height: 120)
+        ZStack {
+            VStack(spacing: 20) {
+                Spacer()
+                if colorScheme == .light {
+                    Image("AppLogoDark")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 120, height: 120)
+                        .colorInvert()
+                } else {
+                    Image("AppLogoDark")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 120, height: 120)
+                }
+                Text("WatchDog")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                Text("Version \(AppVersion.displayString)")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                Text("Sebastian Forenza 2026")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
             }
-            Text("WatchDog")
-                .font(.title2)
-                .fontWeight(.bold)
-            Text("Version \(AppVersion.displayString)")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-            Text("Sebastian Forenza 2026")
-                .font(.caption)
-                .foregroundColor(.secondary)
-            Spacer()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .opacity(showAppSettings ? 0 : 1)
+
+            // Top-right gear button
+            VStack {
+                HStack {
+                    Spacer()
+                    Button(action: {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            showAppSettings = true
+                        }
+                    }) {
+                        Image(systemName: "gearshape.fill")
+                            .font(.title2)
+                            .foregroundColor(.primary)
+                            .padding(12)
+                    }
+                }
+                Spacer()
+            }
+            .opacity(showAppSettings ? 0 : 1)
+
+            // App Settings overlay (fade in/out)
+            if showAppSettings {
+                AppSettingsView(onBack: {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        showAppSettings = false
+                    }
+                })
+                .transition(.opacity)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .animation(.easeInOut(duration: 0.3), value: showAppSettings)
+    }
+}
+
+// MARK: - App Settings (gear icon → settings)
+struct AppSettingsView: View {
+    let onBack: () -> Void
+    private let loc = LocalizationManager.shared
+    @State private var showWipeConfirm = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack(alignment: .firstTextBaseline) {
+                Button(action: onBack) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left")
+                        Text(loc.t(.back))
+                    }
+                    .font(.body)
+                    .foregroundColor(.primary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text(loc.t(.appSettings))
+                    .font(.body)
+                    .fontWeight(.bold)
+                    .foregroundColor(.primary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+
+                Color.clear.frame(maxWidth: .infinity, maxHeight: 0)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+
+            // Settings content
+            Form {
+                Section {
+                    HStack {
+                        Text(loc.t(.language))
+                        Spacer()
+                        Picker("", selection: Binding(
+                            get: { loc.current },
+                            set: { loc.current = $0 }
+                        )) {
+                            ForEach(AppLanguage.allCases, id: \.self) { lang in
+                                Text(lang.displayName).tag(lang)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                    }
+                }
+
+                Section {
+                    Button(role: .destructive) {
+                        showWipeConfirm = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "trash.fill")
+                            Text(loc.t(.wipeAppData))
+                        }
+                    }
+                }
+            }
+        }
+        .background(Color(.systemBackground))
+        .alert(loc.t(.wipeAppDataConfirmTitle), isPresented: $showWipeConfirm) {
+            Button(loc.t(.cancel), role: .cancel) { }
+            Button(loc.t(.wipe), role: .destructive) { wipeAppData() }
+        } message: {
+            Text(loc.t(.wipeAppDataConfirmMessage))
+        }
+    }
+
+    /// Removes every key in the standard UserDefaults suite — bonded devices,
+    /// custom names, notes, motion logs, per-device settings, language, etc.
+    private func wipeAppData() {
+        let defaults = UserDefaults.standard
+        for key in defaults.dictionaryRepresentation().keys {
+            defaults.removeObject(forKey: key)
+        }
     }
 }
 

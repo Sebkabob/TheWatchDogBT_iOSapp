@@ -23,7 +23,7 @@ struct DeviceOverviewGrid: View {
         VStack(spacing: 0) {
             // Header with dismiss button
             HStack {
-                Text("Your WatchDogs")
+                Text(LocalizationManager.shared.t(.yourWatchDogs))
                     .font(.title2)
                     .fontWeight(.bold)
                 Spacer()

@@ -43,6 +43,13 @@ enum LocKey: Hashable {
     case motionLogs, deviceNotInRange
     case forgetTitle, forgetMessage, cancel, forgetConfirm
     case resetTitle, resetMessage, reset
+    case holdToLock, holdToUnlock
+    case addAWatchDog, searchingForWatchDogs, tapToPair, pairing, paired
+    case skip, done, ok, no, go, remove
+    case removeWatchDogTitle, removeWatchDogMessage
+    case yourWatchDogs
+    case appSettings
+    case wipeAppData, wipeAppDataConfirmTitle, wipeAppDataConfirmMessage, wipe
 }
 
 @Observable
@@ -104,7 +111,24 @@ final class LocalizationManager {
             .cancel: "Cancel", .forgetConfirm: "Forget Device",
             .resetTitle: "Reset Device?",
             .resetMessage: "This will immediately reboot the WatchDog. The BLE connection will drop.",
-            .reset: "Reset"
+            .reset: "Reset",
+            .holdToLock: "Hold to Lock",
+            .holdToUnlock: "Hold to Unlock",
+            .addAWatchDog: "Add a WatchDog",
+            .searchingForWatchDogs: "Searching for WatchDogs...",
+            .tapToPair: "Tap to pair",
+            .pairing: "Pairing...",
+            .paired: "Paired!",
+            .skip: "Skip", .done: "Done", .ok: "OK", .no: "No", .go: "Go",
+            .remove: "Remove",
+            .removeWatchDogTitle: "Remove WatchDog?",
+            .removeWatchDogMessage: "Are you sure you want to remove %@?",
+            .yourWatchDogs: "Your WatchDogs",
+            .appSettings: "App Settings",
+            .wipeAppData: "Wipe App Data",
+            .wipeAppDataConfirmTitle: "Wipe All App Data?",
+            .wipeAppDataConfirmMessage: "This permanently deletes all bonded devices, custom names, notes, motion logs, and preferences on this phone. This cannot be undone.",
+            .wipe: "Wipe"
         ],
         .spanish: [
             .settings: "Ajustes",
@@ -141,7 +165,24 @@ final class LocalizationManager {
             .cancel: "Cancelar", .forgetConfirm: "Olvidar Dispositivo",
             .resetTitle: "¿Reiniciar Dispositivo?",
             .resetMessage: "Esto reiniciará el WatchDog inmediatamente. La conexión BLE se interrumpirá.",
-            .reset: "Reiniciar"
+            .reset: "Reiniciar",
+            .holdToLock: "Mantén para Bloquear",
+            .holdToUnlock: "Mantén para Desbloquear",
+            .addAWatchDog: "Añadir un WatchDog",
+            .searchingForWatchDogs: "Buscando WatchDogs...",
+            .tapToPair: "Toca para emparejar",
+            .pairing: "Emparejando...",
+            .paired: "¡Emparejado!",
+            .skip: "Omitir", .done: "Listo", .ok: "OK", .no: "No", .go: "Ir",
+            .remove: "Eliminar",
+            .removeWatchDogTitle: "¿Eliminar WatchDog?",
+            .removeWatchDogMessage: "¿Estás seguro de que quieres eliminar %@?",
+            .yourWatchDogs: "Tus WatchDogs",
+            .appSettings: "Ajustes de la App",
+            .wipeAppData: "Borrar Datos de la App",
+            .wipeAppDataConfirmTitle: "¿Borrar Todos los Datos?",
+            .wipeAppDataConfirmMessage: "Esto elimina permanentemente todos los dispositivos emparejados, nombres personalizados, notas, registros de movimiento y preferencias en este teléfono. No se puede deshacer.",
+            .wipe: "Borrar"
         ],
         .dutch: [
             .settings: "Instellingen",
@@ -178,7 +219,24 @@ final class LocalizationManager {
             .cancel: "Annuleren", .forgetConfirm: "Apparaat Vergeten",
             .resetTitle: "Apparaat Resetten?",
             .resetMessage: "Hierdoor wordt de WatchDog onmiddellijk opnieuw opgestart. De BLE-verbinding wordt verbroken.",
-            .reset: "Resetten"
+            .reset: "Resetten",
+            .holdToLock: "Houd vast om te Vergrendelen",
+            .holdToUnlock: "Houd vast om te Ontgrendelen",
+            .addAWatchDog: "WatchDog Toevoegen",
+            .searchingForWatchDogs: "WatchDogs zoeken...",
+            .tapToPair: "Tik om te koppelen",
+            .pairing: "Koppelen...",
+            .paired: "Gekoppeld!",
+            .skip: "Overslaan", .done: "Klaar", .ok: "OK", .no: "Nee", .go: "Ga",
+            .remove: "Verwijderen",
+            .removeWatchDogTitle: "WatchDog Verwijderen?",
+            .removeWatchDogMessage: "Weet je zeker dat je %@ wilt verwijderen?",
+            .yourWatchDogs: "Jouw WatchDogs",
+            .appSettings: "App-instellingen",
+            .wipeAppData: "App-gegevens Wissen",
+            .wipeAppDataConfirmTitle: "Alle App-gegevens Wissen?",
+            .wipeAppDataConfirmMessage: "Dit verwijdert permanent alle gekoppelde apparaten, aangepaste namen, notities, bewegingslogboeken en voorkeuren op deze telefoon. Dit kan niet ongedaan worden gemaakt.",
+            .wipe: "Wissen"
         ],
         .french: [
             .settings: "Réglages",
@@ -215,7 +273,24 @@ final class LocalizationManager {
             .cancel: "Annuler", .forgetConfirm: "Oublier l'Appareil",
             .resetTitle: "Réinitialiser l'Appareil ?",
             .resetMessage: "Cela redémarrera immédiatement le WatchDog. La connexion BLE sera interrompue.",
-            .reset: "Réinitialiser"
+            .reset: "Réinitialiser",
+            .holdToLock: "Maintenir pour Verrouiller",
+            .holdToUnlock: "Maintenir pour Déverrouiller",
+            .addAWatchDog: "Ajouter un WatchDog",
+            .searchingForWatchDogs: "Recherche de WatchDogs...",
+            .tapToPair: "Appuyer pour appairer",
+            .pairing: "Appairage...",
+            .paired: "Appairé !",
+            .skip: "Passer", .done: "OK", .ok: "OK", .no: "Non", .go: "Aller",
+            .remove: "Supprimer",
+            .removeWatchDogTitle: "Supprimer le WatchDog ?",
+            .removeWatchDogMessage: "Êtes-vous sûr de vouloir supprimer %@ ?",
+            .yourWatchDogs: "Vos WatchDogs",
+            .appSettings: "Réglages de l'App",
+            .wipeAppData: "Effacer les Données",
+            .wipeAppDataConfirmTitle: "Effacer Toutes les Données ?",
+            .wipeAppDataConfirmMessage: "Cela supprime définitivement tous les appareils appairés, noms personnalisés, notes, journaux de mouvement et préférences sur ce téléphone. Cette action est irréversible.",
+            .wipe: "Effacer"
         ],
         .japanese: [
             .settings: "設定",
@@ -252,7 +327,24 @@ final class LocalizationManager {
             .cancel: "キャンセル", .forgetConfirm: "デバイスを削除",
             .resetTitle: "デバイスをリセットしますか?",
             .resetMessage: "WatchDogが直ちに再起動します。BLE接続は切断されます。",
-            .reset: "リセット"
+            .reset: "リセット",
+            .holdToLock: "長押しでロック",
+            .holdToUnlock: "長押しでロック解除",
+            .addAWatchDog: "WatchDogを追加",
+            .searchingForWatchDogs: "WatchDogを検索中...",
+            .tapToPair: "タップしてペアリング",
+            .pairing: "ペアリング中...",
+            .paired: "ペアリング完了!",
+            .skip: "スキップ", .done: "完了", .ok: "OK", .no: "いいえ", .go: "実行",
+            .remove: "削除",
+            .removeWatchDogTitle: "WatchDogを削除しますか?",
+            .removeWatchDogMessage: "%@を本当に削除しますか?",
+            .yourWatchDogs: "あなたのWatchDog",
+            .appSettings: "アプリ設定",
+            .wipeAppData: "アプリデータを消去",
+            .wipeAppDataConfirmTitle: "すべてのアプリデータを消去しますか?",
+            .wipeAppDataConfirmMessage: "ペアリング済みのデバイス、カスタム名、メモ、モーションログ、設定がすべて完全に削除されます。元に戻すことはできません。",
+            .wipe: "消去"
         ],
         .portuguese: [
             .settings: "Ajustes",
@@ -289,7 +381,24 @@ final class LocalizationManager {
             .cancel: "Cancelar", .forgetConfirm: "Esquecer Dispositivo",
             .resetTitle: "Reiniciar Dispositivo?",
             .resetMessage: "Isto irá reiniciar imediatamente o WatchDog. A conexão BLE será interrompida.",
-            .reset: "Reiniciar"
+            .reset: "Reiniciar",
+            .holdToLock: "Manter para Bloquear",
+            .holdToUnlock: "Manter para Desbloquear",
+            .addAWatchDog: "Adicionar um WatchDog",
+            .searchingForWatchDogs: "À procura de WatchDogs...",
+            .tapToPair: "Tocar para emparelhar",
+            .pairing: "A emparelhar...",
+            .paired: "Emparelhado!",
+            .skip: "Saltar", .done: "Concluído", .ok: "OK", .no: "Não", .go: "Ir",
+            .remove: "Remover",
+            .removeWatchDogTitle: "Remover WatchDog?",
+            .removeWatchDogMessage: "Tem a certeza de que quer remover %@?",
+            .yourWatchDogs: "Os Seus WatchDogs",
+            .appSettings: "Ajustes da App",
+            .wipeAppData: "Apagar Dados da App",
+            .wipeAppDataConfirmTitle: "Apagar Todos os Dados?",
+            .wipeAppDataConfirmMessage: "Isto apaga permanentemente todos os dispositivos emparelhados, nomes personalizados, notas, registos de movimento e preferências neste telefone. Esta ação não pode ser desfeita.",
+            .wipe: "Apagar"
         ]
     ]
 }

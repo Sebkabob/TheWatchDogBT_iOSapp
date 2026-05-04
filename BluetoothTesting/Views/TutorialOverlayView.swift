@@ -28,7 +28,7 @@ struct TutorialOverlayView: View {
                 // Skip button
                 HStack {
                     Spacer()
-                    Button("Skip") {
+                    Button(LocalizationManager.shared.t(.skip)) {
                         onComplete()
                     }
                     .font(.body)

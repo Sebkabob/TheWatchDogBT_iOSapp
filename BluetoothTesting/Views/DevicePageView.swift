@@ -658,7 +658,7 @@ struct DevicePageView: View {
                 set: { if !$0 { diagnosticErrorMessage = nil } }
             )
         ) {
-            Button("OK", role: .cancel) { diagnosticErrorMessage = nil }
+            Button(loc.t(.ok), role: .cancel) { diagnosticErrorMessage = nil }
         } message: {
             Text(diagnosticErrorMessage ?? "")
         }
@@ -1272,22 +1272,6 @@ struct DevicePageView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-            }
-
-            HStack {
-                Text(loc.t(.language))
-                    .font(.subheadline)
-                Spacer()
-                Picker("", selection: Binding(
-                    get: { loc.current },
-                    set: { loc.current = $0 }
-                )) {
-                    ForEach(AppLanguage.allCases, id: \.self) { lang in
-                        Text(lang.displayName).tag(lang)
-                    }
-                }
-                .pickerStyle(.menu)
-                .labelsHidden()
             }
 
             Button(action: {}) {

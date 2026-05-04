@@ -120,7 +120,7 @@ struct AddNewDeviceView: View {
                     if case .paired = phase {
                         Color.clear
                     } else {
-                        Button("Cancel") { onCancel() }
+                        Button(LocalizationManager.shared.t(.cancel)) { onCancel() }
                             .font(.body)
                             .foregroundColor(.white.opacity(0.4))
                             .transition(.opacity)
@@ -174,7 +174,7 @@ struct AddNewDeviceView: View {
             ),
             presenting: bluetoothManager.notYourDeviceAlert
         ) { _ in
-            Button("OK", role: .cancel) {
+            Button(LocalizationManager.shared.t(.ok), role: .cancel) {
                 bluetoothManager.notYourDeviceAlert = nil
                 withAnimation(.easeInOut(duration: 0.4)) {
                     glowActive = false
@@ -321,20 +321,20 @@ struct AddNewDeviceView: View {
     private var statusText: some View {
         switch phase {
         case .searching:
-            Text("Searching for WatchDogs...")
+            Text(LocalizationManager.shared.t(.searchingForWatchDogs))
                 .font(.title3)
                 .foregroundColor(.white.opacity(0.5))
         case .found:
-            Text("Tap to pair")
+            Text(LocalizationManager.shared.t(.tapToPair))
                 .font(.title3)
                 .foregroundColor(.white.opacity(0.6))
         case .pairing:
-            Text("Pairing...")
+            Text(LocalizationManager.shared.t(.pairing))
                 .font(.title3)
                 .fontWeight(.medium)
                 .foregroundColor(.blue)
         case .paired:
-            Text("Paired!")
+            Text(LocalizationManager.shared.t(.paired))
                 .font(.title3)
                 .fontWeight(.medium)
                 .foregroundColor(.green)
