@@ -10,7 +10,6 @@ struct Motion3DView: View {
     @State private var currentRotationX: Double = 0
     @State private var currentRotationY: Double = 0
     @State private var currentRotationZ: Double = 0
-    @State private var showSettings = false
     @State private var ledAnimator = LEDAnimator()
     @State private var liveQuaternion: SCNVector4? = nil
     @State private var smoothedGX: Double = 0
@@ -18,34 +17,47 @@ struct Motion3DView: View {
     @State private var smoothedGZ: Double = 0
     @State private var smoothingSeeded: Bool = false
 
-    let usdzFileName = "WatchDogBTCase_V2"
+    var usdzFileName: String = "WatchDogBTCase_V2"
     var bluetoothManager: BluetoothManager
-    var allowSettingsTap: Bool = true
-    var targetDeviceID: UUID? = nil
+    var onSettingsTap: (() -> Void)? = nil
+    var idleWobble: Bool = false
+    var wobbleIntensity: Double = 1.0
+    var inSettingsMode: Bool = false
+    var applyPlasticTexture: Bool = true
+    var modelYOffset: Float = 0
+    var passesEmptyTaps: Bool = false
+    var pcbLightingMode: Bool = false
 
     private var settingsManager: SettingsManager { SettingsManager.shared }
     private var isLiveOrientation: Bool { settingsManager.liveOrientationEnabled }
 
+    private var sceneView: some View {
+        let wobbleEnabled = idleWobble && !isLiveOrientation
+        let brightnessScale = Double(max(1, min(100, settingsManager.ledBrightness))) / 100.0
+        return SceneView3D(
+            rotationX: $currentRotationX,
+            rotationY: $currentRotationY,
+            rotationZ: $currentRotationZ,
+            usdzFileName: usdzFileName,
+            ledColor: ledAnimator.outputColor,
+            ledIntensity: ledAnimator.outputIntensity * brightnessScale,
+            gesturesEnabled: !isLiveOrientation,
+            idleWobble: wobbleEnabled,
+            wobbleIntensity: wobbleIntensity,
+            liveQuaternion: liveQuaternion,
+            onTap: onSettingsTap,
+            inSettingsMode: inSettingsMode,
+            applyPlasticTexture: applyPlasticTexture,
+            modelYOffset: modelYOffset,
+            passesEmptyTaps: passesEmptyTaps,
+            pcbLightingMode: pcbLightingMode
+        )
+        .ignoresSafeArea()
+    }
+
     var body: some View {
         ZStack {
-            SceneView3D(
-                rotationX: $currentRotationX,
-                rotationY: $currentRotationY,
-                rotationZ: $currentRotationZ,
-                usdzFileName: usdzFileName,
-                ledColor: ledAnimator.outputColor,
-                ledIntensity: ledAnimator.outputIntensity,
-                gesturesEnabled: !isLiveOrientation,
-                liveQuaternion: liveQuaternion,
-                onTap: allowSettingsTap ? { showSettings = true } : nil
-            )
-            .ignoresSafeArea()
-        }
-        .sheet(isPresented: $showSettings) {
-            WatchDogSettingsView(
-                bluetoothManager: bluetoothManager,
-                targetDeviceID: targetDeviceID
-            )
+            sceneView
         }
         .onAppear {
             syncAnimatorState()
@@ -62,9 +74,11 @@ struct Motion3DView: View {
         .onChange(of: bluetoothManager.isAlarmActive)  { syncAnimatorState() }
         .onChange(of: bluetoothManager.isFindMyActive) { syncAnimatorState() }
         .onChange(of: bluetoothManager.connectedDevice?.id) { syncAnimatorState() }
+        .onChange(of: bluetoothManager.mlcState)        { syncAnimatorState() }
         .onChange(of: settingsManager.lightsEnabled)   { syncAnimatorState() }
         .onChange(of: settingsManager.alarmType)       { syncAnimatorState() }
         .onChange(of: settingsManager.isArmed)         { syncAnimatorState() }
+        .onChange(of: settingsManager.disableAlarmWhenConnected) { syncAnimatorState() }
         // Drive model orientation from accelerometer
         .onChange(of: bluetoothManager.debugAccelX) { updateLiveOrientation() }
     }
@@ -80,6 +94,8 @@ struct Motion3DView: View {
         ledAnimator.isBatteryFull  = bluetoothManager.isBatteryFull
         ledAnimator.isAlarmActive  = bluetoothManager.isAlarmActive
         ledAnimator.isFindMyActive = bluetoothManager.isFindMyActive
+        ledAnimator.mlcState       = bluetoothManager.mlcState
+        ledAnimator.silenceEnabled = settingsManager.disableAlarmWhenConnected
     }
 
     private func updateLiveOrientation() {

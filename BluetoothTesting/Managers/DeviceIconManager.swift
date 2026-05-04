@@ -49,6 +49,28 @@ enum DeviceIcon: String, Codable, CaseIterable {
         }
     }
     
+    /// Default motion types that trigger alarm for this icon's use case
+    var defaultAlarmTriggers: Set<MotionEventType> {
+        switch self {
+        case .door:
+            return [.doorOpening, .doorClosing]
+        case .cabinet:
+            return [.doorOpening, .tilted]
+        case .bicycle, .skateboard, .scooter, .motorcycle:
+            return [.inMotion, .shaken, .impact, .freefall]
+        case .car:
+            return [.inMotion, .impact, .freefall]
+        case .bag, .backpack, .briefcase, .suitcase, .box:
+            return [.shaken, .impact, .freefall, .tilted]
+        case .house:
+            return [.doorOpening, .doorClosing, .impact, .shaken]
+        case .pill:
+            return [.doorOpening, .tilted, .shaken]
+        case .dog, .lockShield, .key:
+            return [.shaken, .impact, .freefall, .tilted, .doorOpening, .doorClosing]
+        }
+    }
+
     // Track which icons have .fill variants
     var hasFillVariant: Bool {
         switch self {
@@ -91,14 +113,14 @@ class DeviceIconManager {
     func setCustomIcon(deviceID: UUID, icon: DeviceIcon) {
         customIcons[deviceID.uuidString] = icon.rawValue
         saveCustomIcons()
-        print("🎨 Set custom icon for \(deviceID.uuidString.prefix(8)): \(icon.displayName)")
+        Log.ok(.icon, "Set [\(deviceID.uuidString.prefix(8))] · \(icon.displayName)")
     }
-    
+
     /// Remove custom icon for a device UUID (will use default lock.shield)
     func removeCustomIcon(deviceID: UUID) {
         customIcons.removeValue(forKey: deviceID.uuidString)
         saveCustomIcons()
-        print("🗑️ Removed custom icon for \(deviceID.uuidString.prefix(8))")
+        Log.ok(.icon, "Removed [\(deviceID.uuidString.prefix(8))]")
     }
     
     /// Get custom icon for a device UUID (returns nil if no custom icon set)
@@ -127,24 +149,24 @@ class DeviceIconManager {
             let encoder = JSONEncoder()
             let data = try encoder.encode(customIcons)
             UserDefaults.standard.set(data, forKey: customIconsKey)
-            print("💾 Saved \(customIcons.count) custom icons")
+            Log.info(.persist, "Saved \(customIcons.count) custom icons")
         } catch {
-            print("❌ Failed to save custom icons: \(error)")
+            Log.err(.persist, "Save custom icons · \(error)")
         }
     }
-    
+
     private func loadCustomIcons() {
         guard let data = UserDefaults.standard.data(forKey: customIconsKey) else {
-            print("📭 No saved custom icons found")
+            Log.info(.persist, "No saved custom icons")
             return
         }
-        
+
         do {
             let decoder = JSONDecoder()
             customIcons = try decoder.decode([String: String].self, from: data)
-            print("📬 Loaded \(customIcons.count) custom icons")
+            Log.info(.persist, "Loaded \(customIcons.count) custom icons")
         } catch {
-            print("❌ Failed to load custom icons: \(error)")
+            Log.err(.persist, "Load custom icons · \(error)")
             customIcons = [:]
         }
     }

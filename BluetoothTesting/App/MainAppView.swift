@@ -25,9 +25,16 @@ struct MainAppView: View {
     @State private var hasInitialized = false
     @State private var scanWatchdogTimer: Timer?
 
+    // Pairing overlay
+    @State private var showPairing = false
+    @State private var justPairedDeviceID: UUID?
+
     // Overview mode
     @State private var isOverviewMode = false
     @State private var deviceToRemove: UUID?
+
+    // Per-device settings overlay state — used to lock TabView paging
+    @State private var settingsOverlayActive = false
     
     private var sortedDevices: [BondedDevice] {
         bondManager.bondedDevices.sorted { $0.dateAdded < $1.dateAdded }
@@ -52,29 +59,58 @@ struct MainAppView: View {
         return sortedDevices[deviceIndex].id
     }
     
+    /// Page binding that refuses changes while settings/hardware mode is active.
+    /// `.scrollDisabled` on `.page`-style TabView is unreliable, so we lock the
+    /// selection at the binding level — even if a swipe is recognised, the page
+    /// cannot actually change.
+    private var lockedPageBinding: Binding<Int> {
+        Binding(
+            get: { currentPage },
+            set: { newValue in
+                guard !settingsOverlayActive else { return }
+                currentPage = newValue
+            }
+        )
+    }
+
     var body: some View {
         ZStack {
-            TabView(selection: $currentPage) {
-                AddDevicePage(bluetoothManager: bluetoothManager, onSheetDismissed: {
-                    if currentPage == 0 && !sortedDevices.isEmpty {
-                        currentPage = sortedDevices.count
-                    }
-                })
-                    .tag(0)
-
-                ForEach(Array(sortedDevices.enumerated()), id: \.element.id) { index, device in
-                    DevicePageView(
-                        bluetoothManager: bluetoothManager,
-                        deviceID: device.id,
-                        onOverviewRequest: { enterOverviewMode() }
-                    )
-                    .tag(1 + index)
+            TabView(selection: lockedPageBinding) {
+                // Only the active page is rendered while settings/hardware
+                // is open — without neighbouring pages, the TabView's swipe
+                // gesture has nowhere to scroll to and is effectively inert.
+                if !settingsOverlayActive || currentPage == 0 {
+                    AddDevicePage(bluetoothManager: bluetoothManager, onAddTapped: {
+                        if let device = bluetoothManager.connectedDevice {
+                            bluetoothManager.disconnect(from: device)
+                        }
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showPairing = true
+                        }
+                    })
+                        .tag(0)
                 }
 
-                AboutPage()
-                    .tag(1 + sortedDevices.count)
+                ForEach(Array(sortedDevices.enumerated()), id: \.element.id) { index, device in
+                    if !settingsOverlayActive || (1 + index) == currentPage {
+                        DevicePageView(
+                            bluetoothManager: bluetoothManager,
+                            deviceID: device.id,
+                            onOverviewRequest: { enterOverviewMode() },
+                            onSettingsModeChange: { active in settingsOverlayActive = active },
+                            animateEntrance: device.id == justPairedDeviceID
+                        )
+                        .tag(1 + index)
+                    }
+                }
+
+                if !settingsOverlayActive || currentPage == (1 + sortedDevices.count) {
+                    AboutPage()
+                        .tag(1 + sortedDevices.count)
+                }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
+            .scrollDisabled(settingsOverlayActive)
             .ignoresSafeArea()
             .scaleEffect(isOverviewMode ? 0.85 : 1.0)
             .opacity(isOverviewMode ? 0 : 1)
@@ -89,6 +125,23 @@ struct MainAppView: View {
                     onDismiss: { dismissOverviewMode() }
                 )
                 .transition(.opacity)
+            }
+
+            // Full-screen pairing overlay
+            if showPairing {
+                AddNewDeviceView(
+                    bluetoothManager: bluetoothManager,
+                    onPaired: { deviceID in
+                        handlePairingComplete(deviceID: deviceID)
+                    },
+                    onCancel: {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            showPairing = false
+                        }
+                    }
+                )
+                .transition(.opacity)
+                .zIndex(10)
             }
         }
         .onAppear {
@@ -128,7 +181,7 @@ struct MainAppView: View {
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
-                print("🔄 App became active — ensuring BLE scan")
+                Log.info(.view, "App became active · ensuring BLE scan")
                 bondManager.refreshTimestampsForForegroundReturn()
                 bluetoothManager.handleAppBecameActive()
             }
@@ -190,6 +243,25 @@ struct MainAppView: View {
         }
     }
 
+    private func handlePairingComplete(deviceID: UUID) {
+        justPairedDeviceID = deviceID
+
+        // Navigate to the device page behind the overlay
+        if let page = pageIndex(for: deviceID) {
+            currentPage = page
+        }
+
+        // Fade out the overlay to reveal the device page
+        withAnimation(.easeInOut(duration: 0.5)) {
+            showPairing = false
+        }
+
+        // Clear the entrance flag after controls have animated in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            justPairedDeviceID = nil
+        }
+    }
+
     /// Simple watchdog: every 5 seconds, call ensureScanning().
     /// ensureScanning() is idempotent so this is always safe.
     private func startScanWatchdog() {
@@ -205,13 +277,12 @@ struct MainAppView: View {
 // MARK: - Add Device Page
 struct AddDevicePage: View {
     var bluetoothManager: BluetoothManager
-    var onSheetDismissed: (() -> Void)? = nil
-    @State private var showAddDevice = false
+    var onAddTapped: () -> Void
 
     var body: some View {
         VStack(spacing: 24) {
             Spacer()
-            Button(action: { showAddDevice = true }) {
+            Button(action: { onAddTapped() }) {
                 VStack(spacing: 16) {
                     ZStack {
                         Circle()
@@ -231,11 +302,6 @@ struct AddDevicePage: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .sheet(isPresented: $showAddDevice, onDismiss: {
-            onSheetDismissed?()
-        }) {
-            AddNewDeviceView(bluetoothManager: bluetoothManager)
-        }
     }
 }
 
@@ -261,7 +327,7 @@ struct AboutPage: View {
             Text("WatchDog")
                 .font(.title2)
                 .fontWeight(.bold)
-            Text("Version 1.0")
+            Text("Version \(AppVersion.displayString)")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
             Text("Sebastian Forenza 2026")

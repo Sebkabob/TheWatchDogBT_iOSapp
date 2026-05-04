@@ -34,15 +34,15 @@ class NavigationStateManager {
         lastDeviceID = nil
         UserDefaults.standard.set(LastScreen.deviceList.rawValue, forKey: lastScreenKey)
         UserDefaults.standard.removeObject(forKey: lastDeviceIDKey)
-        print("💾 Nav state saved: deviceList")
+        Log.info(.nav, "Saved · deviceList")
     }
-    
+
     func saveDeviceControl(deviceID: UUID) {
         lastScreen = .deviceControl
         lastDeviceID = deviceID
         UserDefaults.standard.set(LastScreen.deviceControl.rawValue, forKey: lastScreenKey)
         UserDefaults.standard.set(deviceID.uuidString, forKey: lastDeviceIDKey)
-        print("💾 Nav state saved: deviceControl (\(deviceID.uuidString.prefix(8)))")
+        Log.info(.nav, "Saved · deviceControl [\(deviceID.uuidString.prefix(8))]")
     }
     
     private func loadState() {
@@ -62,10 +62,10 @@ class NavigationStateManager {
                 // Device was un-bonded, reset to list
                 lastScreen = .deviceList
                 lastDeviceID = nil
-                print("⚠️ Last device no longer bonded, resetting to list")
+                Log.warn(.nav, "Last device no longer bonded · resetting to list")
             }
         }
-        
-        print("📬 Nav state loaded: \(lastScreen) device: \(lastDeviceID?.uuidString.prefix(8) ?? "none")")
+
+        Log.info(.nav, "Loaded · \(lastScreen) device=\(lastDeviceID?.uuidString.prefix(8) ?? "none")")
     }
 }

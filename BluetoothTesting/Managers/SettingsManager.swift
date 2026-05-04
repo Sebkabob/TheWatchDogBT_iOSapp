@@ -12,6 +12,9 @@ import Observation
 class SettingsManager {
     static let shared = SettingsManager()
 
+    // The device whose settings are currently loaded
+    private(set) var currentDeviceID: UUID?
+
     // Observable properties for UI binding
     var isArmed: Bool = false
     var alarmType: AlarmType = .normal
@@ -25,23 +28,54 @@ class SettingsManager {
     var liveOrientationEnabled: Bool = false
     var devModeUnlocked: Bool = false
     var dataLoggingMode: Bool = false
-    
-    // UserDefaults keys
+    var alarmTriggers: Set<MotionEventType> = [.shaken, .impact, .freefall, .tilted, .doorOpening, .doorClosing]
+    var selectedPresetRawValue: String = "maxSecurity"
+    /// Seconds the alarm continues to sound after motion stops. Range 0...30.
+    var alarmDuration: Int = 10
+    /// When true, the WatchDog suppresses the alarm entirely regardless of
+    /// trigger conditions. Persisted per-device.
+    var alarmDisabled: Bool = false
+    /// LED brightness in app units (1...100). Mapped to firmware's 1...255 on send.
+    var ledBrightness: Int = 100
+
+    // UserDefaults keys — per-device settings
     private let armedKey = "watchdog_armed"
     private let alarmTypeKey = "watchdog_alarm_type"
     private let sensitivityKey = "watchdog_sensitivity"
     private let lightsKey = "watchdog_lights"
     private let loggingKey = "watchdog_logging"
     private let disableAlarmWhenConnectedKey = "watchdog_disable_alarm_connected"
+    private let alarmTriggersKey = "watchdog_alarm_triggers"
+    private let selectedPresetKey = "watchdog_selected_preset"
+    private let alarmDurationKey = "watchdog_alarm_duration"
+    private let alarmDisabledKey = "watchdog_alarm_disabled"
+    private let ledBrightnessKey = "watchdog_led_brightness"
+
+    // UserDefaults keys — global settings
     private let deviceNameKey = "watchdog_device_name"
     private let debugModeKey = "watchdog_debug_mode"
-    private let highPerformanceModeKey = "watchdog_high_performance_mode"
     private let liveOrientationKey = "watchdog_live_orientation"
     private let devModeUnlockedKey = "watchdog_dev_mode_unlocked"
     private let dataLoggingModeKey = "watchdog_data_logging_mode"
-    
+
     private init() {
-        loadSettings()
+        loadGlobalSettings()
+    }
+
+    private func deviceKey(_ base: String, _ deviceID: UUID) -> String {
+        "\(deviceID.uuidString)_\(base)"
+    }
+
+    /// Read a device's persisted armed state without mutating the shared in-memory state.
+    func persistedArmed(for deviceID: UUID) -> Bool {
+        let ud = UserDefaults.standard
+        let key = deviceKey(armedKey, deviceID)
+        return ud.object(forKey: key) != nil ? ud.bool(forKey: key) : false
+    }
+
+    /// Write a device's armed state directly to UserDefaults without touching the shared in-memory state.
+    func setPersistedArmed(_ value: Bool, for deviceID: UUID) {
+        UserDefaults.standard.set(value, forKey: deviceKey(armedKey, deviceID))
     }
     
     // MARK: - Byte Encoding/Decoding
@@ -90,132 +124,182 @@ class SettingsManager {
     
     /// Encodes deviceInfo into a single byte (byte 13)
     /// Bit 0: High Performance Mode
+    /// Bit 1: Alarm Disabled (1 = alarm fully suppressed regardless of triggers)
     func encodeDeviceInfo() -> UInt8 {
         var byte: UInt8 = 0
         if highPerformanceMode {
             byte |= (1 << 0)
         }
+        if alarmDisabled {
+            byte |= (1 << 1)
+        }
         return byte
+    }
+
+    /// Encodes alarm duration as a single byte. Value is seconds (0...30); clamped on send.
+    func encodeAlarmDuration() -> UInt8 {
+        UInt8(max(0, min(30, alarmDuration)))
+    }
+
+    /// Maps app-side LED brightness (1...100) to firmware scale (1...255).
+    func encodeLEDBrightness() -> UInt8 {
+        let clamped = max(1, min(100, ledBrightness))
+        let scaled = 1 + Int(round((Double(clamped - 1) / 99.0) * 254.0))
+        return UInt8(max(1, min(255, scaled)))
     }
 
     /// Decodes deviceInfo byte from WatchDog
     func decodeDeviceInfo(from byte: UInt8) {
         highPerformanceMode = (byte & (1 << 0)) != 0
-        print("  High Performance Mode: \(highPerformanceMode)")
-        saveSettings()
+        alarmDisabled = (byte & (1 << 1)) != 0
+        Log.info(.settings, "deviceInfo · highPerformance=\(highPerformanceMode) alarmDisabled=\(alarmDisabled)")
+        saveDeviceSettings()
     }
 
     /// Decodes a byte from WatchDog into settings
     func decodeSettings(from byte: UInt8) {
-        print("📥 Decoding settings byte: 0x\(String(format: "%02X", byte))")
-        
         // Bit 0: Armed
         isArmed = (byte & (1 << 0)) != 0
-        
+
         // Bits 1-2: Alarm Type
         let alarmBits = (byte >> 1) & 0b11
         alarmType = AlarmType.from(bitValue: alarmBits)
-        
+
         // Bits 3-4: Sensitivity
         let sensitivityBits = (byte >> 3) & 0b11
         sensitivity = SensitivityLevel.from(bitValue: sensitivityBits)
-        
+
         // Bit 5: Lights
         lightsEnabled = (byte & (1 << 5)) != 0
-        
+
         // Bit 6: Logging
         loggingEnabled = (byte & (1 << 6)) != 0
-        
+
         // Bit 7: Disable Alarm When Connected
         disableAlarmWhenConnected = (byte & (1 << 7)) != 0
-        
-        print("  Armed: \(isArmed)")
-        print("  Alarm: \(alarmType.rawValue)")
-        print("  Sensitivity: \(sensitivity.rawValue)")
-        print("  Lights: \(lightsEnabled)")
-        print("  Logging: \(loggingEnabled)")
-        print("  Disable Alarm When Connected: \(disableAlarmWhenConnected)")
-        
+
+        let lockGlyph = isArmed ? "🔒 Armed" : "🔓 Idle"
+        Log.rx(.settings, "0x\(String(format: "%02X", byte)) · \(lockGlyph) · alarm=\(alarmType.rawValue) · sens=\(sensitivity.rawValue) · lights=\(lightsEnabled ? "on" : "off") · log=\(loggingEnabled ? "on" : "off") · disableWhenConn=\(disableAlarmWhenConnected)")
+
         // Save to UserDefaults (WatchDog is source of truth)
-        saveSettings()
+        saveDeviceSettings()
     }
     
-    // MARK: - Persistence
-    
-    private func saveSettings() {
-        UserDefaults.standard.set(isArmed, forKey: armedKey)
-        UserDefaults.standard.set(alarmType.rawValue, forKey: alarmTypeKey)
-        UserDefaults.standard.set(sensitivity.rawValue, forKey: sensitivityKey)
-        UserDefaults.standard.set(lightsEnabled, forKey: lightsKey)
-        UserDefaults.standard.set(loggingEnabled, forKey: loggingKey)
-        UserDefaults.standard.set(disableAlarmWhenConnected, forKey: disableAlarmWhenConnectedKey)
-        UserDefaults.standard.set(deviceName, forKey: deviceNameKey)
-        UserDefaults.standard.set(debugModeEnabled, forKey: debugModeKey)
-        UserDefaults.standard.set(highPerformanceMode, forKey: highPerformanceModeKey)
-        UserDefaults.standard.set(liveOrientationEnabled, forKey: liveOrientationKey)
-        UserDefaults.standard.set(devModeUnlocked, forKey: devModeUnlockedKey)
-        UserDefaults.standard.set(dataLoggingMode, forKey: dataLoggingModeKey)
-    }
-    
-    private func loadSettings() {
-        isArmed = UserDefaults.standard.bool(forKey: armedKey)
-        lightsEnabled = UserDefaults.standard.bool(forKey: lightsKey)
-        loggingEnabled = UserDefaults.standard.bool(forKey: loggingKey)
-        disableAlarmWhenConnected = UserDefaults.standard.bool(forKey: disableAlarmWhenConnectedKey)
-        deviceName = UserDefaults.standard.string(forKey: deviceNameKey) ?? "WatchDog"
-        
-        // Debug mode defaults to OFF
-        if UserDefaults.standard.object(forKey: debugModeKey) != nil {
-            debugModeEnabled = UserDefaults.standard.bool(forKey: debugModeKey)
+    // MARK: - Per-Device Persistence
+
+    /// Load settings for a specific device into memory
+    func loadDeviceSettings(for deviceID: UUID) {
+        currentDeviceID = deviceID
+        let ud = UserDefaults.standard
+
+        isArmed = ud.object(forKey: deviceKey(armedKey, deviceID)) != nil
+            ? ud.bool(forKey: deviceKey(armedKey, deviceID))
+            : false
+
+        if let s = ud.string(forKey: deviceKey(alarmTypeKey, deviceID)),
+           let v = AlarmType(rawValue: s) {
+            alarmType = v
         } else {
-            debugModeEnabled = false
+            alarmType = .normal
         }
 
-        // High Performance Mode defaults to OFF
-        if UserDefaults.standard.object(forKey: highPerformanceModeKey) != nil {
-            highPerformanceMode = UserDefaults.standard.bool(forKey: highPerformanceModeKey)
+        if let s = ud.string(forKey: deviceKey(sensitivityKey, deviceID)),
+           let v = SensitivityLevel(rawValue: s) {
+            sensitivity = v
         } else {
-            highPerformanceMode = false
+            sensitivity = .medium
         }
 
-        // Live Orientation defaults to OFF
-        if UserDefaults.standard.object(forKey: liveOrientationKey) != nil {
-            liveOrientationEnabled = UserDefaults.standard.bool(forKey: liveOrientationKey)
+        lightsEnabled = ud.object(forKey: deviceKey(lightsKey, deviceID)) != nil
+            ? ud.bool(forKey: deviceKey(lightsKey, deviceID))
+            : true
+
+        loggingEnabled = ud.object(forKey: deviceKey(loggingKey, deviceID)) != nil
+            ? ud.bool(forKey: deviceKey(loggingKey, deviceID))
+            : false
+
+        disableAlarmWhenConnected = ud.object(forKey: deviceKey(disableAlarmWhenConnectedKey, deviceID)) != nil
+            ? ud.bool(forKey: deviceKey(disableAlarmWhenConnectedKey, deviceID))
+            : false
+
+        highPerformanceMode = devModeUnlocked
+
+        if let saved = ud.array(forKey: deviceKey(alarmTriggersKey, deviceID)) as? [UInt8] {
+            alarmTriggers = Set(saved.compactMap { MotionEventType(rawValue: $0) })
         } else {
-            liveOrientationEnabled = false
+            alarmTriggers = [.shaken, .impact, .freefall, .tilted, .doorOpening, .doorClosing]
         }
 
-        // Dev Mode defaults to OFF
-        if UserDefaults.standard.object(forKey: devModeUnlockedKey) != nil {
-            devModeUnlocked = UserDefaults.standard.bool(forKey: devModeUnlockedKey)
+        if let s = ud.string(forKey: deviceKey(selectedPresetKey, deviceID)) {
+            selectedPresetRawValue = s
         } else {
-            devModeUnlocked = false
+            selectedPresetRawValue = "maxSecurity"
         }
 
-        // Data Logging Mode defaults to OFF
-        if UserDefaults.standard.object(forKey: dataLoggingModeKey) != nil {
-            dataLoggingMode = UserDefaults.standard.bool(forKey: dataLoggingModeKey)
+        if ud.object(forKey: deviceKey(alarmDurationKey, deviceID)) != nil {
+            alarmDuration = max(0, min(30, ud.integer(forKey: deviceKey(alarmDurationKey, deviceID))))
         } else {
-            dataLoggingMode = false
+            alarmDuration = 10
         }
-        
-        if let alarmString = UserDefaults.standard.string(forKey: alarmTypeKey),
-           let alarm = AlarmType(rawValue: alarmString) {
-            alarmType = alarm
-        }
-        
-        if let sensString = UserDefaults.standard.string(forKey: sensitivityKey),
-           let sens = SensitivityLevel(rawValue: sensString) {
-            sensitivity = sens
+
+        alarmDisabled = ud.object(forKey: deviceKey(alarmDisabledKey, deviceID)) != nil
+            ? ud.bool(forKey: deviceKey(alarmDisabledKey, deviceID))
+            : false
+
+        if ud.object(forKey: deviceKey(ledBrightnessKey, deviceID)) != nil {
+            ledBrightness = max(1, min(100, ud.integer(forKey: deviceKey(ledBrightnessKey, deviceID))))
+        } else {
+            ledBrightness = 100
         }
     }
-    
+
+    private func saveDeviceSettings() {
+        guard let deviceID = currentDeviceID else { return }
+        let ud = UserDefaults.standard
+
+        ud.set(isArmed, forKey: deviceKey(armedKey, deviceID))
+        ud.set(alarmType.rawValue, forKey: deviceKey(alarmTypeKey, deviceID))
+        ud.set(sensitivity.rawValue, forKey: deviceKey(sensitivityKey, deviceID))
+        ud.set(lightsEnabled, forKey: deviceKey(lightsKey, deviceID))
+        ud.set(loggingEnabled, forKey: deviceKey(loggingKey, deviceID))
+        ud.set(disableAlarmWhenConnected, forKey: deviceKey(disableAlarmWhenConnectedKey, deviceID))
+        ud.set(alarmTriggers.map { $0.rawValue }, forKey: deviceKey(alarmTriggersKey, deviceID))
+        ud.set(selectedPresetRawValue, forKey: deviceKey(selectedPresetKey, deviceID))
+        ud.set(alarmDuration, forKey: deviceKey(alarmDurationKey, deviceID))
+        ud.set(alarmDisabled, forKey: deviceKey(alarmDisabledKey, deviceID))
+        ud.set(ledBrightness, forKey: deviceKey(ledBrightnessKey, deviceID))
+    }
+
+    // MARK: - Global Persistence
+
+    private func saveGlobalSettings() {
+        let ud = UserDefaults.standard
+        ud.set(deviceName, forKey: deviceNameKey)
+        ud.set(debugModeEnabled, forKey: debugModeKey)
+        ud.set(liveOrientationEnabled, forKey: liveOrientationKey)
+        ud.set(devModeUnlocked, forKey: devModeUnlockedKey)
+        ud.set(dataLoggingMode, forKey: dataLoggingModeKey)
+    }
+
+    private func loadGlobalSettings() {
+        let ud = UserDefaults.standard
+        deviceName = ud.string(forKey: deviceNameKey) ?? "WatchDog"
+        debugModeEnabled = ud.object(forKey: debugModeKey) != nil ? ud.bool(forKey: debugModeKey) : false
+        liveOrientationEnabled = ud.object(forKey: liveOrientationKey) != nil ? ud.bool(forKey: liveOrientationKey) : false
+        devModeUnlocked = ud.object(forKey: devModeUnlockedKey) != nil ? ud.bool(forKey: devModeUnlockedKey) : false
+        dataLoggingMode = ud.object(forKey: dataLoggingModeKey) != nil ? ud.bool(forKey: dataLoggingModeKey) : false
+    }
+
+    // MARK: - Update
+
     /// Call this when user manually changes settings
     func updateSettings(name: String? = nil, armed: Bool? = nil, alarm: AlarmType? = nil,
                        sens: SensitivityLevel? = nil, lights: Bool? = nil, logging: Bool? = nil,
                        disableAlarmConnected: Bool? = nil, debugMode: Bool? = nil,
                        highPerformance: Bool? = nil, liveOrientation: Bool? = nil,
-                       dataLogging: Bool? = nil) {
+                       dataLogging: Bool? = nil, triggers: Set<MotionEventType>? = nil,
+                       preset: String? = nil, alarmDuration: Int? = nil,
+                       alarmDisabled: Bool? = nil, ledBrightness: Int? = nil) {
         if let name = name { deviceName = name }
         if let armed = armed { isArmed = armed }
         if let alarm = alarm { alarmType = alarm }
@@ -227,8 +311,23 @@ class SettingsManager {
         if let highPerformance = highPerformance { highPerformanceMode = highPerformance }
         if let liveOrientation = liveOrientation { liveOrientationEnabled = liveOrientation }
         if let dataLogging = dataLogging { dataLoggingMode = dataLogging }
+        if let triggers = triggers { alarmTriggers = triggers }
+        if let preset = preset { selectedPresetRawValue = preset }
+        if let alarmDuration = alarmDuration {
+            self.alarmDuration = max(0, min(30, alarmDuration))
+        }
+        if let alarmDisabled = alarmDisabled { self.alarmDisabled = alarmDisabled }
+        if let ledBrightness = ledBrightness {
+            self.ledBrightness = max(1, min(100, ledBrightness))
+        }
 
-        saveSettings()
+        saveDeviceSettings()
+        saveGlobalSettings()
+    }
+
+    /// Check if a motion type should trigger alarm
+    func shouldTriggerAlarm(for motionType: MotionEventType) -> Bool {
+        alarmTriggers.contains(motionType)
     }
 }
 

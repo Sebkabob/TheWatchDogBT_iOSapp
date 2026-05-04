@@ -17,39 +17,63 @@ struct SceneView3D: UIViewRepresentable {
     let ledIntensity: Double
     var gesturesEnabled: Bool = true
     var smoothRotation: Bool = false
+    var idleWobble: Bool = false
+    var wobbleIntensity: Double = 1.0
     var liveQuaternion: SCNVector4? = nil
     var onTap: (() -> Void)? = nil
+    var inSettingsMode: Bool = false
+    /// Whether to override the USDZ's native materials with the matte plastic finish.
+    /// Set to false to render the model with its imported colors (e.g. PCB).
+    var applyPlasticTexture: Bool = true
+    /// Vertical offset applied to the model node, in scene units. Negative = down.
+    var modelYOffset: Float = 0
+    /// When true, taps in regions with no model geometry pass through to views
+    /// stacked beneath this one (used so dim case taps register in PCB mode).
+    var passesEmptyTaps: Bool = false
+    /// When true, scene lights are reduced and the LED casts an extra omni point
+    /// light around itself to illuminate nearby geometry.
+    var pcbLightingMode: Bool = false
+
+    // MARK: - Scene & Texture Cache
+    private static var cachedNormalMap: UIImage?
+    private static var cachedRoughnessMap: UIImage?
+    private static var cachedUsdzNodes: [SCNNode]?
+    private static var cachedUsdzFileName: String?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
     }
 
     func makeUIView(context: Context) -> SCNView {
-        let sceneView = SCNView()
+        let sceneView: SCNView = passesEmptyTaps ? PassthroughSCNView() : SCNView()
         sceneView.scene = createScene()
         sceneView.autoenablesDefaultLighting = false
         sceneView.allowsCameraControl = false
         sceneView.backgroundColor = .clear
 
-        let root = sceneView.scene!.rootNode
+        guard let root = sceneView.scene?.rootNode else { return sceneView }
+
+        // Multiplier so PCB-lighting mode renders darker overall.
+        let lightScale: CGFloat = pcbLightingMode ? 0.12 : 1.0
 
         // Low ambient so shadows stay dramatic
         let ambientLight = SCNNode()
         ambientLight.light = SCNLight()
         ambientLight.light?.type = .ambient
-        ambientLight.light?.intensity = 150
-        ambientLight.light?.color = UIColor(white: 0.6, alpha: 1.0)
+        ambientLight.light?.intensity = 40 * lightScale
+        ambientLight.light?.color = UIColor(white: 0.5, alpha: 1.0)
         root.addChildNode(ambientLight)
 
         // Key light — strong, from upper-right side
         let keyLight = SCNNode()
         keyLight.light = SCNLight()
         keyLight.light?.type = .directional
-        keyLight.light?.intensity = 1200
+        keyLight.light?.intensity = 1200 * lightScale
         keyLight.light?.color = UIColor(white: 0.95, alpha: 1.0)
         keyLight.light?.castsShadow = true
         keyLight.light?.shadowRadius = 3
-        keyLight.light?.shadowSampleCount = 8
+        keyLight.light?.shadowSampleCount = 16
+        keyLight.light?.shadowBias = 2
         keyLight.eulerAngles = SCNVector3(-0.5, 0.8, 0)
         root.addChildNode(keyLight)
 
@@ -57,7 +81,7 @@ struct SceneView3D: UIViewRepresentable {
         let fillLight = SCNNode()
         fillLight.light = SCNLight()
         fillLight.light?.type = .directional
-        fillLight.light?.intensity = 400
+        fillLight.light?.intensity = 400 * lightScale
         fillLight.light?.color = UIColor(red: 0.85, green: 0.9, blue: 1.0, alpha: 1.0)
         fillLight.eulerAngles = SCNVector3(0.3, -0.7, 0)
         root.addChildNode(fillLight)
@@ -66,7 +90,7 @@ struct SceneView3D: UIViewRepresentable {
         let rimLight = SCNNode()
         rimLight.light = SCNLight()
         rimLight.light?.type = .directional
-        rimLight.light?.intensity = 600
+        rimLight.light?.intensity = 600 * lightScale
         rimLight.light?.color = UIColor(white: 0.9, alpha: 1.0)
         rimLight.eulerAngles = SCNVector3(-0.2, Float.pi, 0)
         root.addChildNode(rimLight)
@@ -100,26 +124,55 @@ struct SceneView3D: UIViewRepresentable {
 
         guard let model = context.coordinator.modelNode else { return }
 
+        // Settings-mode slide: animate the model node inside the scene
+        // (SCNTransaction → CAAnimation on the CAMetalLayer-rendered geometry)
+        // instead of via a SwiftUI transform on the SCNView's layer. The
+        // SCNView's bounds and layer transform stay constant, which dodges
+        // the mid-slide bump we got from SwiftUI's .scaleEffect/.offset path.
+        if context.coordinator.lastInSettingsMode != inSettingsMode {
+            context.coordinator.lastInSettingsMode = inSettingsMode
+            let baseScale: Float = 0.07
+            let zoomedScale: Float = baseScale * 1.5
+            let shiftX: Float = 2.5
+
+            SCNTransaction.begin()
+            SCNTransaction.animationDuration = 0.5
+            SCNTransaction.animationTimingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            model.position = SCNVector3(inSettingsMode ? shiftX : 0, modelYOffset, 0)
+            let s = inSettingsMode ? zoomedScale : baseScale
+            model.scale = SCNVector3(s, s, s)
+            SCNTransaction.commit()
+        }
+
         if !context.coordinator.hasSearchedForLED {
             context.coordinator.hasSearchedForLED = true
             searchForLED(in: model, coordinator: context.coordinator)
         }
 
-        if let q = liveQuaternion {
-            SCNTransaction.begin()
-            SCNTransaction.animationDuration = 0.15
-            model.orientation = SCNQuaternion(q.x, q.y, q.z, q.w)
-            SCNTransaction.commit()
-        } else {
-            // Smooth transition back to gesture-driven orientation
-            SCNTransaction.begin()
-            SCNTransaction.animationDuration = smoothRotation ? 0.5 : 0
-            model.eulerAngles = SCNVector3(
-                Float(rotationX),
-                Float(rotationY),
-                Float(rotationZ)
-            )
-            SCNTransaction.commit()
+        // Manage idle wobble state
+        if idleWobble && !context.coordinator.isWobbling {
+            context.coordinator.startWobble()
+        } else if !idleWobble && context.coordinator.isWobbling {
+            context.coordinator.stopWobble()
+        }
+
+        // Only set rotation from bindings when not wobbling
+        if !context.coordinator.isWobbling {
+            if let q = liveQuaternion {
+                SCNTransaction.begin()
+                SCNTransaction.animationDuration = 0.15
+                model.orientation = SCNQuaternion(q.x, q.y, q.z, q.w)
+                SCNTransaction.commit()
+            } else {
+                SCNTransaction.begin()
+                SCNTransaction.animationDuration = smoothRotation ? 0.5 : 0
+                model.eulerAngles = SCNVector3(
+                    Float(rotationX),
+                    Float(rotationY),
+                    Float(rotationZ)
+                )
+                SCNTransaction.commit()
+            }
         }
 
         if let ledNode = context.coordinator.ledNode {
@@ -140,16 +193,28 @@ struct SceneView3D: UIViewRepresentable {
                 if name == "empty_4" || name.uppercased().contains("LED") || name.uppercased().contains("LIGHT") {
                     if coordinator.ledNode == nil {
                         coordinator.ledNode = childNode
-                        print("✅ LED node found: \(name)")
+                        Log.ok(.scene, "LED node found · \(name)")
                     }
                 }
             }
         }
 
-        print("🔍 All scene nodes: \(allNodes.joined(separator: ", "))")
+        Log.info(.scene, "Scene nodes · \(allNodes.joined(separator: ", "))")
         if coordinator.ledNode == nil {
-            print("❌ LED node not found in scene")
+            Log.err(.scene, "LED node not found in scene")
         }
+    }
+
+    /// Per-color compensation so red/green/yellow LEDs cast equal-looking light.
+    /// SCNLight scales intensity by the color's RGB channels, so a low-luminance
+    /// color (red ≈ 0.21) emits far less than a high-luminance color (yellow ≈ 0.93).
+    /// We divide by Rec. 709 luminance to normalise perceived brightness.
+    private func luminanceCompensation(for color: UIColor) -> CGFloat {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        color.getRed(&r, green: &g, blue: &b, alpha: &a)
+        let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        // Floor avoids division blow-ups for near-black colors.
+        return 1.0 / max(lum, 0.05)
     }
 
     private func updateLED(node: SCNNode, color: UIColor, intensity: Double) {
@@ -157,6 +222,7 @@ struct SceneView3D: UIViewRepresentable {
 
         if intensity > 0.0 {
             let brightness = CGFloat(intensity)
+            let comp = luminanceCompensation(for: color)
 
             // Subtle glow on the lens surface only
             material.emission.contents = color
@@ -188,8 +254,32 @@ struct SceneView3D: UIViewRepresentable {
             }
 
             if let lightNode = node.childNode(withName: "ledLight", recursively: false) {
-                lightNode.light?.intensity = CGFloat(intensity * 12)
+                lightNode.light?.intensity = CGFloat(intensity * 6) * comp
                 lightNode.light?.color = color
+            }
+
+            // PCB mode: add an omni point light at the LED so nearby components
+            // are bathed in its glow, not just the camera-facing cone.
+            if pcbLightingMode {
+                if node.childNode(withName: "ledOmniLight", recursively: false) == nil {
+                    let omni = SCNNode()
+                    omni.name = "ledOmniLight"
+                    omni.light = SCNLight()
+                    omni.light?.type = .omni
+                    let (min, max) = node.boundingBox
+                    omni.position = SCNVector3(
+                        (min.x + max.x) / 2,
+                        (min.y + max.y) / 2,
+                        (min.z + max.z) / 2
+                    )
+                    omni.light?.attenuationStartDistance = 0.2
+                    omni.light?.attenuationEndDistance = 4.0
+                    node.addChildNode(omni)
+                }
+                if let omni = node.childNode(withName: "ledOmniLight", recursively: false) {
+                    omni.light?.intensity = CGFloat(intensity * 20) * comp
+                    omni.light?.color = color
+                }
             }
 
         } else {
@@ -201,32 +291,40 @@ struct SceneView3D: UIViewRepresentable {
             if let lightNode = node.childNode(withName: "ledLight", recursively: false) {
                 lightNode.light?.intensity = 0
             }
+            if let omni = node.childNode(withName: "ledOmniLight", recursively: false) {
+                omni.light?.intensity = 0
+            }
         }
     }
 
     private func createScene() -> SCNScene {
         let scene = SCNScene()
 
-        if let usdzURL = Bundle.main.url(forResource: usdzFileName, withExtension: "usdz") {
-            do {
-                let usdzScene = try SCNScene(url: usdzURL, options: nil)
-
-                let modelNode = SCNNode()
-                modelNode.name = "model"
-
-                for child in usdzScene.rootNode.childNodes {
-                    modelNode.addChildNode(child)
-                }
-
-                modelNode.scale = SCNVector3(0.07, 0.07, 0.07)
-                modelNode.position = SCNVector3(0, 0, 0)
-
-                applyPlasticMaterial(to: modelNode)
-
-                scene.rootNode.addChildNode(modelNode)
-            } catch {
-                addFallbackCube(to: scene)
+        // Load USDZ nodes once, then clone for each instance
+        if Self.cachedUsdzNodes == nil || Self.cachedUsdzFileName != usdzFileName {
+            if let usdzURL = Bundle.main.url(forResource: usdzFileName, withExtension: "usdz"),
+               let usdzScene = try? SCNScene(url: usdzURL, options: nil) {
+                Self.cachedUsdzNodes = usdzScene.rootNode.childNodes.map { $0 }
+                Self.cachedUsdzFileName = usdzFileName
             }
+        }
+
+        if let cachedNodes = Self.cachedUsdzNodes {
+            let modelNode = SCNNode()
+            modelNode.name = "model"
+
+            for child in cachedNodes {
+                modelNode.addChildNode(child.clone())
+            }
+
+            modelNode.scale = SCNVector3(0.07, 0.07, 0.07)
+            modelNode.position = SCNVector3(0, modelYOffset, 0)
+
+            if applyPlasticTexture {
+                applyPlasticMaterial(to: modelNode)
+            }
+
+            scene.rootNode.addChildNode(modelNode)
         } else {
             addFallbackCube(to: scene)
         }
@@ -247,8 +345,14 @@ struct SceneView3D: UIViewRepresentable {
     /// procedural normal map so the surface looks like real injection-moulded plastic
     /// instead of perfectly smooth CG.
     private func applyPlasticMaterial(to node: SCNNode) {
-        let normalMap = generateGrainNormalMap(size: 512, scale: 6, strength: 0.6)
-        let roughnessMap = generateRoughnessMap(size: 512, scale: 6)
+        if Self.cachedNormalMap == nil {
+            Self.cachedNormalMap = generateGrainNormalMap(size: 512, scale: 6, strength: 0.6)
+        }
+        if Self.cachedRoughnessMap == nil {
+            Self.cachedRoughnessMap = generateRoughnessMap(size: 512, scale: 6)
+        }
+        let normalMap = Self.cachedNormalMap!
+        let roughnessMap = Self.cachedRoughnessMap!
 
         node.enumerateHierarchy { child, _ in
             guard let geometry = child.geometry else { return }
@@ -258,6 +362,7 @@ struct SceneView3D: UIViewRepresentable {
 
             for material in geometry.materials {
                 material.lightingModel = .physicallyBased
+                material.diffuse.contents = UIColor(white: 0.08, alpha: 1.0)
                 material.roughness.contents = roughnessMap   // varied matte texture
                 material.metalness.contents = 0.0
                 material.fresnelExponent = 1.0
@@ -443,6 +548,13 @@ struct SceneView3D: UIViewRepresentable {
         var ledNode: SCNNode?
         var hasSearchedForLED = false
         weak var sceneView: SCNView?
+        var lastInSettingsMode: Bool? = nil
+
+        // Wobble state
+        var isWobbling = false
+        private var displayLink: CADisplayLink?
+        private var wobbleStartTime: CFTimeInterval = 0
+        private var currentTilt: Float = 0
 
         // Drag state
         private var dragStartRotationX: Double = 0
@@ -464,6 +576,57 @@ struct SceneView3D: UIViewRepresentable {
 
         deinit {
             springTimer?.invalidate()
+            displayLink?.invalidate()
+        }
+
+        // MARK: - Idle Wobble
+
+        func startWobble() {
+            guard !isWobbling else { return }
+            isWobbling = true
+            wobbleStartTime = CACurrentMediaTime()
+            displayLink = CADisplayLink(target: self, selector: #selector(wobbleFrame))
+            displayLink?.add(to: .main, forMode: .common)
+        }
+
+        func stopWobble() {
+            guard isWobbling else { return }
+            isWobbling = false
+            displayLink?.invalidate()
+            displayLink = nil
+
+            // Smoothly return to base rotation
+            if let model = modelNode {
+                SCNTransaction.begin()
+                SCNTransaction.animationDuration = 0.6
+                model.eulerAngles = SCNVector3(
+                    Float(parent.rotationX),
+                    Float(parent.rotationY),
+                    Float(parent.rotationZ)
+                )
+                SCNTransaction.commit()
+            }
+        }
+
+        @objc private func wobbleFrame() {
+            guard let model = modelNode else { return }
+            let t = CACurrentMediaTime() - wobbleStartTime
+
+            // Ramp up over 1 second for smooth start
+            let intensity = Float(parent.wobbleIntensity)
+            let ramp = Float(min(t, 1.0)) * intensity
+
+            // Different frequencies per axis for organic, non-repeating feel
+            let x = Float(sin(t * 1.2) * 0.06) * ramp
+            let y = Float(sin(t * 0.8) * 0.08) * ramp
+            let z = Float(sin(t * 0.5) * 0.04) * ramp
+
+            // Settings-mode tilt: −7° on Y so the model's left side comes
+            // forward. Exponentially eases toward target so transitions are smooth.
+            let targetTilt: Float = parent.inSettingsMode ? -(7 * .pi / 180) : 0
+            currentTilt += (targetTilt - currentTilt) * 0.08
+
+            model.eulerAngles = SCNVector3(x, y + currentTilt, z)
         }
 
         // Only begin gesture if the touch lands on actual 3D geometry
@@ -552,4 +715,15 @@ struct SceneView3D: UIViewRepresentable {
         ledIntensity: 0.5
     )
     .frame(width: 300, height: 400)
+}
+
+/// SCNView subclass that only claims a touch when the touch lands on actual
+/// 3D geometry. Empty regions return false from `point(inside:)` so UIKit
+/// continues hit-testing siblings stacked beneath in the view hierarchy.
+final class PassthroughSCNView: SCNView {
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        guard super.point(inside: point, with: event) else { return false }
+        let hits = self.hitTest(point, options: nil)
+        return !hits.isEmpty
+    }
 }

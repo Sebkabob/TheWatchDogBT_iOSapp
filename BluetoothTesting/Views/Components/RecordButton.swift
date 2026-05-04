@@ -52,3 +52,9 @@ struct ShareSheet: UIViewControllerRepresentable {
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
+
+#Preview {
+    RecordButton(recorder: MotionDataRecorder.shared, onExport: { _ in })
+        .frame(width: 80)
+        .padding()
+}

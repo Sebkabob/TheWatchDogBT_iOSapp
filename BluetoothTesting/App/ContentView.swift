@@ -9,7 +9,9 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var showSplash = true
-    
+    @AppStorage("hasSeenTutorial") private var hasSeenTutorial = false
+    @State private var showTutorial = false
+
     var body: some View {
         ZStack {
             if showSplash {
@@ -18,6 +20,16 @@ struct ContentView: View {
             } else {
                 MainAppView()
                     .transition(.opacity)
+
+                if showTutorial {
+                    TutorialOverlayView {
+                        withAnimation(.easeInOut(duration: 0.4)) {
+                            showTutorial = false
+                            hasSeenTutorial = true
+                        }
+                    }
+                    .transition(.opacity)
+                }
             }
         }
         .onAppear {
@@ -25,6 +37,18 @@ struct ContentView: View {
                 withAnimation(.easeInOut(duration: 1.0)) {
                     showSplash = false
                 }
+                if !hasSeenTutorial {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        withAnimation(.easeInOut(duration: 0.5)) {
+                            showTutorial = true
+                        }
+                    }
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .showTutorial)) { _ in
+            withAnimation(.easeInOut(duration: 0.5)) {
+                showTutorial = true
             }
         }
     }

@@ -32,15 +32,15 @@ class DeviceNameManager {
         } else {
             customNames[deviceID.uuidString] = trimmedName
             saveCustomNames()
-            print("✏️ Set custom name for \(deviceID.uuidString.prefix(8)): \(trimmedName)")
+            Log.ok(.name, "Set custom name [\(deviceID.uuidString.prefix(8))] · \(trimmedName)")
         }
     }
-    
+
     /// Remove custom name for a device UUID
     func removeCustomName(deviceID: UUID) {
         customNames.removeValue(forKey: deviceID.uuidString)
         saveCustomNames()
-        print("🗑️ Removed custom name for \(deviceID.uuidString.prefix(8))")
+        Log.ok(.name, "Removed custom name [\(deviceID.uuidString.prefix(8))]")
     }
     
     /// Get custom name for a device UUID (returns nil if no custom name set)
@@ -65,24 +65,24 @@ class DeviceNameManager {
             let encoder = JSONEncoder()
             let data = try encoder.encode(customNames)
             UserDefaults.standard.set(data, forKey: customNamesKey)
-            print("💾 Saved \(customNames.count) custom names")
+            Log.info(.persist, "Saved \(customNames.count) custom names")
         } catch {
-            print("❌ Failed to save custom names: \(error)")
+            Log.err(.persist, "Save custom names · \(error)")
         }
     }
-    
+
     private func loadCustomNames() {
         guard let data = UserDefaults.standard.data(forKey: customNamesKey) else {
-            print("📭 No saved custom names found")
+            Log.info(.persist, "No saved custom names")
             return
         }
-        
+
         do {
             let decoder = JSONDecoder()
             customNames = try decoder.decode([String: String].self, from: data)
-            print("📬 Loaded \(customNames.count) custom names")
+            Log.info(.persist, "Loaded \(customNames.count) custom names")
         } catch {
-            print("❌ Failed to load custom names: \(error)")
+            Log.err(.persist, "Load custom names · \(error)")
             customNames = [:]
         }
     }
