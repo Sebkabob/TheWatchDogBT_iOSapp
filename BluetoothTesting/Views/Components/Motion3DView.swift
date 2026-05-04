@@ -17,12 +17,14 @@ struct Motion3DView: View {
     @State private var smoothedGZ: Double = 0
     @State private var smoothingSeeded: Bool = false
 
-    let usdzFileName = "WatchDogBTCase_V2"
+    var usdzFileName: String = "WatchDogBTCase_V2"
     var bluetoothManager: BluetoothManager
     var onSettingsTap: (() -> Void)? = nil
     var idleWobble: Bool = false
     var wobbleIntensity: Double = 1.0
     var inSettingsMode: Bool = false
+    var applyPlasticTexture: Bool = true
+    var modelYOffset: Float = 0
 
     private var settingsManager: SettingsManager { SettingsManager.shared }
     private var isLiveOrientation: Bool { settingsManager.liveOrientationEnabled }
@@ -41,7 +43,9 @@ struct Motion3DView: View {
             wobbleIntensity: wobbleIntensity,
             liveQuaternion: liveQuaternion,
             onTap: onSettingsTap,
-            inSettingsMode: inSettingsMode
+            inSettingsMode: inSettingsMode,
+            applyPlasticTexture: applyPlasticTexture,
+            modelYOffset: modelYOffset
         )
         .ignoresSafeArea()
     }

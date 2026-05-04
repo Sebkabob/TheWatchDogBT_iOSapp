@@ -63,6 +63,7 @@ struct DevicePageView: View {
     // Settings mode (model slides right, settings panel fades in on the left)
     @State private var inSettingsMode = false
     @State private var settingsContentVisible = false
+    @State private var showingPCBView = false
     @State private var editableName: String = ""
     @State private var showForgetConfirmation = false
     private let maxNameLength = 16
@@ -262,13 +263,32 @@ struct DevicePageView: View {
                 if isDeviceInRange {
                     // Device is in range (connected or just advertising) — show 3D model
                     if showModel {
-                        Motion3DView(
-                            bluetoothManager: bluetoothManager,
-                            onSettingsTap: isDeviceConnected ? { toggleSettingsMode() } : nil,
-                            idleWobble: isDeviceConnected,
-                            wobbleIntensity: 0.3,
-                            inSettingsMode: inSettingsMode
-                        )
+                        ZStack {
+                            Motion3DView(
+                                usdzFileName: "WatchDogBTCase_V2",
+                                bluetoothManager: bluetoothManager,
+                                onSettingsTap: isDeviceConnected ? { handleModelTap() } : nil,
+                                idleWobble: isDeviceConnected,
+                                wobbleIntensity: 0.3,
+                                inSettingsMode: inSettingsMode
+                            )
+                            .opacity(showingPCBView ? 0.4 : 1)
+                            .allowsHitTesting(!showingPCBView)
+
+                            Motion3DView(
+                                usdzFileName: "WatchDogBTPCB",
+                                bluetoothManager: bluetoothManager,
+                                onSettingsTap: { handleModelTap() },
+                                idleWobble: isDeviceConnected,
+                                wobbleIntensity: 0.3,
+                                inSettingsMode: inSettingsMode,
+                                applyPlasticTexture: false,
+                                modelYOffset: -2.45
+                            )
+                            .opacity(showingPCBView ? 1 : 0)
+                            .allowsHitTesting(showingPCBView)
+                        }
+                        .animation(.easeInOut(duration: 0.2), value: showingPCBView)
                         .frame(maxWidth: .infinity)
                         .opacity(isDeviceConnected ? 1.0 : 0.6)
                         .transition(.opacity)
@@ -855,11 +875,26 @@ struct DevicePageView: View {
 
     // MARK: - Settings Mode
 
+    /// Tap on the 3D model: enter settings if not in settings; otherwise crossfade
+    /// between the case and PCB views (and their respective settings panels).
+    private func handleModelTap() {
+        if !inSettingsMode {
+            toggleSettingsMode()
+        } else {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showingPCBView.toggle()
+            }
+        }
+    }
+
     private func toggleSettingsMode() {
         if inSettingsMode {
-            // Exit: fade settings panel out first, then slide model back
+            // Exit: fade settings panel out first, then slide model back. Always
+            // reset to the case view so re-entry starts on the main settings.
             withAnimation(.easeInOut(duration: 0.2)) {
                 settingsContentVisible = false
+                showingPCBView = false
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                 inSettingsMode = false
@@ -970,11 +1005,12 @@ struct DevicePageView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                    Text("Settings")
+                    Text(showingPCBView ? "Hardware" : "Settings")
                         .font(.body)
                         .fontWeight(.bold)
                         .foregroundColor(.primary)
                         .frame(maxWidth: .infinity, alignment: .center)
+                        .animation(.easeInOut(duration: 0.3), value: showingPCBView)
 
                     Color.clear.frame(maxWidth: .infinity, maxHeight: 0)
                 }
@@ -987,6 +1023,11 @@ struct DevicePageView: View {
                 // group is vertically centered to roughly line up with the 3D
                 // model in the body underneath.
                 HStack(spacing: 0) {
+                    ZStack {
+                        pcbSettingsPanel(width: geo.size.width * 0.67)
+                            .opacity(showingPCBView ? 1 : 0)
+                            .allowsHitTesting(showingPCBView)
+
                     VStack(alignment: .leading, spacing: 24) {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Device Name")
@@ -1091,6 +1132,10 @@ struct DevicePageView: View {
                     .frame(maxHeight: .infinity, alignment: .center)
                     .padding(.bottom, 160)
                     .background(Color(.systemBackground))
+                    .opacity(showingPCBView ? 0 : 1)
+                    .allowsHitTesting(!showingPCBView)
+                    }
+                    .animation(.easeInOut(duration: 0.2), value: showingPCBView)
 
                     Spacer()
                 }
@@ -1107,6 +1152,83 @@ struct DevicePageView: View {
             .opacity(settingsContentVisible ? 1 : 0)
             .allowsHitTesting(inSettingsMode)
         }
+    }
+
+    /// Placeholder hardware/PCB settings shown when the user taps the case
+    /// model in settings mode. Real fields will be wired up later.
+    @ViewBuilder
+    private func pcbSettingsPanel(width: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Hardware")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                Text("Tap the PCB to return to the main settings.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            HStack {
+                Text("Firmware Version")
+                    .font(.subheadline)
+                Spacer()
+                Text("—")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .monospacedDigit()
+            }
+
+            HStack {
+                Text("Hardware Revision")
+                    .font(.subheadline)
+                Spacer()
+                Text("—")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .monospacedDigit()
+            }
+
+            HStack {
+                Text("Serial Number")
+                    .font(.subheadline)
+                Spacer()
+                Text("—")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .monospacedDigit()
+            }
+
+            Toggle(isOn: .constant(false)) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Diagnostic Mode")
+                        .font(.subheadline)
+                    Text("Placeholder — wiring TBD.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .disabled(true)
+
+            Button(action: {}) {
+                HStack {
+                    Image(systemName: "wrench.and.screwdriver.fill")
+                    Text("Calibrate Sensors")
+                }
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .foregroundColor(.blue)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(Color(white: 0.2))
+                .cornerRadius(10)
+            }
+            .disabled(true)
+        }
+        .padding(.horizontal, 20)
+        .frame(width: width, alignment: .leading)
+        .frame(maxHeight: .infinity, alignment: .center)
+        .padding(.bottom, 160)
+        .background(Color(.systemBackground))
     }
 }
 

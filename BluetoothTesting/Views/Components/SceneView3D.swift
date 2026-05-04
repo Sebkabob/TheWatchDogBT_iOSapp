@@ -22,6 +22,11 @@ struct SceneView3D: UIViewRepresentable {
     var liveQuaternion: SCNVector4? = nil
     var onTap: (() -> Void)? = nil
     var inSettingsMode: Bool = false
+    /// Whether to override the USDZ's native materials with the matte plastic finish.
+    /// Set to false to render the model with its imported colors (e.g. PCB).
+    var applyPlasticTexture: Bool = true
+    /// Vertical offset applied to the model node, in scene units. Negative = down.
+    var modelYOffset: Float = 0
 
     // MARK: - Scene & Texture Cache
     private static var cachedNormalMap: UIImage?
@@ -124,7 +129,7 @@ struct SceneView3D: UIViewRepresentable {
             SCNTransaction.begin()
             SCNTransaction.animationDuration = 0.5
             SCNTransaction.animationTimingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            model.position = SCNVector3(inSettingsMode ? shiftX : 0, 0, 0)
+            model.position = SCNVector3(inSettingsMode ? shiftX : 0, modelYOffset, 0)
             let s = inSettingsMode ? zoomedScale : baseScale
             model.scale = SCNVector3(s, s, s)
             SCNTransaction.commit()
@@ -264,9 +269,11 @@ struct SceneView3D: UIViewRepresentable {
             }
 
             modelNode.scale = SCNVector3(0.07, 0.07, 0.07)
-            modelNode.position = SCNVector3(0, 0, 0)
+            modelNode.position = SCNVector3(0, modelYOffset, 0)
 
-            applyPlasticMaterial(to: modelNode)
+            if applyPlasticTexture {
+                applyPlasticMaterial(to: modelNode)
+            }
 
             scene.rootNode.addChildNode(modelNode)
         } else {
