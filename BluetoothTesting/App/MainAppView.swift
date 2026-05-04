@@ -24,6 +24,7 @@ struct MainAppView: View {
     @State private var currentPage: Int = 0
     @State private var hasInitialized = false
     @State private var scanWatchdogTimer: Timer?
+    @State private var backgroundDisconnectTimer: Timer?
 
     // Pairing overlay
     @State private var showPairing = false
@@ -181,9 +182,26 @@ struct MainAppView: View {
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
+                // Cancel any pending background-disconnect timer — user
+                // returned within the 5s grace window.
+                backgroundDisconnectTimer?.invalidate()
+                backgroundDisconnectTimer = nil
+
                 Log.info(.view, "App became active · ensuring BLE scan")
                 bondManager.refreshTimestampsForForegroundReturn()
                 bluetoothManager.handleAppBecameActive()
+            } else if newPhase == .background || newPhase == .inactive {
+                // Schedule a 5s disconnect if the user has opted in. Cancelled
+                // automatically when the app returns to .active.
+                guard AppPreferences.shared.disconnectOnBackground else { return }
+                backgroundDisconnectTimer?.invalidate()
+                backgroundDisconnectTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { _ in
+                    if let device = bluetoothManager.connectedDevice {
+                        Log.info(.view, "Background >5s · disconnecting per user preference")
+                        bluetoothManager.disconnect(from: device)
+                    }
+                    backgroundDisconnectTimer = nil
+                }
             }
         }
         .onChange(of: bondManager.bondedDevices.count) { _, newCount in
@@ -377,7 +395,9 @@ struct AboutPage: View {
 struct AppSettingsView: View {
     let onBack: () -> Void
     private let loc = LocalizationManager.shared
+    private let prefs = AppPreferences.shared
     @State private var showWipeConfirm = false
+    @State private var showResetSettingsConfirm = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -424,6 +444,32 @@ struct AppSettingsView: View {
                 }
 
                 Section {
+                    Toggle(isOn: Binding(
+                        get: { prefs.disconnectOnBackground },
+                        set: { prefs.disconnectOnBackground = $0 }
+                    )) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(loc.t(.disconnectOnBackground))
+                            Text(loc.t(.disconnectOnBackgroundCaption))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+
+                Section {
+                    Button {
+                        showResetSettingsConfirm = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "arrow.counterclockwise.circle.fill")
+                            Text(loc.t(.setToDefaultSettings))
+                        }
+                        .foregroundColor(.blue)
+                    }
+                }
+
+                Section {
                     Button(role: .destructive) {
                         showWipeConfirm = true
                     } label: {
@@ -436,6 +482,14 @@ struct AppSettingsView: View {
             }
         }
         .background(Color(.systemBackground))
+        .alert(loc.t(.setToDefaultSettingsTitle), isPresented: $showResetSettingsConfirm) {
+            Button(loc.t(.cancel), role: .cancel) { }
+            Button(loc.t(.reset), role: .destructive) {
+                SettingsManager.shared.resetAllDeviceSettingsToDefaults()
+            }
+        } message: {
+            Text(loc.t(.setToDefaultSettingsMessage))
+        }
         .alert(loc.t(.wipeAppDataConfirmTitle), isPresented: $showWipeConfirm) {
             Button(loc.t(.cancel), role: .cancel) { }
             Button(loc.t(.wipe), role: .destructive) { wipeAppData() }
@@ -455,37 +509,43 @@ struct AppSettingsView: View {
 }
 
 // MARK: - Swipe Disabler
-/// Walks up from this hidden host UIView to find the TabView's underlying
-/// UIScrollView (created by UIPageViewController for `.page` TabView style)
-/// and flips its `isScrollEnabled`. SwiftUI's `.scrollDisabled` is unreliable
-/// on `.page` TabView, so this is the surgical fix. Pages can stay mounted —
-/// no expensive view tear-down/rebuild on settings open/close.
+/// Walks the UIKit hierarchy from this transparent host view to find every
+/// UIScrollView (the one inside UIPageViewController for `.page` TabView, plus
+/// any others) and flips their `isScrollEnabled`. SwiftUI's `.scrollDisabled`
+/// on `.page` TabView is unreliable across iOS versions, so this is the
+/// surgical fix. Pages stay mounted — no expensive view tear-down on settings
+/// open/close. Apply runs both immediately AND on next runloop tick so it
+/// catches the scroll view whether or not it's been laid out yet.
 private struct SwipeDisabler: UIViewRepresentable {
     let disabled: Bool
 
     func makeUIView(context: Context) -> UIView {
         let v = UIView()
         v.isUserInteractionEnabled = false
+        v.backgroundColor = .clear
         return v
     }
 
     func updateUIView(_ uiView: UIView, context: Context) {
         let target = disabled
-        DispatchQueue.main.async {
-            var node: UIView? = uiView
-            while let v = node {
-                if let scrollView = v as? UIScrollView {
-                    scrollView.isScrollEnabled = !target
-                    return
-                }
-                for sub in v.subviews {
-                    if let scrollView = sub as? UIScrollView {
-                        scrollView.isScrollEnabled = !target
-                        return
-                    }
-                }
-                node = v.superview
-            }
+        let apply: () -> Void = {
+            // Climb up to the topmost ancestor, then recurse the entire
+            // subtree. This guarantees we catch the UIScrollView even when it
+            // sits in a sibling branch deeper than one level down.
+            var top: UIView = uiView
+            while let parent = top.superview { top = parent }
+            Self.disableScrollViews(in: top, disabled: target)
+        }
+        apply()
+        DispatchQueue.main.async(execute: apply)
+    }
+
+    private static func disableScrollViews(in view: UIView, disabled: Bool) {
+        if let sv = view as? UIScrollView {
+            sv.isScrollEnabled = !disabled
+        }
+        for sub in view.subviews {
+            disableScrollViews(in: sub, disabled: disabled)
         }
     }
 }

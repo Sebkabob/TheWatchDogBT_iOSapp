@@ -50,6 +50,8 @@ enum LocKey: Hashable {
     case yourWatchDogs
     case appSettings
     case wipeAppData, wipeAppDataConfirmTitle, wipeAppDataConfirmMessage, wipe
+    case disconnectOnBackground, disconnectOnBackgroundCaption
+    case setToDefaultSettings, setToDefaultSettingsTitle, setToDefaultSettingsMessage
 }
 
 @Observable
@@ -127,8 +129,13 @@ final class LocalizationManager {
             .appSettings: "App Settings",
             .wipeAppData: "Wipe App Data",
             .wipeAppDataConfirmTitle: "Wipe All App Data?",
-            .wipeAppDataConfirmMessage: "This permanently deletes all bonded devices, custom names, notes, motion logs, and preferences on this phone. This cannot be undone.",
-            .wipe: "Wipe"
+            .wipeAppDataConfirmMessage: "This permanently deletes all bonded devices, custom names, motion logs, and preferences on this phone. This cannot be undone.",
+            .wipe: "Wipe",
+            .disconnectOnBackground: "Disconnect in Background",
+            .disconnectOnBackgroundCaption: "Disconnect from the WatchDog after the app has been minimized for more than 5 seconds.",
+            .setToDefaultSettings: "Set to Default Settings",
+            .setToDefaultSettingsTitle: "Restore Default Settings?",
+            .setToDefaultSettingsMessage: "This resets every WatchDog's sensitivity, alarm, duration, LED brightness, and other preferences back to their defaults. Bonded devices, custom names, and motion logs are kept."
         ],
         .spanish: [
             .settings: "Ajustes",
@@ -182,7 +189,12 @@ final class LocalizationManager {
             .wipeAppData: "Borrar Datos de la App",
             .wipeAppDataConfirmTitle: "¿Borrar Todos los Datos?",
             .wipeAppDataConfirmMessage: "Esto elimina permanentemente todos los dispositivos emparejados, nombres personalizados, notas, registros de movimiento y preferencias en este teléfono. No se puede deshacer.",
-            .wipe: "Borrar"
+            .wipe: "Borrar",
+            .disconnectOnBackground: "Desconectar en Segundo Plano",
+            .disconnectOnBackgroundCaption: "Desconectarse del WatchDog cuando la aplicación haya estado minimizada durante más de 5 segundos.",
+            .setToDefaultSettings: "Restablecer Ajustes",
+            .setToDefaultSettingsTitle: "¿Restablecer Ajustes por Defecto?",
+            .setToDefaultSettingsMessage: "Esto restablece la sensibilidad, alarma, duración, brillo del LED y otras preferencias de cada WatchDog a sus valores predeterminados. Se conservan los dispositivos emparejados, nombres personalizados y registros de movimiento."
         ],
         .dutch: [
             .settings: "Instellingen",
@@ -236,7 +248,12 @@ final class LocalizationManager {
             .wipeAppData: "App-gegevens Wissen",
             .wipeAppDataConfirmTitle: "Alle App-gegevens Wissen?",
             .wipeAppDataConfirmMessage: "Dit verwijdert permanent alle gekoppelde apparaten, aangepaste namen, notities, bewegingslogboeken en voorkeuren op deze telefoon. Dit kan niet ongedaan worden gemaakt.",
-            .wipe: "Wissen"
+            .wipe: "Wissen",
+            .disconnectOnBackground: "Verbreken op Achtergrond",
+            .disconnectOnBackgroundCaption: "Verbreek de verbinding met de WatchDog nadat de app meer dan 5 seconden is geminimaliseerd.",
+            .setToDefaultSettings: "Standaardinstellingen Herstellen",
+            .setToDefaultSettingsTitle: "Standaardinstellingen Herstellen?",
+            .setToDefaultSettingsMessage: "Dit zet de gevoeligheid, alarm, duur, LED-helderheid en andere voorkeuren van elke WatchDog terug naar de standaardwaarden. Gekoppelde apparaten, aangepaste namen en bewegingslogboeken blijven behouden."
         ],
         .french: [
             .settings: "Réglages",
@@ -290,7 +307,12 @@ final class LocalizationManager {
             .wipeAppData: "Effacer les Données",
             .wipeAppDataConfirmTitle: "Effacer Toutes les Données ?",
             .wipeAppDataConfirmMessage: "Cela supprime définitivement tous les appareils appairés, noms personnalisés, notes, journaux de mouvement et préférences sur ce téléphone. Cette action est irréversible.",
-            .wipe: "Effacer"
+            .wipe: "Effacer",
+            .disconnectOnBackground: "Déconnecter en Arrière-plan",
+            .disconnectOnBackgroundCaption: "Se déconnecter du WatchDog lorsque l'application est minimisée depuis plus de 5 secondes.",
+            .setToDefaultSettings: "Rétablir les Réglages",
+            .setToDefaultSettingsTitle: "Rétablir les Réglages par Défaut ?",
+            .setToDefaultSettingsMessage: "Cela rétablit la sensibilité, l'alarme, la durée, la luminosité de la LED et les autres préférences de chaque WatchDog à leurs valeurs par défaut. Les appareils appairés, noms personnalisés et journaux de mouvement sont conservés."
         ],
         .japanese: [
             .settings: "設定",
@@ -344,7 +366,12 @@ final class LocalizationManager {
             .wipeAppData: "アプリデータを消去",
             .wipeAppDataConfirmTitle: "すべてのアプリデータを消去しますか?",
             .wipeAppDataConfirmMessage: "ペアリング済みのデバイス、カスタム名、メモ、モーションログ、設定がすべて完全に削除されます。元に戻すことはできません。",
-            .wipe: "消去"
+            .wipe: "消去",
+            .disconnectOnBackground: "バックグラウンドで切断",
+            .disconnectOnBackgroundCaption: "アプリが5秒以上バックグラウンドにある場合、WatchDogから切断します。",
+            .setToDefaultSettings: "初期設定にリセット",
+            .setToDefaultSettingsTitle: "初期設定に戻しますか?",
+            .setToDefaultSettingsMessage: "各WatchDogの感度、アラーム、持続時間、LEDの明るさなどの設定が初期値に戻ります。ペアリング済みのデバイス、カスタム名、モーションログは保持されます。"
         ],
         .portuguese: [
             .settings: "Ajustes",
@@ -398,7 +425,12 @@ final class LocalizationManager {
             .wipeAppData: "Apagar Dados da App",
             .wipeAppDataConfirmTitle: "Apagar Todos os Dados?",
             .wipeAppDataConfirmMessage: "Isto apaga permanentemente todos os dispositivos emparelhados, nomes personalizados, notas, registos de movimento e preferências neste telefone. Esta ação não pode ser desfeita.",
-            .wipe: "Apagar"
+            .wipe: "Apagar",
+            .disconnectOnBackground: "Desconectar em Segundo Plano",
+            .disconnectOnBackgroundCaption: "Desligar do WatchDog quando a app estiver minimizada há mais de 5 segundos.",
+            .setToDefaultSettings: "Repor Predefinições",
+            .setToDefaultSettingsTitle: "Repor Predefinições?",
+            .setToDefaultSettingsMessage: "Isto repõe a sensibilidade, alarme, duração, brilho do LED e outras preferências de cada WatchDog para os valores predefinidos. Dispositivos emparelhados, nomes personalizados e registos de movimento são mantidos."
         ]
     ]
 }

@@ -31,7 +31,7 @@ class SettingsManager {
     var alarmTriggers: Set<MotionEventType> = [.shaken, .impact, .freefall, .tilted, .doorOpening, .doorClosing]
     var selectedPresetRawValue: String = "maxSecurity"
     /// Seconds the alarm continues to sound after motion stops. Range 0...30.
-    var alarmDuration: Int = 10
+    var alarmDuration: Int = 2
     /// When true, the WatchDog suppresses the alarm entirely regardless of
     /// trigger conditions. Persisted per-device.
     var alarmDisabled: Bool = false
@@ -239,7 +239,7 @@ class SettingsManager {
         if ud.object(forKey: deviceKey(alarmDurationKey, deviceID)) != nil {
             alarmDuration = max(0, min(30, ud.integer(forKey: deviceKey(alarmDurationKey, deviceID))))
         } else {
-            alarmDuration = 10
+            alarmDuration = 2
         }
 
         alarmDisabled = ud.object(forKey: deviceKey(alarmDisabledKey, deviceID)) != nil
@@ -328,6 +328,29 @@ class SettingsManager {
     /// Check if a motion type should trigger alarm
     func shouldTriggerAlarm(for motionType: MotionEventType) -> Bool {
         alarmTriggers.contains(motionType)
+    }
+
+    /// Wipes every per-device WatchDog settings key from UserDefaults so the
+    /// next `loadDeviceSettings(_:)` call falls back to the defaults coded in
+    /// this file. Bonded devices, custom names, notes, and motion logs are
+    /// keyed elsewhere and are not touched. The currently-loaded device's
+    /// in-memory state is reloaded immediately so the UI reflects the reset
+    /// without requiring a re-bond.
+    func resetAllDeviceSettingsToDefaults() {
+        let ud = UserDefaults.standard
+        let bases = [
+            armedKey, alarmTypeKey, sensitivityKey, lightsKey, loggingKey,
+            disableAlarmWhenConnectedKey, alarmTriggersKey, selectedPresetKey,
+            alarmDurationKey, alarmDisabledKey, ledBrightnessKey
+        ]
+        for key in ud.dictionaryRepresentation().keys {
+            if bases.contains(where: { key.hasSuffix("_\($0)") }) {
+                ud.removeObject(forKey: key)
+            }
+        }
+        if let id = currentDeviceID {
+            loadDeviceSettings(for: id)
+        }
     }
 }
 

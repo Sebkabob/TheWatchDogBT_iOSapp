@@ -27,6 +27,9 @@ struct Motion3DView: View {
     var modelYOffset: Float = 0
     var passesEmptyTaps: Bool = false
     var pcbLightingMode: Bool = false
+    /// When false, drag-to-rotate is disabled (tap still works). Used to lock
+    /// the model in place when the device isn't connected.
+    var rotationGestureEnabled: Bool = true
 
     private var settingsManager: SettingsManager { SettingsManager.shared }
     private var isLiveOrientation: Bool { settingsManager.liveOrientationEnabled }
@@ -41,7 +44,7 @@ struct Motion3DView: View {
             usdzFileName: usdzFileName,
             ledColor: ledAnimator.outputColor,
             ledIntensity: ledAnimator.outputIntensity * brightnessScale,
-            gesturesEnabled: !isLiveOrientation,
+            gesturesEnabled: !isLiveOrientation && rotationGestureEnabled,
             idleWobble: wobbleEnabled,
             wobbleIntensity: wobbleIntensity,
             liveQuaternion: liveQuaternion,

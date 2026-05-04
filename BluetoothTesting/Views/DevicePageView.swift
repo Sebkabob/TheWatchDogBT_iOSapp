@@ -294,7 +294,8 @@ struct DevicePageView: View {
                                 idleWobble: isDeviceConnected,
                                 wobbleIntensity: 0.3,
                                 inSettingsMode: inSettingsMode,
-                                passesEmptyTaps: true
+                                passesEmptyTaps: true,
+                                rotationGestureEnabled: isDeviceConnected
                             )
                             .opacity(showingPCBView ? 0.4 : 1)
                         }
@@ -433,13 +434,6 @@ struct DevicePageView: View {
             .animation(.easeInOut(duration: 1.0), value: showModel)
             .animation(.easeInOut(duration: 0.3), value: isDeviceConnected)
             .contentShape(Rectangle())
-            .simultaneousGesture(
-                LongPressGesture(minimumDuration: 0.5)
-                    .onEnded { _ in
-                        guard !inSettingsMode else { return }
-                        onOverviewRequest?()
-                    }
-            )
 
             // MARK: Bottom Control Section
             VStack(spacing: 12) {
