@@ -30,6 +30,8 @@ class SettingsManager {
     var dataLoggingMode: Bool = false
     var alarmTriggers: Set<MotionEventType> = [.shaken, .impact, .freefall, .tilted, .doorOpening, .doorClosing]
     var selectedPresetRawValue: String = "maxSecurity"
+    /// Seconds the alarm continues to sound after motion stops. Range 0...30.
+    var alarmDuration: Int = 10
 
     // UserDefaults keys — per-device settings
     private let armedKey = "watchdog_armed"
@@ -40,6 +42,7 @@ class SettingsManager {
     private let disableAlarmWhenConnectedKey = "watchdog_disable_alarm_connected"
     private let alarmTriggersKey = "watchdog_alarm_triggers"
     private let selectedPresetKey = "watchdog_selected_preset"
+    private let alarmDurationKey = "watchdog_alarm_duration"
 
     // UserDefaults keys — global settings
     private let deviceNameKey = "watchdog_device_name"
@@ -120,6 +123,11 @@ class SettingsManager {
             byte |= (1 << 0)
         }
         return byte
+    }
+
+    /// Encodes alarm duration as a single byte. Value is seconds (0...30); clamped on send.
+    func encodeAlarmDuration() -> UInt8 {
+        UInt8(max(0, min(30, alarmDuration)))
     }
 
     /// Decodes deviceInfo byte from WatchDog
@@ -208,6 +216,12 @@ class SettingsManager {
         } else {
             selectedPresetRawValue = "maxSecurity"
         }
+
+        if ud.object(forKey: deviceKey(alarmDurationKey, deviceID)) != nil {
+            alarmDuration = max(0, min(30, ud.integer(forKey: deviceKey(alarmDurationKey, deviceID))))
+        } else {
+            alarmDuration = 10
+        }
     }
 
     private func saveDeviceSettings() {
@@ -222,6 +236,7 @@ class SettingsManager {
         ud.set(disableAlarmWhenConnected, forKey: deviceKey(disableAlarmWhenConnectedKey, deviceID))
         ud.set(alarmTriggers.map { $0.rawValue }, forKey: deviceKey(alarmTriggersKey, deviceID))
         ud.set(selectedPresetRawValue, forKey: deviceKey(selectedPresetKey, deviceID))
+        ud.set(alarmDuration, forKey: deviceKey(alarmDurationKey, deviceID))
     }
 
     // MARK: - Global Persistence
@@ -252,7 +267,7 @@ class SettingsManager {
                        disableAlarmConnected: Bool? = nil, debugMode: Bool? = nil,
                        highPerformance: Bool? = nil, liveOrientation: Bool? = nil,
                        dataLogging: Bool? = nil, triggers: Set<MotionEventType>? = nil,
-                       preset: String? = nil) {
+                       preset: String? = nil, alarmDuration: Int? = nil) {
         if let name = name { deviceName = name }
         if let armed = armed { isArmed = armed }
         if let alarm = alarm { alarmType = alarm }
@@ -266,6 +281,9 @@ class SettingsManager {
         if let dataLogging = dataLogging { dataLoggingMode = dataLogging }
         if let triggers = triggers { alarmTriggers = triggers }
         if let preset = preset { selectedPresetRawValue = preset }
+        if let alarmDuration = alarmDuration {
+            self.alarmDuration = max(0, min(30, alarmDuration))
+        }
 
         saveDeviceSettings()
         saveGlobalSettings()

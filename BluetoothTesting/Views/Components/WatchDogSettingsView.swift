@@ -124,8 +124,7 @@ struct WatchDogSettingsView: View {
     @State private var watchDogName: String = ""
     @State private var sensitivity: SensitivityLevel = .medium
     @State private var alarmType: AlarmType = .normal
-    @State private var lightsEnabled: Bool = true
-    @State private var loggingEnabled: Bool = false
+    @State private var alarmDuration: Int = 10
     @State private var disableAlarmWhenConnected: Bool = false
     @State private var debugModeEnabled: Bool = false
     @State private var liveOrientationEnabled: Bool = false
@@ -391,6 +390,32 @@ struct WatchDogSettingsView: View {
                 )
             }
             .padding(.vertical, 4)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Alarm Duration")
+                        .font(.subheadline)
+                    Spacer()
+                    Text("\(alarmDuration)s")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .monospacedDigit()
+                }
+
+                Slider(
+                    value: Binding(
+                        get: { Double(alarmDuration) },
+                        set: { alarmDuration = Int($0.rounded()) }
+                    ),
+                    in: 0...30,
+                    step: 1
+                )
+
+                Text("How long the alarm continues sounding once the device comes to rest after a motion event.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.vertical, 4)
         }
     }
 
@@ -400,12 +425,6 @@ struct WatchDogSettingsView: View {
                 title: "Silent When Connected",
                 subtitle: "Disable alarm when phone is connected",
                 isOn: $disableAlarmWhenConnected
-            )
-            SettingToggleRow(title: "LED Lights", isOn: $lightsEnabled)
-            SettingToggleRow(
-                title: "Motion Logging",
-                subtitle: "Records motion events. Syncs when in range.",
-                isOn: $loggingEnabled
             )
         }
     }
@@ -564,8 +583,7 @@ struct WatchDogSettingsView: View {
 
         sensitivity = settingsManager.sensitivity
         alarmType = settingsManager.alarmType
-        lightsEnabled = settingsManager.lightsEnabled
-        loggingEnabled = settingsManager.loggingEnabled
+        alarmDuration = settingsManager.alarmDuration
         disableAlarmWhenConnected = settingsManager.disableAlarmWhenConnected
         debugModeEnabled = settingsManager.debugModeEnabled
         liveOrientationEnabled = settingsManager.liveOrientationEnabled
@@ -593,15 +611,14 @@ struct WatchDogSettingsView: View {
         settingsManager.updateSettings(
             alarm: alarmType,
             sens: sensitivity,
-            lights: lightsEnabled,
-            logging: loggingEnabled,
             disableAlarmConnected: disableAlarmWhenConnected,
             debugMode: debugModeEnabled,
             highPerformance: settingsManager.devModeUnlocked,
             liveOrientation: liveOrientationEnabled,
             dataLogging: dataLoggingMode,
             triggers: alarmTriggers,
-            preset: selectedPreset.rawValue
+            preset: selectedPreset.rawValue,
+            alarmDuration: alarmDuration
         )
 
         if isConnected {

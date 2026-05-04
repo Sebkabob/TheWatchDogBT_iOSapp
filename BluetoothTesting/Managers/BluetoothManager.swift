@@ -590,9 +590,10 @@ class BluetoothManager: NSObject {
     func sendSettings() {
         let settingsByte = settingsManager.encodeSettings()
         let deviceInfoByte = settingsManager.encodeDeviceInfo()
-        let data = Data([settingsByte, deviceInfoByte])
+        let alarmDurationByte = settingsManager.encodeAlarmDuration()
+        let data = Data([settingsByte, deviceInfoByte, alarmDurationByte])
         sendData(data)
-        Log.tx(.settings, "Sent settings · 0x\(String(format: "%02X", settingsByte)) deviceInfo 0x\(String(format: "%02X", deviceInfoByte))")
+        Log.tx(.settings, "Sent settings · 0x\(String(format: "%02X", settingsByte)) deviceInfo 0x\(String(format: "%02X", deviceInfoByte)) alarmDur=\(alarmDurationByte)s")
     }
 
     func sendPing() {

@@ -913,21 +913,11 @@ struct DevicePageView: View {
         )
     }
 
-    private var lightsEnabledBinding: Binding<Bool> {
+    private var alarmDurationBinding: Binding<Double> {
         Binding(
-            get: { settingsManager.lightsEnabled },
+            get: { Double(settingsManager.alarmDuration) },
             set: { newValue in
-                settingsManager.updateSettings(lights: newValue)
-                if isDeviceConnected { bluetoothManager.sendSettings() }
-            }
-        )
-    }
-
-    private var loggingEnabledBinding: Binding<Bool> {
-        Binding(
-            get: { settingsManager.loggingEnabled },
-            set: { newValue in
-                settingsManager.updateSettings(logging: newValue)
+                settingsManager.updateSettings(alarmDuration: Int(newValue.rounded()))
                 if isDeviceConnected { bluetoothManager.sendSettings() }
             }
         )
@@ -1034,24 +1024,28 @@ struct DevicePageView: View {
                             )
                         }
 
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("Alarm Duration")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                Text("\(settingsManager.alarmDuration)s")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                    .monospacedDigit()
+                            }
+                            Slider(value: alarmDurationBinding, in: 0...30, step: 1)
+                            Text("How long the alarm continues sounding once the device comes to rest after a motion event.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+
                         Toggle(isOn: silentWhenConnectedBinding) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Silent When Connected")
                                     .font(.subheadline)
                                 Text("Disable alarm when phone is connected")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-
-                        Toggle("LED Lights", isOn: lightsEnabledBinding)
-                            .font(.subheadline)
-
-                        Toggle(isOn: loggingEnabledBinding) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Motion Logging")
-                                    .font(.subheadline)
-                                Text("Records motion events. Syncs when in range.")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
