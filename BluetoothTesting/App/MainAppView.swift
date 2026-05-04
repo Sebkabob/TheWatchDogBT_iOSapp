@@ -76,39 +76,39 @@ struct MainAppView: View {
     var body: some View {
         ZStack {
             TabView(selection: lockedPageBinding) {
-                // Only the active page is rendered while settings/hardware
-                // is open — without neighbouring pages, the TabView's swipe
-                // gesture has nowhere to scroll to and is effectively inert.
-                if !settingsOverlayActive || currentPage == 0 {
-                    AddDevicePage(bluetoothManager: bluetoothManager, onAddTapped: {
-                        if let device = bluetoothManager.connectedDevice {
-                            bluetoothManager.disconnect(from: device)
-                        }
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            showPairing = true
-                        }
-                    })
-                        .tag(0)
-                }
+                // All pages stay mounted permanently. Tearing down adjacent
+                // DevicePageViews (each with its own SCNView/Motion3DView) on
+                // every settings entry/exit caused the frame drops during the
+                // open/close animation — re-loading the USDZ + rebuilding the
+                // scene graph synchronously on the main thread is expensive,
+                // and it scaled with the number of bonded devices. Swipe is
+                // disabled via the underlying UIScrollView's pan gesture
+                // (see SwipeDisabler below) plus the locked binding.
+                AddDevicePage(bluetoothManager: bluetoothManager, onAddTapped: {
+                    if let device = bluetoothManager.connectedDevice {
+                        bluetoothManager.disconnect(from: device)
+                    }
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showPairing = true
+                    }
+                })
+                    .tag(0)
 
                 ForEach(Array(sortedDevices.enumerated()), id: \.element.id) { index, device in
-                    if !settingsOverlayActive || (1 + index) == currentPage {
-                        DevicePageView(
-                            bluetoothManager: bluetoothManager,
-                            deviceID: device.id,
-                            onOverviewRequest: { enterOverviewMode() },
-                            onSettingsModeChange: { active in settingsOverlayActive = active },
-                            animateEntrance: device.id == justPairedDeviceID
-                        )
-                        .tag(1 + index)
-                    }
+                    DevicePageView(
+                        bluetoothManager: bluetoothManager,
+                        deviceID: device.id,
+                        onOverviewRequest: { enterOverviewMode() },
+                        onSettingsModeChange: { active in settingsOverlayActive = active },
+                        animateEntrance: device.id == justPairedDeviceID
+                    )
+                    .tag(1 + index)
                 }
 
-                if !settingsOverlayActive || currentPage == (1 + sortedDevices.count) {
-                    AboutPage()
-                        .tag(1 + sortedDevices.count)
-                }
+                AboutPage()
+                    .tag(1 + sortedDevices.count)
             }
+            .background(SwipeDisabler(disabled: settingsOverlayActive))
             .tabViewStyle(.page(indexDisplayMode: .never))
             .scrollDisabled(settingsOverlayActive)
             .ignoresSafeArea()
@@ -450,6 +450,42 @@ struct AppSettingsView: View {
         let defaults = UserDefaults.standard
         for key in defaults.dictionaryRepresentation().keys {
             defaults.removeObject(forKey: key)
+        }
+    }
+}
+
+// MARK: - Swipe Disabler
+/// Walks up from this hidden host UIView to find the TabView's underlying
+/// UIScrollView (created by UIPageViewController for `.page` TabView style)
+/// and flips its `isScrollEnabled`. SwiftUI's `.scrollDisabled` is unreliable
+/// on `.page` TabView, so this is the surgical fix. Pages can stay mounted —
+/// no expensive view tear-down/rebuild on settings open/close.
+private struct SwipeDisabler: UIViewRepresentable {
+    let disabled: Bool
+
+    func makeUIView(context: Context) -> UIView {
+        let v = UIView()
+        v.isUserInteractionEnabled = false
+        return v
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        let target = disabled
+        DispatchQueue.main.async {
+            var node: UIView? = uiView
+            while let v = node {
+                if let scrollView = v as? UIScrollView {
+                    scrollView.isScrollEnabled = !target
+                    return
+                }
+                for sub in v.subviews {
+                    if let scrollView = sub as? UIScrollView {
+                        scrollView.isScrollEnabled = !target
+                        return
+                    }
+                }
+                node = v.superview
+            }
         }
     }
 }
