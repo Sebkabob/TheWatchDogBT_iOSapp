@@ -1106,6 +1106,8 @@ struct DevicePageView: View {
                                 options: AlarmType.allCases
                             )
                         }
+                        .disabled(settingsManager.alarmDisabled)
+                        .opacity(settingsManager.alarmDisabled ? 0.4 : 1)
 
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
@@ -1123,6 +1125,8 @@ struct DevicePageView: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
+                        .disabled(settingsManager.alarmDisabled)
+                        .opacity(settingsManager.alarmDisabled ? 0.4 : 1)
 
                         Toggle(isOn: silentWhenConnectedBinding) {
                             VStack(alignment: .leading, spacing: 2) {
@@ -1133,6 +1137,8 @@ struct DevicePageView: View {
                                     .foregroundColor(.secondary)
                             }
                         }
+                        .disabled(settingsManager.alarmDisabled)
+                        .opacity(settingsManager.alarmDisabled ? 0.4 : 1)
 
                         VStack(spacing: 8) {
                             Button(action: {
@@ -1152,7 +1158,8 @@ struct DevicePageView: View {
                                 .background(Color(white: 0.2))
                                 .cornerRadius(10)
                             }
-                            .disabled(!isDeviceConnected)
+                            .disabled(!isDeviceConnected || settingsManager.alarmDisabled)
+                            .opacity(settingsManager.alarmDisabled ? 0.4 : 1)
 
                             Button(action: { showForgetConfirmation = true }) {
                                 HStack {
@@ -1210,6 +1217,7 @@ struct DevicePageView: View {
                         .foregroundColor(.secondary)
                 }
             }
+            .tint(.red)
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
@@ -1223,6 +1231,8 @@ struct DevicePageView: View {
                 }
                 Slider(value: ledBrightnessBinding, in: 1...100, step: 1)
             }
+            .disabled(!settingsManager.lightsEnabled)
+            .opacity(settingsManager.lightsEnabled ? 1 : 0.4)
 
             Toggle(isOn: disableLEDBinding) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -1233,6 +1243,7 @@ struct DevicePageView: View {
                         .foregroundColor(.secondary)
                 }
             }
+            .tint(.red)
 
             Toggle(isOn: disableMotionLoggingBinding) {
                 VStack(alignment: .leading, spacing: 2) {

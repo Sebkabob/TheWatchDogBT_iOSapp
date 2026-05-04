@@ -10,7 +10,7 @@ import Foundation
 enum AppVersion {
     static let major: Int = 1
     static let main:  Int = 11
-    static let v2:    Int = 28
+    static let v2:    Int = 36
 
     /// "V1.0.00" — note the two-digit V2 field for display.
     static var displayString: String {
