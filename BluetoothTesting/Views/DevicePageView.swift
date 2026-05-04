@@ -264,20 +264,27 @@ struct DevicePageView: View {
                     // Device is in range (connected or just advertising) — show 3D model
                     if showModel {
                         ZStack {
-                            Motion3DView(
-                                usdzFileName: "WatchDogBTPCB",
-                                bluetoothManager: bluetoothManager,
-                                onSettingsTap: { handleModelTap() },
-                                idleWobble: isDeviceConnected,
-                                wobbleIntensity: 0.3,
-                                inSettingsMode: inSettingsMode,
-                                applyPlasticTexture: false,
-                                modelYOffset: -2.45,
-                                passesEmptyTaps: true,
-                                pcbLightingMode: true
-                            )
-                            .opacity(showingPCBView ? 1 : 0)
-                            .allowsHitTesting(showingPCBView)
+                            // PCB is heavy (separate SCNView + render loop +
+                            // wobble) — only mount it while the user is in
+                            // settings, where it can actually be toggled in.
+                            // Outside settings it's torn down so the device
+                            // view stays at 60fps.
+                            if inSettingsMode {
+                                Motion3DView(
+                                    usdzFileName: "WatchDogBTPCB",
+                                    bluetoothManager: bluetoothManager,
+                                    onSettingsTap: { handleModelTap() },
+                                    idleWobble: isDeviceConnected,
+                                    wobbleIntensity: 0.3,
+                                    inSettingsMode: inSettingsMode,
+                                    applyPlasticTexture: false,
+                                    modelYOffset: -2.45,
+                                    passesEmptyTaps: true,
+                                    pcbLightingMode: true
+                                )
+                                .opacity(showingPCBView ? 1 : 0)
+                                .allowsHitTesting(showingPCBView)
+                            }
 
                             Motion3DView(
                                 usdzFileName: "WatchDogBTCase_V2",
@@ -892,15 +899,26 @@ struct DevicePageView: View {
 
     private func toggleSettingsMode() {
         if inSettingsMode {
-            // Exit: fade settings panel out first, then slide model back. Always
-            // reset to the case view so re-entry starts on the main settings.
-            withAnimation(.easeInOut(duration: 0.2)) {
-                settingsContentVisible = false
-                showingPCBView = false
+            // Exit: if we're on the PCB sub-view, first crossfade back to the
+            // case (so the PCB→case animation isn't truncated when the PCB
+            // Motion3DView unmounts on inSettingsMode=false), THEN fade the
+            // settings panel + slide the model back. Two-stage so each
+            // animation gets its full duration without the next one starting
+            // before it lands.
+            let exitDelay: Double = showingPCBView ? 0.2 : 0
+            if showingPCBView {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showingPCBView = false
+                }
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                inSettingsMode = false
-                onSettingsModeChange?(false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + exitDelay) {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    settingsContentVisible = false
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    inSettingsMode = false
+                    onSettingsModeChange?(false)
+                }
             }
         } else {
             // Enter: kick off slide + control fade, then fade panel in once
