@@ -32,6 +32,11 @@ class SettingsManager {
     var selectedPresetRawValue: String = "maxSecurity"
     /// Seconds the alarm continues to sound after motion stops. Range 0...30.
     var alarmDuration: Int = 10
+    /// When true, the WatchDog suppresses the alarm entirely regardless of
+    /// trigger conditions. Persisted per-device.
+    var alarmDisabled: Bool = false
+    /// LED brightness in app units (1...100). Mapped to firmware's 1...255 on send.
+    var ledBrightness: Int = 100
 
     // UserDefaults keys — per-device settings
     private let armedKey = "watchdog_armed"
@@ -43,6 +48,8 @@ class SettingsManager {
     private let alarmTriggersKey = "watchdog_alarm_triggers"
     private let selectedPresetKey = "watchdog_selected_preset"
     private let alarmDurationKey = "watchdog_alarm_duration"
+    private let alarmDisabledKey = "watchdog_alarm_disabled"
+    private let ledBrightnessKey = "watchdog_led_brightness"
 
     // UserDefaults keys — global settings
     private let deviceNameKey = "watchdog_device_name"
@@ -117,10 +124,14 @@ class SettingsManager {
     
     /// Encodes deviceInfo into a single byte (byte 13)
     /// Bit 0: High Performance Mode
+    /// Bit 1: Alarm Disabled (1 = alarm fully suppressed regardless of triggers)
     func encodeDeviceInfo() -> UInt8 {
         var byte: UInt8 = 0
         if highPerformanceMode {
             byte |= (1 << 0)
+        }
+        if alarmDisabled {
+            byte |= (1 << 1)
         }
         return byte
     }
@@ -130,10 +141,18 @@ class SettingsManager {
         UInt8(max(0, min(30, alarmDuration)))
     }
 
+    /// Maps app-side LED brightness (1...100) to firmware scale (1...255).
+    func encodeLEDBrightness() -> UInt8 {
+        let clamped = max(1, min(100, ledBrightness))
+        let scaled = 1 + Int(round((Double(clamped - 1) / 99.0) * 254.0))
+        return UInt8(max(1, min(255, scaled)))
+    }
+
     /// Decodes deviceInfo byte from WatchDog
     func decodeDeviceInfo(from byte: UInt8) {
         highPerformanceMode = (byte & (1 << 0)) != 0
-        Log.info(.settings, "deviceInfo · highPerformance=\(highPerformanceMode)")
+        alarmDisabled = (byte & (1 << 1)) != 0
+        Log.info(.settings, "deviceInfo · highPerformance=\(highPerformanceMode) alarmDisabled=\(alarmDisabled)")
         saveDeviceSettings()
     }
 
@@ -222,6 +241,16 @@ class SettingsManager {
         } else {
             alarmDuration = 10
         }
+
+        alarmDisabled = ud.object(forKey: deviceKey(alarmDisabledKey, deviceID)) != nil
+            ? ud.bool(forKey: deviceKey(alarmDisabledKey, deviceID))
+            : false
+
+        if ud.object(forKey: deviceKey(ledBrightnessKey, deviceID)) != nil {
+            ledBrightness = max(1, min(100, ud.integer(forKey: deviceKey(ledBrightnessKey, deviceID))))
+        } else {
+            ledBrightness = 100
+        }
     }
 
     private func saveDeviceSettings() {
@@ -237,6 +266,8 @@ class SettingsManager {
         ud.set(alarmTriggers.map { $0.rawValue }, forKey: deviceKey(alarmTriggersKey, deviceID))
         ud.set(selectedPresetRawValue, forKey: deviceKey(selectedPresetKey, deviceID))
         ud.set(alarmDuration, forKey: deviceKey(alarmDurationKey, deviceID))
+        ud.set(alarmDisabled, forKey: deviceKey(alarmDisabledKey, deviceID))
+        ud.set(ledBrightness, forKey: deviceKey(ledBrightnessKey, deviceID))
     }
 
     // MARK: - Global Persistence
@@ -267,7 +298,8 @@ class SettingsManager {
                        disableAlarmConnected: Bool? = nil, debugMode: Bool? = nil,
                        highPerformance: Bool? = nil, liveOrientation: Bool? = nil,
                        dataLogging: Bool? = nil, triggers: Set<MotionEventType>? = nil,
-                       preset: String? = nil, alarmDuration: Int? = nil) {
+                       preset: String? = nil, alarmDuration: Int? = nil,
+                       alarmDisabled: Bool? = nil, ledBrightness: Int? = nil) {
         if let name = name { deviceName = name }
         if let armed = armed { isArmed = armed }
         if let alarm = alarm { alarmType = alarm }
@@ -283,6 +315,10 @@ class SettingsManager {
         if let preset = preset { selectedPresetRawValue = preset }
         if let alarmDuration = alarmDuration {
             self.alarmDuration = max(0, min(30, alarmDuration))
+        }
+        if let alarmDisabled = alarmDisabled { self.alarmDisabled = alarmDisabled }
+        if let ledBrightness = ledBrightness {
+            self.ledBrightness = max(1, min(100, ledBrightness))
         }
 
         saveDeviceSettings()

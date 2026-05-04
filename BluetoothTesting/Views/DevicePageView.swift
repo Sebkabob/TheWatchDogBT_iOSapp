@@ -960,6 +960,46 @@ struct DevicePageView: View {
         )
     }
 
+    private var alarmDisabledBinding: Binding<Bool> {
+        Binding(
+            get: { settingsManager.alarmDisabled },
+            set: { newValue in
+                settingsManager.updateSettings(alarmDisabled: newValue)
+                if isDeviceConnected { bluetoothManager.sendSettings() }
+            }
+        )
+    }
+
+    private var ledBrightnessBinding: Binding<Double> {
+        Binding(
+            get: { Double(settingsManager.ledBrightness) },
+            set: { newValue in
+                settingsManager.updateSettings(ledBrightness: Int(newValue.rounded()))
+                if isDeviceConnected { bluetoothManager.sendSettings() }
+            }
+        )
+    }
+
+    private var disableLEDBinding: Binding<Bool> {
+        Binding(
+            get: { !settingsManager.lightsEnabled },
+            set: { newValue in
+                settingsManager.updateSettings(lights: !newValue)
+                if isDeviceConnected { bluetoothManager.sendSettings() }
+            }
+        )
+    }
+
+    private var disableMotionLoggingBinding: Binding<Bool> {
+        Binding(
+            get: { !settingsManager.loggingEnabled },
+            set: { newValue in
+                settingsManager.updateSettings(logging: !newValue)
+                if isDeviceConnected { bluetoothManager.sendSettings() }
+            }
+        )
+    }
+
     private func forgetDevice() {
         let completion: (Result<Void, Error>) -> Void = { result in
             switch result {
@@ -1161,64 +1201,57 @@ struct DevicePageView: View {
     @ViewBuilder
     private func pcbSettingsPanel(width: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 24) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Hardware")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                Text("Tap the PCB to return to the main settings.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
-            HStack {
-                Text("Firmware Version")
-                    .font(.subheadline)
-                Spacer()
-                Text("—")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .monospacedDigit()
-            }
-
-            HStack {
-                Text("Hardware Revision")
-                    .font(.subheadline)
-                Spacer()
-                Text("—")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .monospacedDigit()
-            }
-
-            HStack {
-                Text("Serial Number")
-                    .font(.subheadline)
-                Spacer()
-                Text("—")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .monospacedDigit()
-            }
-
-            Toggle(isOn: .constant(false)) {
+            Toggle(isOn: alarmDisabledBinding) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Diagnostic Mode")
+                    Text("Disable Alarm")
                         .font(.subheadline)
-                    Text("Placeholder — wiring TBD.")
+                    Text("Completely disable the alarm regardless of triggers.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
             }
-            .disabled(true)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("LED Brightness")
+                        .font(.subheadline)
+                    Spacer()
+                    Text("\(settingsManager.ledBrightness)%")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .monospacedDigit()
+                }
+                Slider(value: ledBrightnessBinding, in: 1...100, step: 1)
+            }
+
+            Toggle(isOn: disableLEDBinding) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Disable LED")
+                        .font(.subheadline)
+                    Text("Turns off all indicator lights except for charging status.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            Toggle(isOn: disableMotionLoggingBinding) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Disable Motion Logging")
+                        .font(.subheadline)
+                    Text("Completely disable motion logging functionality.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
 
             Button(action: {}) {
                 HStack {
-                    Image(systemName: "wrench.and.screwdriver.fill")
-                    Text("Calibrate Sensors")
+                    Image(systemName: "arrow.down.circle.fill")
+                    Text("Install Latest Firmware")
                 }
                 .font(.subheadline)
                 .fontWeight(.medium)
-                .foregroundColor(.blue)
+                .foregroundColor(.gray)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
                 .background(Color(white: 0.2))

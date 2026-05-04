@@ -33,13 +33,14 @@ struct Motion3DView: View {
 
     private var sceneView: some View {
         let wobbleEnabled = idleWobble && !isLiveOrientation
+        let brightnessScale = Double(max(1, min(100, settingsManager.ledBrightness))) / 100.0
         return SceneView3D(
             rotationX: $currentRotationX,
             rotationY: $currentRotationY,
             rotationZ: $currentRotationZ,
             usdzFileName: usdzFileName,
             ledColor: ledAnimator.outputColor,
-            ledIntensity: ledAnimator.outputIntensity,
+            ledIntensity: ledAnimator.outputIntensity * brightnessScale,
             gesturesEnabled: !isLiveOrientation,
             idleWobble: wobbleEnabled,
             wobbleIntensity: wobbleIntensity,
