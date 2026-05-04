@@ -59,32 +59,55 @@ struct MainAppView: View {
         return sortedDevices[deviceIndex].id
     }
     
+    /// Page binding that refuses changes while settings/hardware mode is active.
+    /// `.scrollDisabled` on `.page`-style TabView is unreliable, so we lock the
+    /// selection at the binding level — even if a swipe is recognised, the page
+    /// cannot actually change.
+    private var lockedPageBinding: Binding<Int> {
+        Binding(
+            get: { currentPage },
+            set: { newValue in
+                guard !settingsOverlayActive else { return }
+                currentPage = newValue
+            }
+        )
+    }
+
     var body: some View {
         ZStack {
-            TabView(selection: $currentPage) {
-                AddDevicePage(bluetoothManager: bluetoothManager, onAddTapped: {
-                    if let device = bluetoothManager.connectedDevice {
-                        bluetoothManager.disconnect(from: device)
-                    }
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showPairing = true
-                    }
-                })
-                    .tag(0)
-
-                ForEach(Array(sortedDevices.enumerated()), id: \.element.id) { index, device in
-                    DevicePageView(
-                        bluetoothManager: bluetoothManager,
-                        deviceID: device.id,
-                        onOverviewRequest: { enterOverviewMode() },
-                        onSettingsModeChange: { active in settingsOverlayActive = active },
-                        animateEntrance: device.id == justPairedDeviceID
-                    )
-                    .tag(1 + index)
+            TabView(selection: lockedPageBinding) {
+                // Only the active page is rendered while settings/hardware
+                // is open — without neighbouring pages, the TabView's swipe
+                // gesture has nowhere to scroll to and is effectively inert.
+                if !settingsOverlayActive || currentPage == 0 {
+                    AddDevicePage(bluetoothManager: bluetoothManager, onAddTapped: {
+                        if let device = bluetoothManager.connectedDevice {
+                            bluetoothManager.disconnect(from: device)
+                        }
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showPairing = true
+                        }
+                    })
+                        .tag(0)
                 }
 
-                AboutPage()
-                    .tag(1 + sortedDevices.count)
+                ForEach(Array(sortedDevices.enumerated()), id: \.element.id) { index, device in
+                    if !settingsOverlayActive || (1 + index) == currentPage {
+                        DevicePageView(
+                            bluetoothManager: bluetoothManager,
+                            deviceID: device.id,
+                            onOverviewRequest: { enterOverviewMode() },
+                            onSettingsModeChange: { active in settingsOverlayActive = active },
+                            animateEntrance: device.id == justPairedDeviceID
+                        )
+                        .tag(1 + index)
+                    }
+                }
+
+                if !settingsOverlayActive || currentPage == (1 + sortedDevices.count) {
+                    AboutPage()
+                        .tag(1 + sortedDevices.count)
+                }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
             .scrollDisabled(settingsOverlayActive)
