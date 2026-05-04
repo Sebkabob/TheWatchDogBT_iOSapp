@@ -722,9 +722,23 @@ struct SettingToggleRow: View {
 
 // MARK: - Animated Segmented Control
 
+/// Optional protocol for segmented-control options that want a localized label.
+/// Enums can adopt this to return language-aware strings while still keeping
+/// `rawValue` stable for persistence.
+protocol LocalizedSegmentLabel {
+    var segmentLabel: String { get }
+}
+
 struct AnimatedSegmentedControl<T: RawRepresentable & Hashable & CaseIterable>: View where T.RawValue == String {
     @Binding var selection: T
     let options: [T]
+
+    private func label(for option: T) -> String {
+        if let localized = option as? LocalizedSegmentLabel {
+            return localized.segmentLabel
+        }
+        return option.rawValue
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -745,7 +759,7 @@ struct AnimatedSegmentedControl<T: RawRepresentable & Hashable & CaseIterable>: 
                             let generator = UIImpactFeedbackGenerator(style: .light)
                             generator.impactOccurred()
                         }) {
-                            Text(option.rawValue)
+                            Text(label(for: option))
                                 .font(.subheadline)
                                 .fontWeight(selection == option ? .semibold : .regular)
                                 .foregroundColor(selection == option ? .white : .primary)
@@ -768,17 +782,34 @@ struct AnimatedSegmentedControl<T: RawRepresentable & Hashable & CaseIterable>: 
 
 // MARK: - Enums
 
-enum SensitivityLevel: String, CaseIterable {
+enum SensitivityLevel: String, CaseIterable, LocalizedSegmentLabel {
     case low = "Low"
     case medium = "Medium"
     case high = "High"
+
+    var segmentLabel: String {
+        switch self {
+        case .low:    return LocalizationManager.shared.t(.low)
+        case .medium: return LocalizationManager.shared.t(.medium)
+        case .high:   return LocalizationManager.shared.t(.high)
+        }
+    }
 }
 
-enum AlarmType: String, CaseIterable {
+enum AlarmType: String, CaseIterable, LocalizedSegmentLabel {
     case none = "None"
     case calm = "Calm"
     case normal = "Normal"
     case loud = "Loud"
+
+    var segmentLabel: String {
+        switch self {
+        case .none:   return LocalizationManager.shared.t(.alarmNone)
+        case .calm:   return LocalizationManager.shared.t(.alarmCalm)
+        case .normal: return LocalizationManager.shared.t(.alarmNormal)
+        case .loud:   return LocalizationManager.shared.t(.alarmLoud)
+        }
+    }
 }
 
 #Preview {

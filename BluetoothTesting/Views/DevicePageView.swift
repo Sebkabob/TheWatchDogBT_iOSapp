@@ -13,6 +13,7 @@ struct DevicePageView: View {
     private let settingsManager = SettingsManager.shared
     private let nameManager = DeviceNameManager.shared
     private let bondManager = BondManager.shared
+    private let loc = LocalizationManager.shared
     
     let deviceID: UUID
     var onOverviewRequest: (() -> Void)? = nil
@@ -126,9 +127,9 @@ struct DevicePageView: View {
 
     private var statusText: String {
         if bluetoothManager.mlcState == .stabilizing && isShowingLiveDeviceState {
-            return "Locking"
+            return loc.t(.locking)
         }
-        return isLocked ? "Locked" : "Unlocked"
+        return isLocked ? loc.t(.locked) : loc.t(.unlocked)
     }
 
     private var statusColor: Color {
@@ -309,7 +310,7 @@ struct DevicePageView: View {
                     // Device is NOT in range — show placeholder
                     VStack {
                         Spacer()
-                        Text("Device not in range")
+                        Text(loc.t(.deviceNotInRange))
                             .font(.title3)
                             .foregroundColor(.gray)
                         Spacer()
@@ -474,7 +475,7 @@ struct DevicePageView: View {
                         }) {
                             HStack {
                                 Image(systemName: "xmark.circle.fill")
-                                Text("Disconnect")
+                                Text(loc.t(.disconnect))
                             }
                             .font(.headline)
                             .foregroundColor(.white)
@@ -490,7 +491,7 @@ struct DevicePageView: View {
                                 ProgressView()
                                     .progressViewStyle(CircularProgressViewStyle(tint: .white))
                                     .scaleEffect(0.8)
-                                Text("Connecting...")
+                                Text(loc.t(.connecting))
                             }
                             .font(.headline)
                             .foregroundColor(.white)
@@ -507,7 +508,7 @@ struct DevicePageView: View {
                         }) {
                             HStack {
                                 Image(systemName: "antenna.radiowaves.left.and.right")
-                                Text("Connect")
+                                Text(loc.t(.connect))
                             }
                             .font(.headline)
                             .foregroundColor(.white)
@@ -525,7 +526,7 @@ struct DevicePageView: View {
                     }) {
                         HStack {
                             Image(systemName: "exclamationmark.triangle")
-                            Text("Motion Logs")
+                            Text(loc.t(.motionLogs))
                         }
                         .font(.headline)
                         .foregroundColor(.primary)
@@ -661,11 +662,11 @@ struct DevicePageView: View {
         } message: {
             Text(diagnosticErrorMessage ?? "")
         }
-        .alert("Forget WatchDog?", isPresented: $showForgetConfirmation) {
-            Button("Cancel", role: .cancel) { }
-            Button("Forget Device", role: .destructive) { forgetDevice() }
+        .alert(loc.t(.forgetTitle), isPresented: $showForgetConfirmation) {
+            Button(loc.t(.cancel), role: .cancel) { }
+            Button(loc.t(.forgetConfirm), role: .destructive) { forgetDevice() }
         } message: {
-            Text("Are you sure you want to forget \(displayName)? You'll need to pair again to reconnect.")
+            Text(String(format: loc.t(.forgetMessage), displayName))
         }
     }
 
@@ -1058,14 +1059,14 @@ struct DevicePageView: View {
                     Button(action: { toggleSettingsMode() }) {
                         HStack(spacing: 4) {
                             Image(systemName: "chevron.left")
-                            Text("Back")
+                            Text(loc.t(.back))
                         }
                         .font(.body)
                         .foregroundColor(.primary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                    Text(showingPCBView ? "Hardware" : "Settings")
+                    Text(showingPCBView ? loc.t(.hardware) : loc.t(.settings))
                         .font(.body)
                         .fontWeight(.bold)
                         .foregroundColor(.primary)
@@ -1090,7 +1091,7 @@ struct DevicePageView: View {
 
                     VStack(alignment: .leading, spacing: 24) {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Device Name")
+                            Text(loc.t(.deviceName))
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                             TextField("WatchDog", text: $editableName)
@@ -1106,7 +1107,7 @@ struct DevicePageView: View {
                         }
 
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Sensitivity")
+                            Text(loc.t(.sensitivity))
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                             AnimatedSegmentedControl(
@@ -1116,7 +1117,7 @@ struct DevicePageView: View {
                         }
 
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Alarm Loudness")
+                            Text(loc.t(.alarmLoudness))
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                             AnimatedSegmentedControl(
@@ -1129,7 +1130,7 @@ struct DevicePageView: View {
 
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
-                                Text("Alarm Duration")
+                                Text(loc.t(.alarmDuration))
                                     .font(.subheadline)
                                     .foregroundColor(.secondary)
                                 Spacer()
@@ -1139,7 +1140,7 @@ struct DevicePageView: View {
                                     .monospacedDigit()
                             }
                             Slider(value: alarmDurationBinding, in: 0...30, step: 1)
-                            Text("How long the alarm continues sounding once the device comes to rest after a motion event.")
+                            Text(loc.t(.alarmDurationCaption))
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
@@ -1148,9 +1149,9 @@ struct DevicePageView: View {
 
                         Toggle(isOn: silentWhenConnectedBinding) {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("Silent When Connected")
+                                Text(loc.t(.silentWhenConnected))
                                     .font(.subheadline)
-                                Text("Disable alarm when phone is connected")
+                                Text(loc.t(.silentWhenConnectedCaption))
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
@@ -1166,7 +1167,7 @@ struct DevicePageView: View {
                             }) {
                                 HStack {
                                     Image(systemName: "speaker.wave.2.fill")
-                                    Text("Ping This Device")
+                                    Text(loc.t(.pingDevice))
                                 }
                                 .font(.subheadline)
                                 .fontWeight(.medium)
@@ -1182,7 +1183,7 @@ struct DevicePageView: View {
                             Button(action: { showForgetConfirmation = true }) {
                                 HStack {
                                     Image(systemName: "trash.fill")
-                                    Text("Forget This Device")
+                                    Text(loc.t(.forgetDevice))
                                 }
                                 .font(.subheadline)
                                 .fontWeight(.medium)
@@ -1228,9 +1229,9 @@ struct DevicePageView: View {
         VStack(alignment: .leading, spacing: 24) {
             Toggle(isOn: alarmDisabledBinding) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Disable Alarm")
+                    Text(loc.t(.disableAlarm))
                         .font(.subheadline)
-                    Text("Completely disable the alarm regardless of triggers.")
+                    Text(loc.t(.disableAlarmCaption))
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -1239,7 +1240,7 @@ struct DevicePageView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Text("LED Brightness")
+                    Text(loc.t(.ledBrightness))
                         .font(.subheadline)
                     Spacer()
                     Text("\(settingsManager.ledBrightness)%")
@@ -1254,9 +1255,9 @@ struct DevicePageView: View {
 
             Toggle(isOn: disableLEDBinding) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Disable LED")
+                    Text(loc.t(.disableLED))
                         .font(.subheadline)
-                    Text("Turns off all indicator lights except for charging status.")
+                    Text(loc.t(.disableLEDCaption))
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -1265,18 +1266,34 @@ struct DevicePageView: View {
 
             Toggle(isOn: disableMotionLoggingBinding) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Disable Motion Logging")
+                    Text(loc.t(.disableMotionLogging))
                         .font(.subheadline)
-                    Text("Completely disable motion logging functionality.")
+                    Text(loc.t(.disableMotionLoggingCaption))
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
             }
 
+            HStack {
+                Text(loc.t(.language))
+                    .font(.subheadline)
+                Spacer()
+                Picker("", selection: Binding(
+                    get: { loc.current },
+                    set: { loc.current = $0 }
+                )) {
+                    ForEach(AppLanguage.allCases, id: \.self) { lang in
+                        Text(lang.displayName).tag(lang)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+            }
+
             Button(action: {}) {
                 HStack {
                     Image(systemName: "arrow.down.circle.fill")
-                    Text("Install Latest Firmware")
+                    Text(loc.t(.installLatestFirmware))
                 }
                 .font(.subheadline)
                 .fontWeight(.medium)
