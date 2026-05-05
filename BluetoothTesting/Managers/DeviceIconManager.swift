@@ -141,6 +141,12 @@ class DeviceIconManager {
     func hasCustomIcon(deviceID: UUID) -> Bool {
         return customIcons[deviceID.uuidString] != nil
     }
+
+    func clearAll() {
+        customIcons.removeAll()
+        UserDefaults.standard.removeObject(forKey: customIconsKey)
+        Log.ok(.icon, "Cleared all custom icons")
+    }
     
     // MARK: - Persistence
     

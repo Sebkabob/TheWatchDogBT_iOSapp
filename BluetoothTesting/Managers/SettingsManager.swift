@@ -333,9 +333,12 @@ class SettingsManager {
     /// Wipes every per-device WatchDog settings key from UserDefaults so the
     /// next `loadDeviceSettings(_:)` call falls back to the defaults coded in
     /// this file. Bonded devices, custom names, notes, and motion logs are
-    /// keyed elsewhere and are not touched. The currently-loaded device's
-    /// in-memory state is reloaded immediately so the UI reflects the reset
-    /// without requiring a re-bond.
+    /// keyed elsewhere and are not touched. All in-memory @Observable
+    /// properties are reset to defaults — unconditionally — so views that
+    /// observe them update immediately, even when no device page was opened
+    /// before this reset (i.e. `currentDeviceID == nil`). For a currently
+    /// connected device the defaults are also written back to its
+    /// per-device store so the next read matches in-memory state.
     func resetAllDeviceSettingsToDefaults() {
         let ud = UserDefaults.standard
         let bases = [
@@ -348,9 +351,64 @@ class SettingsManager {
                 ud.removeObject(forKey: key)
             }
         }
-        if let id = currentDeviceID {
-            loadDeviceSettings(for: id)
+
+        isArmed = false
+        alarmType = .normal
+        sensitivity = .medium
+        lightsEnabled = true
+        loggingEnabled = false
+        disableAlarmWhenConnected = false
+        alarmTriggers = [.shaken, .impact, .freefall, .tilted, .doorOpening, .doorClosing]
+        selectedPresetRawValue = "maxSecurity"
+        alarmDuration = 2
+        alarmDisabled = false
+        ledBrightness = 100
+        highPerformanceMode = devModeUnlocked
+
+        if currentDeviceID != nil {
+            saveDeviceSettings()
         }
+    }
+
+    /// Drop every per-device and global setting from memory and disk. Used by
+    /// the Wipe App Data flow — `resetAllDeviceSettingsToDefaults` only handles
+    /// per-device keys and re-loads the current device, both wrong here.
+    func clearAll() {
+        let ud = UserDefaults.standard
+        let bases = [
+            armedKey, alarmTypeKey, sensitivityKey, lightsKey, loggingKey,
+            disableAlarmWhenConnectedKey, alarmTriggersKey, selectedPresetKey,
+            alarmDurationKey, alarmDisabledKey, ledBrightnessKey
+        ]
+        for key in ud.dictionaryRepresentation().keys {
+            if bases.contains(where: { key.hasSuffix("_\($0)") }) {
+                ud.removeObject(forKey: key)
+            }
+        }
+        ud.removeObject(forKey: deviceNameKey)
+        ud.removeObject(forKey: debugModeKey)
+        ud.removeObject(forKey: liveOrientationKey)
+        ud.removeObject(forKey: devModeUnlockedKey)
+        ud.removeObject(forKey: dataLoggingModeKey)
+
+        currentDeviceID = nil
+        isArmed = false
+        alarmType = .normal
+        sensitivity = .medium
+        lightsEnabled = true
+        loggingEnabled = false
+        disableAlarmWhenConnected = false
+        deviceName = "WatchDog"
+        debugModeEnabled = false
+        highPerformanceMode = false
+        liveOrientationEnabled = false
+        devModeUnlocked = false
+        dataLoggingMode = false
+        alarmTriggers = [.shaken, .impact, .freefall, .tilted, .doorOpening, .doorClosing]
+        selectedPresetRawValue = "maxSecurity"
+        alarmDuration = 2
+        alarmDisabled = false
+        ledBrightness = 100
     }
 }
 

@@ -35,6 +35,12 @@ class MotionLogManager {
         Log.ok(.motion, "Cleared all events [\(deviceID.uuidString.prefix(8))]")
     }
 
+    func clearAll() {
+        motionEvents.removeAll()
+        UserDefaults.standard.removeObject(forKey: motionEventsKey)
+        Log.ok(.motion, "Cleared all motion events")
+    }
+
     func clearEventsForDate(_ date: Date, deviceID: UUID) {
         let calendar = Calendar.current
         motionEvents.removeAll { event in

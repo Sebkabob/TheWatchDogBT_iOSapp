@@ -106,7 +106,7 @@ struct MainAppView: View {
                     .tag(1 + index)
                 }
 
-                AboutPage()
+                AboutPage(bluetoothManager: bluetoothManager)
                     .tag(1 + sortedDevices.count)
             }
             .background(SwipeDisabler(disabled: settingsOverlayActive))
@@ -325,6 +325,7 @@ struct AddDevicePage: View {
 
 // MARK: - About Page
 struct AboutPage: View {
+    let bluetoothManager: BluetoothManager
     @Environment(\.colorScheme) var colorScheme
     @State private var showAppSettings = false
 
@@ -379,11 +380,14 @@ struct AboutPage: View {
 
             // App Settings overlay (fade in/out)
             if showAppSettings {
-                AppSettingsView(onBack: {
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        showAppSettings = false
+                AppSettingsView(
+                    bluetoothManager: bluetoothManager,
+                    onBack: {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            showAppSettings = false
+                        }
                     }
-                })
+                )
                 .transition(.opacity)
             }
         }
@@ -393,6 +397,7 @@ struct AboutPage: View {
 
 // MARK: - App Settings (gear icon → settings)
 struct AppSettingsView: View {
+    let bluetoothManager: BluetoothManager
     let onBack: () -> Void
     private let loc = LocalizationManager.shared
     private let prefs = AppPreferences.shared
@@ -486,6 +491,9 @@ struct AppSettingsView: View {
             Button(loc.t(.cancel), role: .cancel) { }
             Button(loc.t(.reset), role: .destructive) {
                 SettingsManager.shared.resetAllDeviceSettingsToDefaults()
+                if bluetoothManager.connectedDevice != nil {
+                    bluetoothManager.sendSettings()
+                }
             }
         } message: {
             Text(loc.t(.setToDefaultSettingsMessage))
@@ -498,9 +506,21 @@ struct AppSettingsView: View {
         }
     }
 
-    /// Removes every key in the standard UserDefaults suite — bonded devices,
-    /// custom names, notes, motion logs, per-device settings, language, etc.
+    /// Wipes every persisted preference AND every singleton manager's
+    /// in-memory cache. Clearing UserDefaults alone left the bonded device
+    /// list intact because each manager (BondManager, DeviceNameManager,
+    /// etc.) holds its decoded state in memory and would re-persist on the
+    /// next save. Active BLE connections are also torn down.
     private func wipeAppData() {
+        bluetoothManager.wipeAllDeviceState()
+
+        BondManager.shared.clearAll()
+        DeviceNameManager.shared.clearAll()
+        DeviceIconManager.shared.clearAll()
+        DeviceNotesManager.shared.clearAll()
+        MotionLogManager.shared.clearAll()
+        SettingsManager.shared.clearAll()
+
         let defaults = UserDefaults.standard
         for key in defaults.dictionaryRepresentation().keys {
             defaults.removeObject(forKey: key)

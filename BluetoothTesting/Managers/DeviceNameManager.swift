@@ -57,6 +57,12 @@ class DeviceNameManager {
     func hasCustomName(deviceID: UUID) -> Bool {
         return customNames[deviceID.uuidString] != nil
     }
+
+    func clearAll() {
+        customNames.removeAll()
+        UserDefaults.standard.removeObject(forKey: customNamesKey)
+        Log.ok(.name, "Cleared all custom names")
+    }
     
     // MARK: - Persistence
     

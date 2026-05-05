@@ -222,9 +222,14 @@ struct DevicePageView: View {
                                 if devTapCount >= 10 {
                                     devTapCount = 0
                                     settingsManager.devModeUnlocked.toggle()
-                                    settingsManager.updateSettings(highPerformance: settingsManager.devModeUnlocked)
+                                    let on = settingsManager.devModeUnlocked
+                                    settingsManager.updateSettings(
+                                        debugMode: on,
+                                        highPerformance: on,
+                                        dataLogging: on
+                                    )
                                     if isDeviceConnected { bluetoothManager.sendSettings() }
-                                    devModeToast = settingsManager.devModeUnlocked ? "Dev mode on" : "Dev mode off"
+                                    devModeToast = on ? "Dev mode on" : "Dev mode off"
                                 }
                                 devTapResetTask = Task {
                                     try? await Task.sleep(for: .seconds(3))
@@ -1095,6 +1100,9 @@ struct DevicePageView: View {
                                 .background(Color(.systemGray5))
                                 .cornerRadius(10)
                                 .submitLabel(.done)
+                                .autocorrectionDisabled(true)
+                                .textInputAutocapitalization(.never)
+                                .keyboardType(.asciiCapable)
                                 .onChange(of: editableName) { _, newValue in
                                     commitDeviceName(newValue)
                                 }

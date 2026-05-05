@@ -129,6 +129,16 @@ class BondManager {
     deinit {
         staleCheckTimer?.invalidate()
     }
+
+    /// Drop every bond from memory and disk. Used by the "Wipe App Data"
+    /// flow — clearing UserDefaults alone leaves this in-memory cache
+    /// populated, so the device list keeps showing forgotten bonds and any
+    /// later save would re-persist them.
+    func clearAll() {
+        bondedDevices.removeAll()
+        UserDefaults.standard.removeObject(forKey: bondsKey)
+        Log.ok(.bond, "Cleared all bonds")
+    }
     
     // MARK: - Persistence
     

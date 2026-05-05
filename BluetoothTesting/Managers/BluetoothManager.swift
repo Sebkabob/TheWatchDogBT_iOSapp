@@ -496,15 +496,39 @@ class BluetoothManager: NSObject {
     
     func disconnect(from device: BluetoothDevice) {
         Log.info(.ble, "Disconnecting from \(device.name)")
-        
+
         suppressAutoReconnect = true
         stopReconnecting()
-        
+
         centralManager.cancelPeripheralConnection(device.peripheral)
-        
+
         DispatchQueue.main.async {
             self.cleanupConnectionState()
         }
+    }
+
+    /// Tear down all live BLE state for a "Wipe App Data" reset. Cancels any
+    /// in-flight or active connection, stops scanning, and drops every cached
+    /// peripheral so the UI can't keep referencing forgotten devices.
+    func wipeAllDeviceState() {
+        suppressAutoReconnect = true
+        stopReconnecting()
+        if let device = connectedDevice {
+            centralManager.cancelPeripheralConnection(device.peripheral)
+        }
+        if let pending = pendingConnectionPeripheral {
+            centralManager.cancelPeripheralConnection(pending)
+        }
+        if isScanning {
+            centralManager.stopScan()
+            isScanning = false
+        }
+        cleanupConnectionState()
+        discoveredDevices.removeAll()
+        watchDogIdentifiers.removeAll()
+        watchDogFirmwares.removeAll()
+        lastRSSIUpdate.removeAll()
+        Log.ok(.ble, "Wiped all BLE state")
     }
     
     /// Reset all connection-related state. Call on main thread only.

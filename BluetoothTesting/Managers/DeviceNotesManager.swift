@@ -32,4 +32,9 @@ class DeviceNotesManager {
             UserDefaults.standard.set(data, forKey: storageKey)
         }
     }
+
+    func clearAll() {
+        notes.removeAll()
+        UserDefaults.standard.removeObject(forKey: storageKey)
+    }
 }

@@ -192,6 +192,12 @@ struct WatchDogSettingsView: View {
                 }
             }
             .onAppear { loadCurrentSettings() }
+            .onChange(of: bluetoothManager.connectedDevice?.id) { _, newID in
+                guard let devID = resolvedDeviceID else { return }
+                if newID != devID {
+                    dismiss()
+                }
+            }
             .alert("Forget WatchDog?", isPresented: $showForgetConfirmation) {
                 Button("Cancel", role: .cancel) { }
                 Button("Forget Device", role: .destructive) { forgetDevice() }
@@ -307,6 +313,9 @@ struct WatchDogSettingsView: View {
     private var deviceSection: some View {
         Section(header: Text("Device Name")) {
             TextField("WatchDog Name", text: $watchDogName)
+                .autocorrectionDisabled(true)
+                .textInputAutocapitalization(.never)
+                .keyboardType(.asciiCapable)
                 .onChange(of: watchDogName) { _, newValue in
                     if newValue.count > maxNameLength {
                         watchDogName = String(newValue.prefix(maxNameLength))
