@@ -317,9 +317,6 @@ struct AddDevicePage: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             if demoVisible {
-                // Aligned vertically with the Hold-to-Lock bar on DevicePageView:
-                // 20 (bottom padding) + 50 (button row) + 12 (spacing) + 40
-                // (half of LockButton height = 80) = 122pt from bottom edge.
                 Button(action: { onTryDemoTapped() }) {
                     Text(LocalizationManager.shared.t(.noDeviceTryDemo))
                         .font(.body)
@@ -327,7 +324,7 @@ struct AddDevicePage: View {
                         .foregroundColor(.blue)
                 }
                 .buttonStyle(PlainButtonStyle())
-                .padding(.bottom, 122)
+                .padding(.bottom, 90)
                 .transition(.opacity)
             }
         }
