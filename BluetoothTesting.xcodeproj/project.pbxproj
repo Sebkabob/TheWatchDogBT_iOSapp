@@ -48,6 +48,11 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				APP_STORE_READINESS_PROMPT.md,
+				FW_DIAG_VERIFICATION_PROMPT.md,
+				FW_POWER_OPT_PROMPT.md,
+				fix_settings_transition_prompt.md,
+				WatchDogBT_Power_Optimization_Research.docx,
 			);
 			target = 1AD1B8EB2EB4385000A88B25 /* BluetoothTesting */;
 		};
@@ -437,10 +442,14 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = BluetoothTesting/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = WatchDog;
-				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "This app needs Bluetooth access to scan and connect to nearby devices.";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "WatchDog connects to your WatchDog case over Bluetooth to monitor motion, run diagnostics, and update its settings. The app does not use Bluetooth for anything else and never sends Bluetooth data off your device.";
+				INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription = "WatchDog connects to your WatchDog case over Bluetooth to monitor motion, run diagnostics, and update its settings.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIRequiredDeviceCapabilities = "bluetooth-le";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -468,10 +477,14 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = BluetoothTesting/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = WatchDog;
-				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "This app needs Bluetooth access to scan and connect to nearby devices.";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "WatchDog connects to your WatchDog case over Bluetooth to monitor motion, run diagnostics, and update its settings. The app does not use Bluetooth for anything else and never sends Bluetooth data off your device.";
+				INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription = "WatchDog connects to your WatchDog case over Bluetooth to monitor motion, run diagnostics, and update its settings.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIRequiredDeviceCapabilities = "bluetooth-le";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				LD_RUNPATH_SEARCH_PATHS = (

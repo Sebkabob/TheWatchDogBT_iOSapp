@@ -91,13 +91,16 @@ enum Log {
     /// Set by BluetoothManager.init. Returns nil if no device connected.
     nonisolated(unsafe) static var contextProvider: () -> String? = { nil }
 
+    #if DEBUG
     private static let tagColumnCells = 12  // visual width of "GLYPH TAG     "
     nonisolated(unsafe) private static var headerPrinted = false
     private static let lock = NSLock()
+    #endif
 
     // MARK: Banner
 
     static func banner() {
+        #if DEBUG
         lock.lock(); defer { lock.unlock() }
         guard !headerPrinted else { return }
         headerPrinted = true
@@ -105,11 +108,13 @@ enum Log {
         print("╭──────────────────────────────────────────────╮")
         print("│  🐶  WatchDog · Debug Log                    │")
         print("╰──────────────────────────────────────────────╯")
+        #endif
     }
 
     // MARK: Core write
 
     static func write(_ tag: LogTag, _ level: LogLevel, _ msg: String, ctx: Bool? = nil) {
+        #if DEBUG
         if !headerPrinted { banner() }
 
         // Pad the tag column. Glyph counts as 2 visual cells in most
@@ -127,6 +132,7 @@ enum Log {
         }
 
         print(line)
+        #endif
     }
 
     // MARK: Convenience
@@ -141,15 +147,19 @@ enum Log {
     // MARK: Section divider — for grouping a multi-step flow
 
     static func section(_ title: String) {
+        #if DEBUG
         if !headerPrinted { banner() }
         let inner = " \(title) "
         let dashes = max(2, 44 - inner.count)
         print("┃")
         print("┃ ╭─\(inner)\(String(repeating: "─", count: dashes))╮")
+        #endif
     }
 
     static func endSection() {
+        #if DEBUG
         print("┃ ╰\(String(repeating: "─", count: 50))╯")
         print("┃")
+        #endif
     }
 }

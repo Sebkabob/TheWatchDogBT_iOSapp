@@ -225,6 +225,7 @@ struct DevicePageView: View {
                                     .foregroundColor(.secondary)
                             }
                             .onTapGesture {
+                                #if DEBUG
                                 devTapResetTask?.cancel()
                                 devTapCount += 1
                                 if devTapCount >= 10 {
@@ -243,6 +244,7 @@ struct DevicePageView: View {
                                     try? await Task.sleep(for: .seconds(3))
                                     if !Task.isCancelled { devTapCount = 0 }
                                 }
+                                #endif
                             }
                         }
                         if mlcIndicatorVisible {
@@ -334,6 +336,8 @@ struct DevicePageView: View {
                 }
                 
                 // Debug Info Box - Left side (only when connected and debug enabled)
+                // Gated to DEBUG builds — App Store reviewers should never see this.
+                #if DEBUG
                 if isDeviceConnected && settingsManager.debugModeEnabled {
                     VStack(alignment: .leading, spacing: 0) {
                         Spacer()
@@ -426,6 +430,7 @@ struct DevicePageView: View {
                     .animation(.easeInOut(duration: 0.4), value: controlsRevealed)
                     .animation(.easeInOut(duration: 0.2), value: inSettingsMode)
                 }
+                #endif
             }
             .animation(.easeInOut(duration: 0.5), value: isDeviceInRange)
             .animation(.easeInOut(duration: 1.0), value: showModel)

@@ -168,9 +168,11 @@ struct WatchDogSettingsView: View {
 
                     generalSection
 
+                    #if DEBUG
                     if settingsManager.devModeUnlocked {
                         debugSection
                     }
+                    #endif
 
                     forgetDeviceSection
 
