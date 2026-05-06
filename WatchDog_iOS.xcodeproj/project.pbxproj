@@ -37,34 +37,34 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		1AD1B8EC2EB4385000A88B25 /* BluetoothTesting.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BluetoothTesting.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		1AD1B8F92EB4385200A88B25 /* BluetoothTestingTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BluetoothTestingTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		1AD1B9032EB4385200A88B25 /* BluetoothTestingUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BluetoothTestingUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		1AD1B8EC2EB4385000A88B25 /* WatchDog_iOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WatchDog_iOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		1AD1B8F92EB4385200A88B25 /* WatchDog_iOSTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WatchDog_iOSTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		1AD1B9032EB4385200A88B25 /* WatchDog_iOSUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WatchDog_iOSUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		1ADEC7FD2EB48F92005E4F52 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		1ADEC7F42EB43AAA005E4F52 /* Exceptions for "BluetoothTesting" folder in "BluetoothTesting" target */ = {
+		1ADEC7F42EB43AAA005E4F52 /* Exceptions for "WatchDog_iOS" folder in "WatchDog_iOS" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				Info.plist,
 				APP_STORE_READINESS_PROMPT.md,
+				fix_settings_transition_prompt.md,
 				FW_DIAG_VERIFICATION_PROMPT.md,
 				FW_POWER_OPT_PROMPT.md,
-				fix_settings_transition_prompt.md,
+				Info.plist,
 				WatchDogBT_Power_Optimization_Research.docx,
 			);
-			target = 1AD1B8EB2EB4385000A88B25 /* BluetoothTesting */;
+			target = 1AD1B8EB2EB4385000A88B25 /* WatchDog_iOS */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		1AD1B8EE2EB4385000A88B25 /* BluetoothTesting */ = {
+		1AD1B8EE2EB4385000A88B25 /* WatchDog_iOS */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				1ADEC7F42EB43AAA005E4F52 /* Exceptions for "BluetoothTesting" folder in "BluetoothTesting" target */,
+				1ADEC7F42EB43AAA005E4F52 /* Exceptions for "WatchDog_iOS" folder in "WatchDog_iOS" target */,
 			);
-			path = BluetoothTesting;
+			path = WatchDog_iOS;
 			sourceTree = "<group>";
 		};
 		1AD1B8FC2EB4385200A88B25 /* BluetoothTestingTests */ = {
@@ -107,7 +107,7 @@
 		1AD1B8E32EB4385000A88B25 = {
 			isa = PBXGroup;
 			children = (
-				1AD1B8EE2EB4385000A88B25 /* BluetoothTesting */,
+				1AD1B8EE2EB4385000A88B25 /* WatchDog_iOS */,
 				1AD1B8FC2EB4385200A88B25 /* BluetoothTestingTests */,
 				1AD1B9062EB4385200A88B25 /* BluetoothTestingUITests */,
 				1ADEC7FA2EB48F92005E4F52 /* Frameworks */,
@@ -118,9 +118,9 @@
 		1AD1B8ED2EB4385000A88B25 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				1AD1B8EC2EB4385000A88B25 /* BluetoothTesting.app */,
-				1AD1B8F92EB4385200A88B25 /* BluetoothTestingTests.xctest */,
-				1AD1B9032EB4385200A88B25 /* BluetoothTestingUITests.xctest */,
+				1AD1B8EC2EB4385000A88B25 /* WatchDog_iOS.app */,
+				1AD1B8F92EB4385200A88B25 /* WatchDog_iOSTests.xctest */,
+				1AD1B9032EB4385200A88B25 /* WatchDog_iOSUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -136,9 +136,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		1AD1B8EB2EB4385000A88B25 /* BluetoothTesting */ = {
+		1AD1B8EB2EB4385000A88B25 /* WatchDog_iOS */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 1AD1B90D2EB4385200A88B25 /* Build configuration list for PBXNativeTarget "BluetoothTesting" */;
+			buildConfigurationList = 1AD1B90D2EB4385200A88B25 /* Build configuration list for PBXNativeTarget "WatchDog_iOS" */;
 			buildPhases = (
 				1AD1B8E82EB4385000A88B25 /* Sources */,
 				1AD1B8E92EB4385000A88B25 /* Frameworks */,
@@ -150,18 +150,18 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				1AD1B8EE2EB4385000A88B25 /* BluetoothTesting */,
+				1AD1B8EE2EB4385000A88B25 /* WatchDog_iOS */,
 			);
-			name = BluetoothTesting;
+			name = WatchDog_iOS;
 			packageProductDependencies = (
 			);
 			productName = BluetoothTesting;
-			productReference = 1AD1B8EC2EB4385000A88B25 /* BluetoothTesting.app */;
+			productReference = 1AD1B8EC2EB4385000A88B25 /* WatchDog_iOS.app */;
 			productType = "com.apple.product-type.application";
 		};
-		1AD1B8F82EB4385200A88B25 /* BluetoothTestingTests */ = {
+		1AD1B8F82EB4385200A88B25 /* WatchDog_iOSTests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 1AD1B9102EB4385200A88B25 /* Build configuration list for PBXNativeTarget "BluetoothTestingTests" */;
+			buildConfigurationList = 1AD1B9102EB4385200A88B25 /* Build configuration list for PBXNativeTarget "WatchDog_iOSTests" */;
 			buildPhases = (
 				1AD1B8F52EB4385200A88B25 /* Sources */,
 				1AD1B8F62EB4385200A88B25 /* Frameworks */,
@@ -175,16 +175,16 @@
 			fileSystemSynchronizedGroups = (
 				1AD1B8FC2EB4385200A88B25 /* BluetoothTestingTests */,
 			);
-			name = BluetoothTestingTests;
+			name = WatchDog_iOSTests;
 			packageProductDependencies = (
 			);
 			productName = BluetoothTestingTests;
-			productReference = 1AD1B8F92EB4385200A88B25 /* BluetoothTestingTests.xctest */;
+			productReference = 1AD1B8F92EB4385200A88B25 /* WatchDog_iOSTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
-		1AD1B9022EB4385200A88B25 /* BluetoothTestingUITests */ = {
+		1AD1B9022EB4385200A88B25 /* WatchDog_iOSUITests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 1AD1B9132EB4385200A88B25 /* Build configuration list for PBXNativeTarget "BluetoothTestingUITests" */;
+			buildConfigurationList = 1AD1B9132EB4385200A88B25 /* Build configuration list for PBXNativeTarget "WatchDog_iOSUITests" */;
 			buildPhases = (
 				1AD1B8FF2EB4385200A88B25 /* Sources */,
 				1AD1B9002EB4385200A88B25 /* Frameworks */,
@@ -198,11 +198,11 @@
 			fileSystemSynchronizedGroups = (
 				1AD1B9062EB4385200A88B25 /* BluetoothTestingUITests */,
 			);
-			name = BluetoothTestingUITests;
+			name = WatchDog_iOSUITests;
 			packageProductDependencies = (
 			);
 			productName = BluetoothTestingUITests;
-			productReference = 1AD1B9032EB4385200A88B25 /* BluetoothTestingUITests.xctest */;
+			productReference = 1AD1B9032EB4385200A88B25 /* WatchDog_iOSUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 /* End PBXNativeTarget section */
@@ -228,7 +228,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 1AD1B8E72EB4385000A88B25 /* Build configuration list for PBXProject "BluetoothTesting" */;
+			buildConfigurationList = 1AD1B8E72EB4385000A88B25 /* Build configuration list for PBXProject "WatchDog_iOS" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -242,9 +242,9 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				1AD1B8EB2EB4385000A88B25 /* BluetoothTesting */,
-				1AD1B8F82EB4385200A88B25 /* BluetoothTestingTests */,
-				1AD1B9022EB4385200A88B25 /* BluetoothTestingUITests */,
+				1AD1B8EB2EB4385000A88B25 /* WatchDog_iOS */,
+				1AD1B8F82EB4385200A88B25 /* WatchDog_iOSTests */,
+				1AD1B9022EB4385200A88B25 /* WatchDog_iOSUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -300,12 +300,12 @@
 /* Begin PBXTargetDependency section */
 		1AD1B8FB2EB4385200A88B25 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 1AD1B8EB2EB4385000A88B25 /* BluetoothTesting */;
+			target = 1AD1B8EB2EB4385000A88B25 /* WatchDog_iOS */;
 			targetProxy = 1AD1B8FA2EB4385200A88B25 /* PBXContainerItemProxy */;
 		};
 		1AD1B9052EB4385200A88B25 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 1AD1B8EB2EB4385000A88B25 /* BluetoothTesting */;
+			target = 1AD1B8EB2EB4385000A88B25 /* WatchDog_iOS */;
 			targetProxy = 1AD1B9042EB4385200A88B25 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
@@ -440,7 +440,7 @@
 				DEVELOPMENT_TEAM = YF896L899R;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = BluetoothTesting/Info.plist;
+				INFOPLIST_FILE = WatchDog_iOS/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = WatchDog;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
@@ -457,7 +457,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = Sebkabob.BluetoothTesting;
+				PRODUCT_BUNDLE_IDENTIFIER = "Sebkabob.WatchDog-iOS";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -475,7 +475,7 @@
 				DEVELOPMENT_TEAM = YF896L899R;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = BluetoothTesting/Info.plist;
+				INFOPLIST_FILE = WatchDog_iOS/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = WatchDog;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
@@ -492,7 +492,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = Sebkabob.BluetoothTesting;
+				PRODUCT_BUNDLE_IDENTIFIER = "Sebkabob.WatchDog-iOS";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -514,7 +514,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BluetoothTesting.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/BluetoothTesting";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/WatchDog_iOS.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/WatchDog_iOS";
 			};
 			name = Debug;
 		};
@@ -532,7 +532,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BluetoothTesting.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/BluetoothTesting";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/WatchDog_iOS.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/WatchDog_iOS";
 			};
 			name = Release;
 		};
@@ -571,7 +571,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		1AD1B8E72EB4385000A88B25 /* Build configuration list for PBXProject "BluetoothTesting" */ = {
+		1AD1B8E72EB4385000A88B25 /* Build configuration list for PBXProject "WatchDog_iOS" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				1AD1B90B2EB4385200A88B25 /* Debug */,
@@ -580,7 +580,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		1AD1B90D2EB4385200A88B25 /* Build configuration list for PBXNativeTarget "BluetoothTesting" */ = {
+		1AD1B90D2EB4385200A88B25 /* Build configuration list for PBXNativeTarget "WatchDog_iOS" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				1AD1B90E2EB4385200A88B25 /* Debug */,
@@ -589,7 +589,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		1AD1B9102EB4385200A88B25 /* Build configuration list for PBXNativeTarget "BluetoothTestingTests" */ = {
+		1AD1B9102EB4385200A88B25 /* Build configuration list for PBXNativeTarget "WatchDog_iOSTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				1AD1B9112EB4385200A88B25 /* Debug */,
@@ -598,7 +598,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		1AD1B9132EB4385200A88B25 /* Build configuration list for PBXNativeTarget "BluetoothTestingUITests" */ = {
+		1AD1B9132EB4385200A88B25 /* Build configuration list for PBXNativeTarget "WatchDog_iOSUITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				1AD1B9142EB4385200A88B25 /* Debug */,
