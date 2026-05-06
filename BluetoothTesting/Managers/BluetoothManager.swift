@@ -286,15 +286,6 @@ class BluetoothManager: NSObject {
         watchDogFirmwares[deviceID]?.displayString ?? "Firmware V?.?.??"
     }
 
-    /// True only after we've parsed a 19-byte DEVICESTATUS frame and the
-    /// firmware version meets the minimum that supports the
-    /// `disconnectSoundDisabled` bit (V1.11.26). Older firmware silently masks
-    /// the bit off, so the row is hidden to avoid offering a no-op setting.
-    func supportsDisconnectSoundToggle(for deviceID: UUID) -> Bool {
-        guard let fw = watchDogFirmwares[deviceID] else { return false }
-        return fw.isAtLeast(1, 11, 26)
-    }
-
     func deviceHeader(for deviceID: UUID) -> String? {
         guard let device = deviceLabel(for: deviceID) else { return nil }
         return "\(device), \(firmwareLabel(for: deviceID))"

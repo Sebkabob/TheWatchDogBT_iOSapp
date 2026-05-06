@@ -1233,18 +1233,16 @@ struct DevicePageView: View {
     @ViewBuilder
     private func pcbSettingsPanel(width: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 24) {
-            if bluetoothManager.supportsDisconnectSoundToggle(for: deviceID) {
-                Toggle(isOn: disconnectSoundDisabledBinding) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(loc.t(.disableDisconnectSound))
-                            .font(.subheadline)
-                        Text(loc.t(.disableDisconnectSoundCaption))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
+            Toggle(isOn: disconnectSoundDisabledBinding) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(loc.t(.disableDisconnectSound))
+                        .font(.subheadline)
+                    Text(loc.t(.disableDisconnectSoundCaption))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
-                .tint(.red)
             }
+            .tint(.red)
 
             Toggle(isOn: alarmDisabledBinding) {
                 VStack(alignment: .leading, spacing: 2) {
