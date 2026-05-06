@@ -16,9 +16,16 @@ struct DevicePageView: View {
     private let loc = LocalizationManager.shared
     
     let deviceID: UUID
-    var onOverviewRequest: (() -> Void)? = nil
     var onSettingsModeChange: ((Bool) -> Void)? = nil
     var animateEntrance: Bool = false
+    /// When non-nil, the page renders a DemoSession instead of a real bonded
+    /// device: `isDeviceConnected` and `isDeviceInRange` are forced true, the
+    /// name is read/written through the session, and Forget/Disconnect call
+    /// `onDemoExit` instead of the BLE flow.
+    var demoSession: DemoSession? = nil
+    var onDemoExit: (() -> Void)? = nil
+
+    private var isDemoMode: Bool { demoSession != nil }
 
     @State private var controlsRevealed = true
     @State private var isLocked = true
@@ -28,7 +35,6 @@ struct DevicePageView: View {
     
     // Sheets
     @State private var showMotionLogs = false
-    @State private var showBatteryDiag = false
     
     // Track model visibility with animation
     @State private var showModel = false
@@ -56,10 +62,7 @@ struct DevicePageView: View {
     @State private var showShareSheet = false
 
     // Diagnostic flow
-    @State private var isFetchingDiagnostic = false
-    @State private var diagnosticSnapshot: DiagnosticSnapshot?
     @State private var showDiagnostic = false
-    @State private var diagnosticErrorMessage: String?
 
     // Settings mode (model slides right, settings panel fades in on the left)
     @State private var inSettingsMode = false
@@ -74,12 +77,13 @@ struct DevicePageView: View {
 
     // MARK: - Init
 
-    init(bluetoothManager: BluetoothManager, deviceID: UUID, onOverviewRequest: (() -> Void)? = nil, onSettingsModeChange: ((Bool) -> Void)? = nil, animateEntrance: Bool = false) {
+    init(bluetoothManager: BluetoothManager, deviceID: UUID, onSettingsModeChange: ((Bool) -> Void)? = nil, animateEntrance: Bool = false, demoSession: DemoSession? = nil, onDemoExit: (() -> Void)? = nil) {
         self.bluetoothManager = bluetoothManager
         self.deviceID = deviceID
-        self.onOverviewRequest = onOverviewRequest
         self.onSettingsModeChange = onSettingsModeChange
         self.animateEntrance = animateEntrance
+        self.demoSession = demoSession
+        self.onDemoExit = onDemoExit
         _controlsRevealed = State(initialValue: !animateEntrance)
     }
 
@@ -87,12 +91,14 @@ struct DevicePageView: View {
     
     /// Whether THIS device is the currently connected device
     private var isDeviceConnected: Bool {
-        bluetoothManager.connectedDevice?.id == deviceID
+        if isDemoMode { return true }
+        return bluetoothManager.connectedDevice?.id == deviceID
     }
-    
+
     /// Whether this device is currently seen via BLE advertisements OR is connected.
     /// Connected devices stop advertising, so connected == in range.
     private var isDeviceInRange: Bool {
+        if isDemoMode { return true }
         if isDeviceConnected { return true }
         if isConnectingThisDevice { return true }
         // Check bond manager for recent advertisement
@@ -102,16 +108,17 @@ struct DevicePageView: View {
         // Also check discovered devices directly
         return bluetoothManager.discoveredDevices.contains(where: { $0.id == deviceID })
     }
-    
+
     /// Whether the connect button should be enabled
     private var canConnect: Bool {
         if isDeviceConnected { return false }
         if isConnectingThisDevice { return false }
         return isDeviceInRange
     }
-    
+
     /// Display name for the device
     private var displayName: String {
+        if let demo = demoSession { return demo.name }
         if let device = bluetoothManager.connectedDevice, device.id == deviceID {
             return nameManager.getDisplayName(deviceID: device.id, advertisingName: device.name)
         }
@@ -120,9 +127,10 @@ struct DevicePageView: View {
         }
         return "WatchDog"
     }
-    
+
     private var isShowingLiveDeviceState: Bool {
-        bluetoothManager.connectedDevice?.id == deviceID && bluetoothManager.hasReceivedInitialState
+        if isDemoMode { return true }
+        return bluetoothManager.connectedDevice?.id == deviceID && bluetoothManager.hasReceivedInitialState
     }
 
     private var statusText: String {
@@ -262,7 +270,7 @@ struct DevicePageView: View {
             .padding(.bottom, 10)
             .opacity((controlsRevealed && !inSettingsMode) ? 1 : 0)
             .animation(.easeInOut(duration: 0.4), value: controlsRevealed)
-            .animation(.easeInOut(duration: 0.3), value: inSettingsMode)
+            .animation(.easeInOut(duration: 0.2), value: inSettingsMode)
 
             // MARK: 3D Model Section with Debug Info
             ZStack(alignment: .leading) {
@@ -392,33 +400,17 @@ struct DevicePageView: View {
                             Divider()
 
                             Button {
-                                showBatteryDiag = true
+                                showDiagnostic = true
                             } label: {
                                 HStack(spacing: 4) {
-                                    Image(systemName: "battery.100.bolt")
-                                    Text("Gauge Health")
-                                }
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundColor(.orange)
-                            }
-                            .buttonStyle(.plain)
-
-                            Button {
-                                performDiagnostic()
-                            } label: {
-                                HStack(spacing: 4) {
-                                    if isFetchingDiagnostic {
-                                        ProgressView().scaleEffect(0.5)
-                                    } else {
-                                        Image(systemName: "stethoscope")
-                                    }
+                                    Image(systemName: "stethoscope")
                                     Text("Diagnostics")
                                 }
                                 .font(.system(size: 9, weight: .semibold))
-                                .foregroundColor(.yellow)
+                                .foregroundColor(isDeviceConnected ? .yellow : .gray)
                             }
                             .buttonStyle(.plain)
-                            .disabled(isFetchingDiagnostic)
+                            .disabled(!isDeviceConnected)
                         }
                         .padding(8)
                         .background(Color(.systemBackground).opacity(0.9))
@@ -432,7 +424,7 @@ struct DevicePageView: View {
                     }
                     .opacity((controlsRevealed && !inSettingsMode) ? 1 : 0)
                     .animation(.easeInOut(duration: 0.4), value: controlsRevealed)
-                    .animation(.easeInOut(duration: 0.3), value: inSettingsMode)
+                    .animation(.easeInOut(duration: 0.2), value: inSettingsMode)
                 }
             }
             .animation(.easeInOut(duration: 0.5), value: isDeviceInRange)
@@ -541,18 +533,13 @@ struct DevicePageView: View {
             .background(Color(.systemBackground))
             .opacity((controlsRevealed && !inSettingsMode) ? 1 : 0)
             .animation(.easeInOut(duration: 0.4), value: controlsRevealed)
-            .animation(.easeInOut(duration: 0.3), value: inSettingsMode)
+            .animation(.easeInOut(duration: 0.2), value: inSettingsMode)
         }
         .statusBar(hidden: true)
         .overlay(alignment: .topLeading) { settingsModeOverlay }
         .sheet(isPresented: $showMotionLogs) {
             NavigationStack {
                 MotionLogsView(bluetoothManager: bluetoothManager, deviceID: deviceID)
-            }
-        }
-        .sheet(isPresented: $showBatteryDiag) {
-            NavigationStack {
-                BatteryDiagnosticView(bluetoothManager: bluetoothManager)
             }
         }
         .onAppear {
@@ -645,47 +632,14 @@ struct DevicePageView: View {
                 ShareSheet(activityItems: [url])
             }
         }
-        .sheet(isPresented: $showDiagnostic, onDismiss: { diagnosticSnapshot = nil }) {
-            if let snapshot = diagnosticSnapshot {
-                DeviceDiagnosticView(snapshot: snapshot)
-            }
-        }
-        .alert(
-            "Diagnostics Failed",
-            isPresented: Binding(
-                get: { diagnosticErrorMessage != nil },
-                set: { if !$0 { diagnosticErrorMessage = nil } }
-            )
-        ) {
-            Button(loc.t(.ok), role: .cancel) { diagnosticErrorMessage = nil }
-        } message: {
-            Text(diagnosticErrorMessage ?? "")
+        .sheet(isPresented: $showDiagnostic) {
+            DeviceDiagnosticView(bluetoothManager: bluetoothManager)
         }
         .alert(loc.t(.forgetTitle), isPresented: $showForgetConfirmation) {
             Button(loc.t(.cancel), role: .cancel) { }
             Button(loc.t(.forgetConfirm), role: .destructive) { forgetDevice() }
         } message: {
             Text(String(format: loc.t(.forgetMessage), displayName))
-        }
-    }
-
-    // MARK: - Diagnostic
-
-    private func performDiagnostic() {
-        guard !isFetchingDiagnostic else { return }
-        isFetchingDiagnostic = true
-        bluetoothManager.requestDiagnostic { result in
-            DispatchQueue.main.async {
-                isFetchingDiagnostic = false
-                switch result {
-                case .success(let snapshot):
-                    diagnosticSnapshot = snapshot
-                    showDiagnostic = true
-                case .failure(let error):
-                    diagnosticErrorMessage = (error as? LocalizedError)?.errorDescription
-                        ?? "No response from device."
-                }
-            }
         }
     }
 
@@ -731,6 +685,10 @@ struct DevicePageView: View {
     }
     
     private func disconnectDevice() {
+        if isDemoMode {
+            onDemoExit?()
+            return
+        }
         if let device = bluetoothManager.connectedDevice, device.id == deviceID {
             Log.info(.view, "User disconnecting from \(device.name)")
             // Do NOT set suppressAutoReconnect here — MainAppView.ensureScanningActive()
@@ -805,6 +763,13 @@ struct DevicePageView: View {
         settingsManager.updateSettings(armed: newArmed)
         settingsManager.setPersistedArmed(newArmed, for: deviceID)
         bluetoothManager.sendSettings()
+        // Demo: keep the BluetoothManager's deviceState bit aligned with the
+        // toggle so `syncLockedFromDeviceIfApplicable` doesn't immediately
+        // bounce the lock back. Real flow does this implicitly via the
+        // firmware response.
+        if isDemoMode {
+            bluetoothManager.deviceState = (bluetoothManager.deviceState & ~0x01) | (newArmed ? 0x01 : 0x00)
+        }
         isLocked = newArmed
 
         isHolding = false
@@ -905,17 +870,17 @@ struct DevicePageView: View {
             // settings panel + slide the model back. Two-stage so each
             // animation gets its full duration without the next one starting
             // before it lands.
-            let exitDelay: Double = showingPCBView ? 0.2 : 0
+            let exitDelay: Double = showingPCBView ? 0.14 : 0
             if showingPCBView {
-                withAnimation(.easeInOut(duration: 0.2)) {
+                withAnimation(.easeInOut(duration: 0.14)) {
                     showingPCBView = false
                 }
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + exitDelay) {
-                withAnimation(.easeInOut(duration: 0.2)) {
+                withAnimation(.easeInOut(duration: 0.14)) {
                     settingsContentVisible = false
                 }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
                     inSettingsMode = false
                     onSettingsModeChange?(false)
                 }
@@ -924,12 +889,16 @@ struct DevicePageView: View {
             // Enter: kick off slide + control fade, then fade panel in once
             // the model has cleared the left half of the screen
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            settingsManager.loadDeviceSettings(for: deviceID)
+            // Demo skips the per-device load so the snapshotted in-memory
+            // state set up in SettingsManager.enterDemoMode is preserved.
+            if !isDemoMode {
+                settingsManager.loadDeviceSettings(for: deviceID)
+            }
             editableName = displayName
             inSettingsMode = true
             onSettingsModeChange?(true)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                withAnimation(.easeInOut(duration: 0.25)) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.27) {
+                withAnimation(.easeInOut(duration: 0.18)) {
                     settingsContentVisible = true
                 }
             }
@@ -988,6 +957,16 @@ struct DevicePageView: View {
         )
     }
 
+    private var disconnectSoundDisabledBinding: Binding<Bool> {
+        Binding(
+            get: { settingsManager.disconnectSoundDisabled },
+            set: { newValue in
+                settingsManager.updateSettings(disconnectSoundDisabled: newValue)
+                if isDeviceConnected { bluetoothManager.sendSettings() }
+            }
+        )
+    }
+
     private var ledBrightnessBinding: Binding<Double> {
         Binding(
             get: { Double(settingsManager.ledBrightness) },
@@ -1019,6 +998,10 @@ struct DevicePageView: View {
     }
 
     private func forgetDevice() {
+        if isDemoMode {
+            onDemoExit?()
+            return
+        }
         let completion: (Result<Void, Error>) -> Void = { result in
             switch result {
             case .success:
@@ -1039,6 +1022,10 @@ struct DevicePageView: View {
         let limited = String(value.prefix(maxNameLength))
         if limited != editableName { editableName = limited }
         let trimmed = limited.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let demo = demoSession {
+            demo.name = trimmed.isEmpty ? "DemoDog" : trimmed
+            return
+        }
         if trimmed.isEmpty {
             nameManager.removeCustomName(deviceID: deviceID)
         } else {
@@ -1131,17 +1118,28 @@ struct DevicePageView: View {
                         .opacity(settingsManager.alarmDisabled ? 0.4 : 1)
 
                         VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text(loc.t(.alarmDuration))
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                                Text("\(settingsManager.alarmDuration)s")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                                    .monospacedDigit()
+                            Stepper(
+                                value: Binding(
+                                    get: { settingsManager.alarmDuration },
+                                    set: { newValue in
+                                        settingsManager.updateSettings(alarmDuration: newValue)
+                                        if isDeviceConnected { bluetoothManager.sendSettings() }
+                                    }
+                                ),
+                                in: 0...30,
+                                step: 1
+                            ) {
+                                HStack {
+                                    Text(loc.t(.alarmDuration))
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                    Spacer()
+                                    Text("\(settingsManager.alarmDuration)s")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                        .monospacedDigit()
+                                }
                             }
-                            Slider(value: alarmDurationBinding, in: 0...30, step: 1)
                             Text(loc.t(.alarmDurationCaption))
                                 .font(.caption)
                                 .foregroundColor(.secondary)
@@ -1182,7 +1180,13 @@ struct DevicePageView: View {
                             .disabled(!isDeviceConnected || settingsManager.alarmDisabled)
                             .opacity(settingsManager.alarmDisabled ? 0.4 : 1)
 
-                            Button(action: { showForgetConfirmation = true }) {
+                            Button(action: {
+                                if isDemoMode {
+                                    forgetDevice()
+                                } else {
+                                    showForgetConfirmation = true
+                                }
+                            }) {
                                 HStack {
                                     Image(systemName: "trash.fill")
                                     Text(loc.t(.forgetDevice))
@@ -1229,6 +1233,19 @@ struct DevicePageView: View {
     @ViewBuilder
     private func pcbSettingsPanel(width: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 24) {
+            if bluetoothManager.supportsDisconnectSoundToggle(for: deviceID) {
+                Toggle(isOn: disconnectSoundDisabledBinding) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(loc.t(.disableDisconnectSound))
+                            .font(.subheadline)
+                        Text(loc.t(.disableDisconnectSoundCaption))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .tint(.red)
+            }
+
             Toggle(isOn: alarmDisabledBinding) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(loc.t(.disableAlarm))
@@ -1367,3 +1384,4 @@ struct CubeTestView: UIViewRepresentable {
         @objc func handleTap() { onTap?() }
     }
 }
+

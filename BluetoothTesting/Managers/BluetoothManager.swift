@@ -52,82 +52,6 @@ enum DiagnosticError: LocalizedError {
     }
 }
 
-enum AdvMode: Equatable {
-    case undirectedOpen
-    case directed
-    case undirectedWithFAL
-    case stopped
-    case unknown(UInt8)
-
-    init(rawValue: UInt8) {
-        switch rawValue {
-        case 0x00: self = .undirectedOpen
-        case 0x01: self = .directed
-        case 0x02: self = .undirectedWithFAL
-        case 0x03: self = .stopped
-        default:   self = .unknown(rawValue)
-        }
-    }
-
-    var displayName: String {
-        switch self {
-        case .undirectedOpen:    return "undirectedOpen"
-        case .directed:          return "directed"
-        case .undirectedWithFAL: return "undirectedWithFAL"
-        case .stopped:           return "stopped"
-        case .unknown(let v):    return String(format: "unknown (0x%02X)", v)
-        }
-    }
-}
-
-struct DiagnosticSnapshot {
-    let bondedPeerCount: UInt8
-    let advMode: AdvMode
-    let authFailCount: UInt8
-    let pendingUnbond: Bool
-    let bondedPeerAddrType: UInt8   // 0xFF means no bond
-    let bondedPeerAddress: [UInt8]  // 6 bytes (LSB-first as received)
-    let loyaltyFwVersion: UInt8
-    let rawBytes: [UInt8]
-
-    var hasBond: Bool { bondedPeerAddrType != 0xFF }
-
-    var bondedPeerAddressString: String {
-        bondedPeerAddress.reversed()
-            .map { String(format: "%02X", $0) }
-            .joined(separator: ":")
-    }
-
-    var addrTypeDescription: String {
-        switch bondedPeerAddrType {
-        case 0x00: return "public"
-        case 0x01: return "random"
-        case 0xFF: return "none"
-        default:   return String(format: "0x%02X", bondedPeerAddrType)
-        }
-    }
-
-    var rawHexString: String {
-        rawBytes.map { String(format: "%02X", $0) }.joined(separator: " ")
-    }
-
-    /// Expects a 13-byte payload: [0xE5, fwVer, peerCount, advMode, authFail, pendingUnbond, addrType, addr0..addr5]
-    init?(data: Data) {
-        guard data.count == 13, data[0] == BluetoothManager.RESP_DIAGNOSTIC else {
-            return nil
-        }
-        let bytes = [UInt8](data)
-        self.rawBytes = bytes
-        self.loyaltyFwVersion   = bytes[1]
-        self.bondedPeerCount    = bytes[2]
-        self.advMode            = AdvMode(rawValue: bytes[3])
-        self.authFailCount      = bytes[4]
-        self.pendingUnbond      = bytes[5] != 0
-        self.bondedPeerAddrType = bytes[6]
-        self.bondedPeerAddress  = Array(bytes[7..<13])
-    }
-}
-
 struct WatchDogFirmware: Equatable {
     let major: UInt8
     let main: UInt8
@@ -135,6 +59,13 @@ struct WatchDogFirmware: Equatable {
 
     var displayString: String {
         String(format: "Firmware V%d.%d.%02d", major, main, v2)
+    }
+
+    /// True when this firmware is at least `(major, main, v2)`.
+    func isAtLeast(_ major: UInt8, _ main: UInt8, _ v2: UInt8) -> Bool {
+        if self.major != major { return self.major > major }
+        if self.main != main { return self.main > main }
+        return self.v2 >= v2
     }
 }
 
@@ -203,9 +134,6 @@ class BluetoothManager: NSObject {
     var connectionStartTime: Date?
     var connectionDuration: TimeInterval = 0
 
-    // Battery diagnostic (BQ27427 fuel gauge telemetry)
-    var batteryDiagnostic: BatteryDiagnostic?
-
     // Motion log sync state
     var pendingEventCount: Int = 0
     var isSyncingMotionLogs: Bool = false
@@ -251,7 +179,6 @@ class BluetoothManager: NSObject {
     private let RESP_NO_MORE_EVENTS: UInt8  = 0xE2
     private let RESP_LOG_CLEARED: UInt8     = 0xE3
     private let RESP_UNPAIR_ACK: UInt8      = 0xE4
-    static let RESP_DIAGNOSTIC: UInt8       = 0xE5
     private let MOTION_ALERT_MARKER: UInt8  = 0xFF
 
     // Motion log command opcodes
@@ -261,8 +188,9 @@ class BluetoothManager: NSObject {
     private let CMD_ACK_EVENT: UInt8         = 0xF3
     private let CMD_PING: UInt8 = 0xFA
     private let CMD_RESET_DEVICE: UInt8 = 0xFB
-    private let CMD_DRAIN_MODE: UInt8 = 0xFC
-    static let CMD_READ_DIAGNOSTIC: UInt8 = 0xFE
+    /// New TLV diagnostic request — replaces the legacy 0xFE/0xE5 single-snapshot path.
+    /// Payload: `[0xF4, section_mask]` (after the 4-byte loyalty token, prepended by sendData).
+    static let CMD_REQUEST_DIAG: UInt8 = 0xF4
 
     // ── Loyalty token opcodes (iOS → APPTOWD) ─────────────────────────
     private let CMD_UNBOND_DEVICE: UInt8 = 0xC0
@@ -298,9 +226,14 @@ class BluetoothManager: NSObject {
     private let unpairAckTimeout: TimeInterval = 2.0
 
     // ── Diagnostic flow state ────────────────────────────────────────
-    private var diagnosticCompletion: ((Result<DiagnosticSnapshot, Error>) -> Void)?
+    private var diagnosticCompletion: ((Result<DiagnosticReport, Error>) -> Void)?
     private var diagnosticTimer: Timer?
     private let diagnosticTimeout: TimeInterval = 2.0
+    /// Throttle floor for back-to-back diagnostic requests. Set below the
+    /// view's 250 ms poll cadence so polling isn't dropped, but high enough
+    /// to coalesce accidental double-taps.
+    private let diagnosticMinInterval: TimeInterval = 0.2
+    private var lastDiagnosticRequestAt: Date?
 
     // ── Unpair-while-disconnected state ──────────────────────────────
     // Set by unpairDeviceWhileDisconnected; consumed by didDiscoverCharacteristicsFor
@@ -309,6 +242,34 @@ class BluetoothManager: NSObject {
     private var pendingUnbondCompletion:   ((Result<Void, Error>) -> Void)?
     private var unpairConnectTimer:        Timer?
     private let unpairConnectTimeout:      TimeInterval = 8.0
+
+    // ── Demo mode ────────────────────────────────────────────────────
+    /// True while a DemoSession is active. Every BLE action (`connect`,
+    /// `disconnect`, `sendSettings`, scanning, etc.) is short-circuited so the
+    /// demo never touches CoreBluetooth, and a snapshot of the observable
+    /// state is restored on exit. Read-only outside the manager — flip it via
+    /// `enterDemoMode()` / `exitDemoMode()`.
+    private(set) var isDemoMode: Bool = false
+    private var demoSnapshot: DemoSnapshot?
+
+    private struct DemoSnapshot {
+        var batteryLevel: Int
+        var deviceState: UInt8
+        var hasReceivedInitialState: Bool
+        var isCharging: Bool
+        var isCablePlugged: Bool
+        var isBatteryFull: Bool
+        var isAlarmActive: Bool
+        var isFindMyActive: Bool
+        var mlcState: MLCState
+        var lastMotionType: MotionEventType
+        var debugCurrentDraw: Double
+        var debugVoltage: Double
+        var debugAccelX: Float
+        var debugAccelY: Float
+        var debugAccelZ: Float
+        var suppressAutoReconnect: Bool
+    }
     
     var deviceStateText: String {
         let isArmed = (deviceState & 0x01) != 0
@@ -323,6 +284,15 @@ class BluetoothManager: NSObject {
     // Falls back when older 16-byte status frames carry no version bytes.
     func firmwareLabel(for deviceID: UUID) -> String {
         watchDogFirmwares[deviceID]?.displayString ?? "Firmware V?.?.??"
+    }
+
+    /// True only after we've parsed a 19-byte DEVICESTATUS frame and the
+    /// firmware version meets the minimum that supports the
+    /// `disconnectSoundDisabled` bit (V1.11.26). Older firmware silently masks
+    /// the bit off, so the row is hidden to avoid offering a no-op setting.
+    func supportsDisconnectSoundToggle(for deviceID: UUID) -> Bool {
+        guard let fw = watchDogFirmwares[deviceID] else { return false }
+        return fw.isAtLeast(1, 11, 26)
     }
 
     func deviceHeader(for deviceID: UUID) -> String? {
@@ -351,6 +321,7 @@ class BluetoothManager: NSObject {
     /// The ONE method to ensure scanning is active. Idempotent — safe to call
     /// from anywhere, any number of times. Never stops an existing scan.
     func ensureScanning() {
+        guard !isDemoMode else { return }
         guard isBluetoothReady else {
             Log.warn(.ble, "ensureScanning: BT not ready")
             return
@@ -401,11 +372,13 @@ class BluetoothManager: NSObject {
     // MARK: - Connection
     
     func connect(to device: BluetoothDevice) {
+        guard !isDemoMode else { return }
         beginConnection(device.peripheral, name: device.name, deviceID: device.id)
     }
 
     /// Connect using a device UUID. Resolves the peripheral from multiple sources.
     func connectByID(_ deviceID: UUID) {
+        guard !isDemoMode else { return }
         // Already connecting to this device?
         if isConnecting && pendingConnectionPeripheral?.identifier == deviceID {
             Log.warn(.ble, "Already connecting to this device")
@@ -495,6 +468,7 @@ class BluetoothManager: NSObject {
     }
     
     func disconnect(from device: BluetoothDevice) {
+        guard !isDemoMode else { return }
         Log.info(.ble, "Disconnecting from \(device.name)")
 
         suppressAutoReconnect = true
@@ -530,7 +504,104 @@ class BluetoothManager: NSObject {
         lastRSSIUpdate.removeAll()
         Log.ok(.ble, "Wiped all BLE state")
     }
-    
+
+    // MARK: - Demo Mode
+
+    /// Disconnects any active peripheral, halts scanning, and overrides the
+    /// observable state so the demo always renders as "connected, idle, full
+    /// battery" without any BLE traffic. Every BLE method on this manager is
+    /// guarded on `isDemoMode` so stray callers can't accidentally talk to a
+    /// peripheral while a session is open. The companion call into
+    /// `SettingsManager.enterDemoMode(deviceID:)` happens on the caller side
+    /// (`MainAppView`) so both flips remain co-located with the rest of the
+    /// demo lifecycle.
+    func enterDemoMode() {
+        guard !isDemoMode else { return }
+        demoSnapshot = DemoSnapshot(
+            batteryLevel: batteryLevel,
+            deviceState: deviceState,
+            hasReceivedInitialState: hasReceivedInitialState,
+            isCharging: isCharging,
+            isCablePlugged: isCablePlugged,
+            isBatteryFull: isBatteryFull,
+            isAlarmActive: isAlarmActive,
+            isFindMyActive: isFindMyActive,
+            mlcState: mlcState,
+            lastMotionType: lastMotionType,
+            debugCurrentDraw: debugCurrentDraw,
+            debugVoltage: debugVoltage,
+            debugAccelX: debugAccelX,
+            debugAccelY: debugAccelY,
+            debugAccelZ: debugAccelZ,
+            suppressAutoReconnect: suppressAutoReconnect
+        )
+
+        if let device = connectedDevice {
+            centralManager.cancelPeripheralConnection(device.peripheral)
+        }
+        if let pending = pendingConnectionPeripheral {
+            centralManager.cancelPeripheralConnection(pending)
+        }
+        if isScanning {
+            centralManager.stopScan()
+            isScanning = false
+            staleDeviceTimer?.invalidate()
+            staleDeviceTimer = nil
+        }
+        cleanupConnectionState()
+
+        suppressAutoReconnect = true
+        isDemoMode = true
+
+        batteryLevel = 100
+        deviceState = 0
+        hasReceivedInitialState = true
+        isCharging = false
+        isCablePlugged = false
+        isBatteryFull = false
+        isAlarmActive = false
+        isFindMyActive = false
+        mlcState = .stationary
+        lastMotionType = .none
+        debugCurrentDraw = 0
+        debugVoltage = 0
+        debugAccelX = 0
+        debugAccelY = 0
+        debugAccelZ = 0
+        Log.info(.ble, "Entered demo mode")
+    }
+
+    /// Restores the observable state captured at `enterDemoMode()` and resumes
+    /// scanning if Bluetooth is ready. Always called in tandem with
+    /// `SettingsManager.exitDemoMode()` from `MainAppView`.
+    func exitDemoMode() {
+        guard isDemoMode else { return }
+        isDemoMode = false
+        if let snap = demoSnapshot {
+            batteryLevel = snap.batteryLevel
+            deviceState = snap.deviceState
+            hasReceivedInitialState = snap.hasReceivedInitialState
+            isCharging = snap.isCharging
+            isCablePlugged = snap.isCablePlugged
+            isBatteryFull = snap.isBatteryFull
+            isAlarmActive = snap.isAlarmActive
+            isFindMyActive = snap.isFindMyActive
+            mlcState = snap.mlcState
+            lastMotionType = snap.lastMotionType
+            debugCurrentDraw = snap.debugCurrentDraw
+            debugVoltage = snap.debugVoltage
+            debugAccelX = snap.debugAccelX
+            debugAccelY = snap.debugAccelY
+            debugAccelZ = snap.debugAccelZ
+            suppressAutoReconnect = snap.suppressAutoReconnect
+        }
+        demoSnapshot = nil
+        Log.info(.ble, "Exited demo mode")
+        if isBluetoothReady {
+            ensureScanning()
+        }
+    }
+
     /// Reset all connection-related state. Call on main thread only.
     private func cleanupConnectionState() {
         connectionTimer?.invalidate()
@@ -552,7 +623,6 @@ class BluetoothManager: NSObject {
         isFindMyActive = false
         mlcState = .unknown
         lastMotionType = .none
-        batteryDiagnostic = nil
         alarmClearTimer?.invalidate()
         alarmClearTimer = nil
         debugCurrentDraw = 0.0
@@ -612,6 +682,7 @@ class BluetoothManager: NSObject {
     }
 
     func sendSettings() {
+        guard !isDemoMode else { return }
         let settingsByte = settingsManager.encodeSettings()
         let deviceInfoByte = settingsManager.encodeDeviceInfo()
         let alarmDurationByte = settingsManager.encodeAlarmDuration()
@@ -622,6 +693,7 @@ class BluetoothManager: NSObject {
     }
 
     func sendPing() {
+        guard !isDemoMode else { return }
         guard connectedDevice != nil else {
             Log.err(.ble, "Cannot ping · not connected")
             return
@@ -639,26 +711,6 @@ class BluetoothManager: NSObject {
         let data = Data([CMD_RESET_DEVICE])
         sendData(data)
         Log.tx(.ble, "Sent device reset command")
-    }
-
-    func sendStartDrain() {
-        guard connectedDevice != nil else {
-            Log.err(.battery, "Cannot start drain · not connected")
-            return
-        }
-        let data = Data([CMD_DRAIN_MODE, 0x01])
-        sendData(data)
-        Log.tx(.battery, "Drain mode · START")
-    }
-
-    func sendStopDrain() {
-        guard connectedDevice != nil else {
-            Log.err(.battery, "Cannot stop drain · not connected")
-            return
-        }
-        let data = Data([CMD_DRAIN_MODE, 0x00])
-        sendData(data)
-        Log.tx(.battery, "Drain mode · STOP")
     }
 
     // MARK: - Unpair (0xFD → 0xE4 0x01)
@@ -878,11 +930,15 @@ class BluetoothManager: NSObject {
         }
     }
 
-    // MARK: - Diagnostic (0xFE → 0xE5 …)
+    // MARK: - Diagnostic (0xF4 → BATTERYDIAG TLV)
 
-    /// Request a one-shot diagnostic snapshot from the WatchDog.
-    /// `completion` fires on the main thread with the parsed snapshot or an error.
-    func requestDiagnostic(completion: @escaping (Result<DiagnosticSnapshot, Error>) -> Void) {
+    /// Request a one-shot TLV diagnostic from the WatchDog. The response
+    /// arrives as a single notification on the BATTERYDIAG characteristic.
+    /// `completion` fires on the main thread with the parsed report or an error.
+    /// Throttled to one request per `diagnosticMinInterval` (firmware caches
+    /// battery state on a 1 s tick — faster requests just return the same data).
+    func requestDiagnostic(sectionMask: UInt8 = 0xFF,
+                           completion: @escaping (Result<DiagnosticReport, Error>) -> Void) {
         guard connectedDevice?.peripheral != nil,
               writeCharacteristic != nil else {
             completion(.failure(DiagnosticError.notConnected))
@@ -894,10 +950,19 @@ class BluetoothManager: NSObject {
             return
         }
 
+        if let last = lastDiagnosticRequestAt,
+           Date().timeIntervalSince(last) < diagnosticMinInterval {
+            Log.warn(.diag, "Throttled · last request <1s ago")
+            // Don't error — this is a UX guardrail, not a failure. Caller's
+            // completion never fires; UI should debounce its own button.
+            return
+        }
+        lastDiagnosticRequestAt = Date()
+
         diagnosticCompletion = completion
 
-        sendData(Data([BluetoothManager.CMD_READ_DIAGNOSTIC]))
-        Log.tx(.diag, "Diagnostic request (0xFE)")
+        sendData(Data([BluetoothManager.CMD_REQUEST_DIAG, sectionMask]))
+        Log.tx(.diag, String(format: "Diagnostic request (0xF4 mask=0x%02X)", sectionMask))
 
         DispatchQueue.main.async {
             self.diagnosticTimer?.invalidate()
@@ -911,16 +976,16 @@ class BluetoothManager: NSObject {
 
     private func handleDiagnosticResponse(data: Data) {
         guard diagnosticCompletion != nil else { return }
-        guard let snapshot = DiagnosticSnapshot(data: data) else {
-            Log.err(.diag, "Malformed response · \(data.map { String(format: "%02X", $0) }.joined(separator: " "))")
+        guard let report = DiagnosticReport(data) else {
+            Log.err(.diag, "Malformed TLV · \(data.map { String(format: "%02X", $0) }.joined(separator: " "))")
             finishDiagnostic(result: .failure(DiagnosticError.malformedResponse))
             return
         }
-        Log.ok(.diag, "Snapshot [\(snapshot.rawHexString)]")
-        finishDiagnostic(result: .success(snapshot))
+        Log.ok(.diag, "TLV v\(report.formatVersion) · \(report.sections.count) section(s)")
+        finishDiagnostic(result: .success(report))
     }
 
-    private func finishDiagnostic(result: Result<DiagnosticSnapshot, Error>) {
+    private func finishDiagnostic(result: Result<DiagnosticReport, Error>) {
         guard let completion = diagnosticCompletion else { return }
         diagnosticCompletion = nil
         diagnosticTimer?.invalidate()
@@ -1407,12 +1472,11 @@ extension BluetoothManager: CBPeripheralDelegate {
 
         guard let data = characteristic.value, data.count >= 1 else { return }
 
-        // ─── Battery diagnostic characteristic (BQ27427 telemetry) ───
+        // ─── BATTERYDIAG characteristic — now carries the TLV diagnostic blob ───
+        // Firmware no longer auto-pushes; this only fires in response to 0xF4.
         if characteristic.uuid == batteryDiagCharacteristicUUID {
-            if let diag = BatteryDiagnostic(data) {
-                DispatchQueue.main.async {
-                    self.batteryDiagnostic = diag
-                }
+            DispatchQueue.main.async {
+                self.handleDiagnosticResponse(data: data)
             }
             return
         }
@@ -1473,15 +1537,6 @@ extension BluetoothManager: CBPeripheralDelegate {
                 DispatchQueue.main.async {
                     self.handleUnpairAck()
                 }
-            }
-            return
-        }
-
-        // ─── Diagnostic response (0xE5 …) ───
-        if firstByte == BluetoothManager.RESP_DIAGNOSTIC {
-            let snapshot = data
-            DispatchQueue.main.async {
-                self.handleDiagnosticResponse(data: snapshot)
             }
             return
         }

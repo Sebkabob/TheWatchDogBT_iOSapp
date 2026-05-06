@@ -88,7 +88,7 @@ struct Motion3DView: View {
 
     /// Push the current BLE + settings snapshot into the animator's input state.
     private func syncAnimatorState() {
-        ledAnimator.isConnected    = bluetoothManager.connectedDevice != nil
+        ledAnimator.isConnected    = bluetoothManager.connectedDevice != nil || bluetoothManager.isDemoMode
         ledAnimator.isArmed        = settingsManager.isArmed
         ledAnimator.lightsEnabled  = settingsManager.lightsEnabled
         ledAnimator.alarmType      = settingsManager.alarmType

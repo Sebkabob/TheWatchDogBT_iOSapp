@@ -35,8 +35,41 @@ class SettingsManager {
     /// When true, the WatchDog suppresses the alarm entirely regardless of
     /// trigger conditions. Persisted per-device.
     var alarmDisabled: Bool = false
+    /// When true, the WatchDog skips the three-tone descending chime that
+    /// otherwise plays whenever the BLE link drops. Independent of
+    /// `alarmDisabled`. Firmware ≥ V1.11.26. Persisted per-device.
+    var disconnectSoundDisabled: Bool = false
     /// LED brightness in app units (1...100). Mapped to firmware's 1...255 on send.
     var ledBrightness: Int = 100
+
+    /// True while a DemoSession is active. Persistence calls (`saveDeviceSettings`,
+    /// `saveGlobalSettings`, `setPersistedArmed`) become no-ops so the demo's
+    /// settings live only in memory. The pre-demo state is snapshotted in
+    /// `enterDemoMode()` and restored verbatim by `exitDemoMode()`.
+    private(set) var isDemoMode: Bool = false
+    private var demoSnapshot: DemoSnapshot?
+
+    private struct DemoSnapshot {
+        var currentDeviceID: UUID?
+        var isArmed: Bool
+        var alarmType: AlarmType
+        var sensitivity: SensitivityLevel
+        var lightsEnabled: Bool
+        var loggingEnabled: Bool
+        var disableAlarmWhenConnected: Bool
+        var deviceName: String
+        var debugModeEnabled: Bool
+        var highPerformanceMode: Bool
+        var liveOrientationEnabled: Bool
+        var devModeUnlocked: Bool
+        var dataLoggingMode: Bool
+        var alarmTriggers: Set<MotionEventType>
+        var selectedPresetRawValue: String
+        var alarmDuration: Int
+        var alarmDisabled: Bool
+        var disconnectSoundDisabled: Bool
+        var ledBrightness: Int
+    }
 
     // UserDefaults keys — per-device settings
     private let armedKey = "watchdog_armed"
@@ -49,6 +82,7 @@ class SettingsManager {
     private let selectedPresetKey = "watchdog_selected_preset"
     private let alarmDurationKey = "watchdog_alarm_duration"
     private let alarmDisabledKey = "watchdog_alarm_disabled"
+    private let disconnectSoundDisabledKey = "watchdog_disconnect_sound_disabled"
     private let ledBrightnessKey = "watchdog_led_brightness"
 
     // UserDefaults keys — global settings
@@ -75,6 +109,7 @@ class SettingsManager {
 
     /// Write a device's armed state directly to UserDefaults without touching the shared in-memory state.
     func setPersistedArmed(_ value: Bool, for deviceID: UUID) {
+        guard !isDemoMode else { return }
         UserDefaults.standard.set(value, forKey: deviceKey(armedKey, deviceID))
     }
     
@@ -125,6 +160,7 @@ class SettingsManager {
     /// Encodes deviceInfo into a single byte (byte 13)
     /// Bit 0: High Performance Mode
     /// Bit 1: Alarm Disabled (1 = alarm fully suppressed regardless of triggers)
+    /// Bit 2: Disconnect Sound Disabled (1 = three-tone chime on BLE drop is suppressed; firmware ≥ V1.11.26)
     func encodeDeviceInfo() -> UInt8 {
         var byte: UInt8 = 0
         if highPerformanceMode {
@@ -132,6 +168,9 @@ class SettingsManager {
         }
         if alarmDisabled {
             byte |= (1 << 1)
+        }
+        if disconnectSoundDisabled {
+            byte |= (1 << 2)
         }
         return byte
     }
@@ -152,7 +191,8 @@ class SettingsManager {
     func decodeDeviceInfo(from byte: UInt8) {
         highPerformanceMode = (byte & (1 << 0)) != 0
         alarmDisabled = (byte & (1 << 1)) != 0
-        Log.info(.settings, "deviceInfo · highPerformance=\(highPerformanceMode) alarmDisabled=\(alarmDisabled)")
+        disconnectSoundDisabled = (byte & (1 << 2)) != 0
+        Log.info(.settings, "deviceInfo · highPerformance=\(highPerformanceMode) alarmDisabled=\(alarmDisabled) disconnectSoundDisabled=\(disconnectSoundDisabled)")
         saveDeviceSettings()
     }
 
@@ -246,6 +286,10 @@ class SettingsManager {
             ? ud.bool(forKey: deviceKey(alarmDisabledKey, deviceID))
             : false
 
+        disconnectSoundDisabled = ud.object(forKey: deviceKey(disconnectSoundDisabledKey, deviceID)) != nil
+            ? ud.bool(forKey: deviceKey(disconnectSoundDisabledKey, deviceID))
+            : false
+
         if ud.object(forKey: deviceKey(ledBrightnessKey, deviceID)) != nil {
             ledBrightness = max(1, min(100, ud.integer(forKey: deviceKey(ledBrightnessKey, deviceID))))
         } else {
@@ -254,6 +298,7 @@ class SettingsManager {
     }
 
     private func saveDeviceSettings() {
+        guard !isDemoMode else { return }
         guard let deviceID = currentDeviceID else { return }
         let ud = UserDefaults.standard
 
@@ -267,12 +312,14 @@ class SettingsManager {
         ud.set(selectedPresetRawValue, forKey: deviceKey(selectedPresetKey, deviceID))
         ud.set(alarmDuration, forKey: deviceKey(alarmDurationKey, deviceID))
         ud.set(alarmDisabled, forKey: deviceKey(alarmDisabledKey, deviceID))
+        ud.set(disconnectSoundDisabled, forKey: deviceKey(disconnectSoundDisabledKey, deviceID))
         ud.set(ledBrightness, forKey: deviceKey(ledBrightnessKey, deviceID))
     }
 
     // MARK: - Global Persistence
 
     private func saveGlobalSettings() {
+        guard !isDemoMode else { return }
         let ud = UserDefaults.standard
         ud.set(deviceName, forKey: deviceNameKey)
         ud.set(debugModeEnabled, forKey: debugModeKey)
@@ -299,7 +346,8 @@ class SettingsManager {
                        highPerformance: Bool? = nil, liveOrientation: Bool? = nil,
                        dataLogging: Bool? = nil, triggers: Set<MotionEventType>? = nil,
                        preset: String? = nil, alarmDuration: Int? = nil,
-                       alarmDisabled: Bool? = nil, ledBrightness: Int? = nil) {
+                       alarmDisabled: Bool? = nil, disconnectSoundDisabled: Bool? = nil,
+                       ledBrightness: Int? = nil) {
         if let name = name { deviceName = name }
         if let armed = armed { isArmed = armed }
         if let alarm = alarm { alarmType = alarm }
@@ -317,6 +365,9 @@ class SettingsManager {
             self.alarmDuration = max(0, min(30, alarmDuration))
         }
         if let alarmDisabled = alarmDisabled { self.alarmDisabled = alarmDisabled }
+        if let disconnectSoundDisabled = disconnectSoundDisabled {
+            self.disconnectSoundDisabled = disconnectSoundDisabled
+        }
         if let ledBrightness = ledBrightness {
             self.ledBrightness = max(1, min(100, ledBrightness))
         }
@@ -344,7 +395,8 @@ class SettingsManager {
         let bases = [
             armedKey, alarmTypeKey, sensitivityKey, lightsKey, loggingKey,
             disableAlarmWhenConnectedKey, alarmTriggersKey, selectedPresetKey,
-            alarmDurationKey, alarmDisabledKey, ledBrightnessKey
+            alarmDurationKey, alarmDisabledKey, disconnectSoundDisabledKey,
+            ledBrightnessKey
         ]
         for key in ud.dictionaryRepresentation().keys {
             if bases.contains(where: { key.hasSuffix("_\($0)") }) {
@@ -362,12 +414,91 @@ class SettingsManager {
         selectedPresetRawValue = "maxSecurity"
         alarmDuration = 2
         alarmDisabled = false
+        disconnectSoundDisabled = false
         ledBrightness = 100
         highPerformanceMode = devModeUnlocked
 
         if currentDeviceID != nil {
             saveDeviceSettings()
         }
+    }
+
+    // MARK: - Demo Mode
+
+    /// Snapshots the current observable state, then resets the user-facing
+    /// device settings (alarm, sensitivity, LED, etc.) to defaults so the demo
+    /// starts clean. Persistence is suppressed for the lifetime of demo mode
+    /// — every save in this manager guards on `isDemoMode`. The dev-mode
+    /// flags (`debugModeEnabled`, `devModeUnlocked`, `highPerformanceMode`,
+    /// `dataLoggingMode`) are preserved unchanged so a power user who entered
+    /// demo with dev mode on still sees the debug overlay during the demo.
+    func enterDemoMode(deviceID: UUID) {
+        guard !isDemoMode else { return }
+        demoSnapshot = DemoSnapshot(
+            currentDeviceID: currentDeviceID,
+            isArmed: isArmed,
+            alarmType: alarmType,
+            sensitivity: sensitivity,
+            lightsEnabled: lightsEnabled,
+            loggingEnabled: loggingEnabled,
+            disableAlarmWhenConnected: disableAlarmWhenConnected,
+            deviceName: deviceName,
+            debugModeEnabled: debugModeEnabled,
+            highPerformanceMode: highPerformanceMode,
+            liveOrientationEnabled: liveOrientationEnabled,
+            devModeUnlocked: devModeUnlocked,
+            dataLoggingMode: dataLoggingMode,
+            alarmTriggers: alarmTriggers,
+            selectedPresetRawValue: selectedPresetRawValue,
+            alarmDuration: alarmDuration,
+            alarmDisabled: alarmDisabled,
+            disconnectSoundDisabled: disconnectSoundDisabled,
+            ledBrightness: ledBrightness
+        )
+        isDemoMode = true
+        currentDeviceID = deviceID
+
+        isArmed = false
+        alarmType = .normal
+        sensitivity = .medium
+        lightsEnabled = true
+        loggingEnabled = false
+        disableAlarmWhenConnected = false
+        alarmTriggers = [.shaken, .impact, .freefall, .tilted, .doorOpening, .doorClosing]
+        selectedPresetRawValue = "maxSecurity"
+        alarmDuration = 2
+        alarmDisabled = false
+        disconnectSoundDisabled = false
+        ledBrightness = 100
+    }
+
+    /// Restores every observable property to the value captured at
+    /// `enterDemoMode()` and re-enables persistence. Called from
+    /// `BluetoothManager.exitDemoMode()` so both managers always flip
+    /// together.
+    func exitDemoMode() {
+        guard isDemoMode, let snap = demoSnapshot else { return }
+        isDemoMode = false
+        currentDeviceID = snap.currentDeviceID
+        isArmed = snap.isArmed
+        alarmType = snap.alarmType
+        sensitivity = snap.sensitivity
+        lightsEnabled = snap.lightsEnabled
+        loggingEnabled = snap.loggingEnabled
+        disableAlarmWhenConnected = snap.disableAlarmWhenConnected
+        deviceName = snap.deviceName
+        debugModeEnabled = snap.debugModeEnabled
+        highPerformanceMode = snap.highPerformanceMode
+        liveOrientationEnabled = snap.liveOrientationEnabled
+        devModeUnlocked = snap.devModeUnlocked
+        dataLoggingMode = snap.dataLoggingMode
+        alarmTriggers = snap.alarmTriggers
+        selectedPresetRawValue = snap.selectedPresetRawValue
+        alarmDuration = snap.alarmDuration
+        alarmDisabled = snap.alarmDisabled
+        disconnectSoundDisabled = snap.disconnectSoundDisabled
+        ledBrightness = snap.ledBrightness
+        demoSnapshot = nil
     }
 
     /// Drop every per-device and global setting from memory and disk. Used by
@@ -378,7 +509,8 @@ class SettingsManager {
         let bases = [
             armedKey, alarmTypeKey, sensitivityKey, lightsKey, loggingKey,
             disableAlarmWhenConnectedKey, alarmTriggersKey, selectedPresetKey,
-            alarmDurationKey, alarmDisabledKey, ledBrightnessKey
+            alarmDurationKey, alarmDisabledKey, disconnectSoundDisabledKey,
+            ledBrightnessKey
         ]
         for key in ud.dictionaryRepresentation().keys {
             if bases.contains(where: { key.hasSuffix("_\($0)") }) {
@@ -408,6 +540,7 @@ class SettingsManager {
         selectedPresetRawValue = "maxSecurity"
         alarmDuration = 2
         alarmDisabled = false
+        disconnectSoundDisabled = false
         ledBrightness = 100
     }
 }

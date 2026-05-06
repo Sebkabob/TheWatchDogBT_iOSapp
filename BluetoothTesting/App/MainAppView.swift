@@ -30,9 +30,10 @@ struct MainAppView: View {
     @State private var showPairing = false
     @State private var justPairedDeviceID: UUID?
 
-    // Overview mode
-    @State private var isOverviewMode = false
-    @State private var deviceToRemove: UUID?
+    // Demo overlay — owns the DemoSession for the lifetime of a try-the-app
+    // tour. Set when the user taps "No device? Try demo"; cleared when they
+    // disconnect or forget. Always recreated fresh — never persisted.
+    @State private var demoSession: DemoSession?
 
     // Per-device settings overlay state — used to lock TabView paging
     @State private var settingsOverlayActive = false
@@ -85,21 +86,24 @@ struct MainAppView: View {
                 // and it scaled with the number of bonded devices. Swipe is
                 // disabled via the underlying UIScrollView's pan gesture
                 // (see SwipeDisabler below) plus the locked binding.
-                AddDevicePage(bluetoothManager: bluetoothManager, onAddTapped: {
-                    if let device = bluetoothManager.connectedDevice {
-                        bluetoothManager.disconnect(from: device)
-                    }
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showPairing = true
-                    }
-                })
+                AddDevicePage(
+                    bluetoothManager: bluetoothManager,
+                    onAddTapped: {
+                        if let device = bluetoothManager.connectedDevice {
+                            bluetoothManager.disconnect(from: device)
+                        }
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showPairing = true
+                        }
+                    },
+                    onTryDemoTapped: { startDemo() }
+                )
                     .tag(0)
 
                 ForEach(Array(sortedDevices.enumerated()), id: \.element.id) { index, device in
                     DevicePageView(
                         bluetoothManager: bluetoothManager,
                         deviceID: device.id,
-                        onOverviewRequest: { enterOverviewMode() },
                         onSettingsModeChange: { active in settingsOverlayActive = active },
                         animateEntrance: device.id == justPairedDeviceID
                     )
@@ -113,20 +117,6 @@ struct MainAppView: View {
             .tabViewStyle(.page(indexDisplayMode: .never))
             .scrollDisabled(settingsOverlayActive)
             .ignoresSafeArea()
-            .scaleEffect(isOverviewMode ? 0.85 : 1.0)
-            .opacity(isOverviewMode ? 0 : 1)
-            .allowsHitTesting(!isOverviewMode)
-
-            if isOverviewMode {
-                DeviceOverviewGrid(
-                    bluetoothManager: bluetoothManager,
-                    devices: sortedDevices,
-                    onSelectDevice: { selectDeviceFromOverview($0) },
-                    onRemoveDevice: { deviceToRemove = $0 },
-                    onDismiss: { dismissOverviewMode() }
-                )
-                .transition(.opacity)
-            }
 
             // Full-screen pairing overlay
             if showPairing {
@@ -143,6 +133,23 @@ struct MainAppView: View {
                 )
                 .transition(.opacity)
                 .zIndex(10)
+            }
+
+            // Full-screen demo overlay — renders the same DevicePageView the
+            // bonded flow uses, but with a DemoSession that routes name edits,
+            // disconnect, and forget to in-memory state instead of BLE.
+            if let session = demoSession {
+                DevicePageView(
+                    bluetoothManager: bluetoothManager,
+                    deviceID: session.deviceID,
+                    onSettingsModeChange: { active in settingsOverlayActive = active },
+                    animateEntrance: false,
+                    demoSession: session,
+                    onDemoExit: { endDemo() }
+                )
+                .background(Color(.systemBackground))
+                .transition(.opacity)
+                .zIndex(20)
             }
         }
         .onAppear {
@@ -209,55 +216,31 @@ struct MainAppView: View {
                 currentPage = max(0, totalPages - 1)
             }
         }
-        .alert(LocalizationManager.shared.t(.removeWatchDogTitle), isPresented: Binding(
-            get: { deviceToRemove != nil },
-            set: { if !$0 { deviceToRemove = nil } }
-        )) {
-            Button(LocalizationManager.shared.t(.cancel), role: .cancel) { deviceToRemove = nil }
-            Button(LocalizationManager.shared.t(.remove), role: .destructive) {
-                if let id = deviceToRemove {
-                    removeDevice(id)
-                    deviceToRemove = nil
-                }
-            }
-        } message: {
-            Text(String(format: LocalizationManager.shared.t(.removeWatchDogMessage), deviceToRemoveName))
-        }
-    }
-    
-    // MARK: - Overview Mode
-
-    private var deviceToRemoveName: String {
-        guard let id = deviceToRemove,
-              let bond = bondManager.getBond(deviceID: id) else { return "this WatchDog" }
-        return DeviceNameManager.shared.getDisplayName(deviceID: id, advertisingName: bond.name)
     }
 
-    private func enterOverviewMode() {
-        guard !sortedDevices.isEmpty else { return }
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
-            isOverviewMode = true
+    // MARK: - Demo Mode
+
+    private func startDemo() {
+        guard demoSession == nil else { return }
+        let session = DemoSession()
+        // Order matters: BluetoothManager.enterDemoMode disconnects any active
+        // peripheral and stops scanning, then SettingsManager snapshots and
+        // applies demo defaults so the page mounts with a clean slate.
+        bluetoothManager.enterDemoMode()
+        SettingsManager.shared.enterDemoMode(deviceID: session.deviceID)
+        settingsOverlayActive = false
+        withAnimation(.easeInOut(duration: 0.3)) {
+            demoSession = session
         }
     }
 
-    private func dismissOverviewMode() {
-        withAnimation(.easeOut(duration: 0.3)) { isOverviewMode = false }
-    }
-
-    private func selectDeviceFromOverview(_ deviceID: UUID) {
-        if let page = pageIndex(for: deviceID) { currentPage = page }
-        withAnimation(.easeOut(duration: 0.3)) { isOverviewMode = false }
-    }
-
-    private func removeDevice(_ deviceID: UUID) {
-        if let device = bluetoothManager.connectedDevice, device.id == deviceID {
-            bluetoothManager.disconnect(from: device)
-        }
-        bondManager.removeBond(deviceID: deviceID)
-        if sortedDevices.isEmpty {
-            withAnimation(.easeOut(duration: 0.3)) { isOverviewMode = false }
-            currentPage = 0
+    private func endDemo() {
+        guard demoSession != nil else { return }
+        SettingsManager.shared.exitDemoMode()
+        bluetoothManager.exitDemoMode()
+        settingsOverlayActive = false
+        withAnimation(.easeInOut(duration: 0.3)) {
+            demoSession = nil
         }
     }
 
@@ -296,28 +279,57 @@ struct MainAppView: View {
 struct AddDevicePage: View {
     var bluetoothManager: BluetoothManager
     var onAddTapped: () -> Void
+    var onTryDemoTapped: () -> Void
+
+    private let bondManager = BondManager.shared
+    private let settings = SettingsManager.shared
+
+    /// Visible by default when no devices are bonded; also visible in dev mode
+    /// regardless of bonded count, so power users can sample demo behaviour
+    /// alongside their real devices.
+    private var demoVisible: Bool {
+        bondManager.bondedDevices.isEmpty || settings.devModeUnlocked
+    }
 
     var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
-            Button(action: { onAddTapped() }) {
-                VStack(spacing: 16) {
-                    ZStack {
-                        Circle()
-                            .stroke(Color.blue.opacity(0.3), lineWidth: 3)
-                            .frame(width: 120, height: 120)
-                        Image(systemName: "plus")
-                            .font(.system(size: 50, weight: .light))
-                            .foregroundColor(.blue)
+        ZStack(alignment: .bottom) {
+            VStack(spacing: 24) {
+                Spacer()
+                Button(action: { onAddTapped() }) {
+                    VStack(spacing: 16) {
+                        ZStack {
+                            Circle()
+                                .stroke(Color.blue.opacity(0.3), lineWidth: 3)
+                                .frame(width: 120, height: 120)
+                            Image(systemName: "plus")
+                                .font(.system(size: 50, weight: .light))
+                                .foregroundColor(.blue)
+                        }
+                        Text(LocalizationManager.shared.t(.addAWatchDog))
+                            .font(.title3)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.primary)
                     }
-                    Text(LocalizationManager.shared.t(.addAWatchDog))
-                        .font(.title3)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.primary)
                 }
+                .buttonStyle(PlainButtonStyle())
+                Spacer()
             }
-            .buttonStyle(PlainButtonStyle())
-            Spacer()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            if demoVisible {
+                // Aligned vertically with the Hold-to-Lock bar on DevicePageView:
+                // 20 (bottom padding) + 50 (button row) + 12 (spacing) + 40
+                // (half of LockButton height = 80) = 122pt from bottom edge.
+                Button(action: { onTryDemoTapped() }) {
+                    Text(LocalizationManager.shared.t(.noDeviceTryDemo))
+                        .font(.body)
+                        .fontWeight(.medium)
+                        .foregroundColor(.blue)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .padding(.bottom, 122)
+                .transition(.opacity)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
