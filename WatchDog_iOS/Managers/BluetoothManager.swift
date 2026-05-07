@@ -823,7 +823,9 @@ class BluetoothManager: NSObject {
         // Re-read bond state at the latest possible moment. If we just
         // unpaired, BondManager will already reflect the removal. A stale
         // isBonded() value would cause us to send VERIFY against an empty
-        // EEPROM and get REJECTed — the reported re-pair-after-unpair bug.
+        // EEPROM and get REJECTed. (Sending CLAIM on an unowned device is
+        // also handled correctly by the firmware as of FW Vx.y.z — see
+        // TheWatchDogBT/UNBOND_CLAIM_FIX_PROMPT.md.)
         let isFirstClaim = !BondManager.shared.isBonded(deviceID: peripheral.identifier)
 
         let opcode: UInt8 = isFirstClaim ? CMD_CLAIM_DEVICE : CMD_VERIFY_OWNER
