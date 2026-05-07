@@ -236,7 +236,19 @@ struct MainAppView: View {
             guard demoFromWipe else { return }
             demoFromWipe = false
             currentPage = 0
-            endDemo()
+            // The tutorial overlay is animating out (~0.4s). Holding the demo
+            // visible until that fade completes — then crossfading it out at
+            // a slower 0.55s — avoids the previous double-fade jolt where
+            // both overlays disappeared at once.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                guard demoSession != nil else { return }
+                SettingsManager.shared.exitDemoMode()
+                bluetoothManager.exitDemoMode()
+                settingsOverlayActive = false
+                withAnimation(.easeInOut(duration: 0.55)) {
+                    demoSession = nil
+                }
+            }
         }
     }
 

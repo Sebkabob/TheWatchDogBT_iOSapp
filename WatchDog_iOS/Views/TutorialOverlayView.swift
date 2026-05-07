@@ -25,6 +25,7 @@ struct TutorialOverlayView: View {
         ZStack {
             Color.black.opacity(0.80)
                 .ignoresSafeArea()
+                .contentShape(Rectangle())
 
             VStack(spacing: 0) {
                 // Skip button
@@ -41,7 +42,9 @@ struct TutorialOverlayView: View {
 
                 Spacer()
 
-                // Animated illustration
+                // Animated illustration. Per-step shortcut gestures live on
+                // the outer ZStack below so any part of the screen accepts
+                // input — users instinctively swipe / tap / hold anywhere.
                 Group {
                     switch currentStep {
                     case 0: swipeIllustration
@@ -104,6 +107,29 @@ struct TutorialOverlayView: View {
                 .padding(.horizontal, 40)
                 .padding(.bottom, 50)
             }
+        }
+        // Per-step shortcut gestures attached at the ZStack so they fire
+        // anywhere on screen. Three separate gestures (drag / tap / long
+        // press) keep button priority intact — SwiftUI gives child gestures
+        // precedence over a parent's, and Skip/Next are tap-only Buttons.
+        // Step 2 needs the long-press hook because a plain tap recogniser
+        // never fires once a press exceeds the long-press threshold.
+        .gesture(
+            DragGesture(minimumDistance: 24)
+                .onEnded { value in
+                    guard currentStep == 0 else { return }
+                    if abs(value.translation.width) > abs(value.translation.height) {
+                        advance()
+                    }
+                }
+        )
+        .onTapGesture {
+            guard currentStep == 1 || currentStep == 2 else { return }
+            advance()
+        }
+        .onLongPressGesture(minimumDuration: 0.4) {
+            guard currentStep == 2 else { return }
+            advance()
         }
         .onAppear {
             withAnimation(.easeInOut(duration: 0.3)) {
