@@ -35,6 +35,11 @@ struct MainAppView: View {
     // disconnect or forget. Always recreated fresh — never persisted.
     @State private var demoSession: DemoSession?
 
+    // True when the demo session was launched as part of the post-wipe
+    // onboarding tour. Used so that finishing the tutorial overlay also
+    // exits demo mode and snaps back to the add-watchdog page.
+    @State private var demoFromWipe = false
+
     // Per-device settings overlay state — used to lock TabView paging
     @State private var settingsOverlayActive = false
     
@@ -215,6 +220,23 @@ struct MainAppView: View {
             if currentPage >= totalPages {
                 currentPage = max(0, totalPages - 1)
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .wipeAppDataPerformed)) { _ in
+            // Post-wipe onboarding: drop the user into a fresh demo, then
+            // surface the tutorial on top. Tutorial completion ends the demo
+            // and routes back to AddDevicePage via .tutorialCompleted below.
+            currentPage = 0
+            demoFromWipe = true
+            startDemo()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                NotificationCenter.default.post(name: .showTutorial, object: nil)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .tutorialCompleted)) { _ in
+            guard demoFromWipe else { return }
+            demoFromWipe = false
+            currentPage = 0
+            endDemo()
         }
     }
 
@@ -520,6 +542,9 @@ struct AppSettingsView: View {
     /// list intact because each manager (BondManager, DeviceNameManager,
     /// etc.) holds its decoded state in memory and would re-persist on the
     /// next save. Active BLE connections are also torn down.
+    /// Once the wipe completes, dismiss the settings panel and broadcast
+    /// `.wipeAppDataPerformed` so MainAppView can launch the demo + tutorial
+    /// onboarding tour for the now-empty app.
     private func wipeAppData() {
         bluetoothManager.wipeAllDeviceState()
 
@@ -533,6 +558,11 @@ struct AppSettingsView: View {
         let defaults = UserDefaults.standard
         for key in defaults.dictionaryRepresentation().keys {
             defaults.removeObject(forKey: key)
+        }
+
+        onBack()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            NotificationCenter.default.post(name: .wipeAppDataPerformed, object: nil)
         }
     }
 }

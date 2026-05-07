@@ -9,6 +9,8 @@ import SwiftUI
 
 extension Notification.Name {
     static let showTutorial = Notification.Name("showTutorial")
+    static let tutorialCompleted = Notification.Name("tutorialCompleted")
+    static let wipeAppDataPerformed = Notification.Name("wipeAppDataPerformed")
 }
 
 struct TutorialOverlayView: View {

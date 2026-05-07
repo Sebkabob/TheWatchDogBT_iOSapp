@@ -27,6 +27,7 @@ struct ContentView: View {
                             showTutorial = false
                             hasSeenTutorial = true
                         }
+                        NotificationCenter.default.post(name: .tutorialCompleted, object: nil)
                     }
                     .transition(.opacity)
                 }
