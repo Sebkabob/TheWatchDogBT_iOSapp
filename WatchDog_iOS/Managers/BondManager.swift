@@ -1,0 +1,171 @@
+//
+//  BondManager.swift
+//  BluetoothTesting
+//
+//  Created by Sebastian Forenza on 11/23/24.
+//
+
+import Foundation
+import CoreBluetooth
+import Observation
+
+@Observable
+class BondManager {
+    static let shared = BondManager()
+
+    var bondedDevices: [BondedDevice] = []
+    
+    private let bondsKey = "watchdog_bonded_devices"
+    private let nameManager = DeviceNameManager.shared
+    
+    // Timer to check for stale devices
+    private var staleCheckTimer: Timer?
+    private let staleTimeout: TimeInterval = 8.0  // 8 seconds — generous to avoid false "out of range"
+    
+    private init() {
+        loadBonds()
+        startStaleDeviceCheck()
+    }
+    
+    // MARK: - Bond Management
+    
+    func addBond(deviceID: UUID, name: String) {
+        // Check if already bonded
+        if bondedDevices.contains(where: { $0.id == deviceID }) {
+            Log.warn(.bond, "Already bonded · \(name)")
+            return
+        }
+
+        let newBond = BondedDevice(id: deviceID, name: name)
+        bondedDevices.append(newBond)
+        saveBonds()
+        Log.ok(.bond, "Added · \(name) [\(deviceID.uuidString.prefix(8))]")
+    }
+
+    func removeBond(deviceID: UUID) {
+        if let index = bondedDevices.firstIndex(where: { $0.id == deviceID }) {
+            let name = bondedDevices[index].name
+            bondedDevices.remove(at: index)
+            saveBonds()
+            Log.ok(.bond, "Removed · \(name) [\(deviceID.uuidString.prefix(8))]")
+            // Note: We intentionally do NOT remove custom name - it persists
+        }
+    }
+    
+    func updateDeviceRSSI(deviceID: UUID, rssi: Int) {
+        if let index = bondedDevices.firstIndex(where: { $0.id == deviceID }) {
+            bondedDevices[index].currentRSSI = rssi
+            bondedDevices[index].lastSeen = Date()
+        }
+    }
+    
+    func updateDeviceName(deviceID: UUID, name: String) {
+        if let index = bondedDevices.firstIndex(where: { $0.id == deviceID }) {
+            // Only update if the advertising name has changed
+            if bondedDevices[index].name != name {
+                bondedDevices[index].name = name
+                saveBonds()
+                Log.info(.name, "Updated advertising name · \(name)")
+            }
+        }
+    }
+    
+    func isBonded(deviceID: UUID) -> Bool {
+        return bondedDevices.contains(where: { $0.id == deviceID })
+    }
+    
+    func getBond(deviceID: UUID) -> BondedDevice? {
+        return bondedDevices.first(where: { $0.id == deviceID })
+    }
+    
+    /// Get display name for a device (custom name if set, otherwise advertising name)
+    func getDisplayName(deviceID: UUID) -> String? {
+        guard let bond = getBond(deviceID: deviceID) else { return nil }
+        return nameManager.getDisplayName(deviceID: deviceID, advertisingName: bond.name)
+    }
+    
+    /// Reset lastSeen timestamps for devices that were previously in range.
+    /// Called when the app returns from background so the stale check timer
+    /// doesn't immediately mark everything out of range before new advertisements arrive.
+    func refreshTimestampsForForegroundReturn() {
+        let now = Date()
+        for index in bondedDevices.indices {
+            // Only refresh devices that had been seen (were in range before backgrounding).
+            // Devices that were already out of range stay out of range.
+            if bondedDevices[index].currentRSSI != nil {
+                bondedDevices[index].lastSeen = now
+            }
+        }
+        Log.info(.bond, "Refreshed timestamps for foreground return")
+    }
+
+    // MARK: - Stale Device Check
+    
+    private func startStaleDeviceCheck() {
+        // Check every 1 second for devices that haven't been seen in 5 seconds
+        staleCheckTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.checkForStaleDevices()
+        }
+        Log.info(.bond, "Started stale device check timer")
+    }
+    
+    private func checkForStaleDevices() {
+        let now = Date()
+
+        for index in bondedDevices.indices {
+            if bondedDevices[index].currentRSSI != nil,
+               let lastSeen = bondedDevices[index].lastSeen {
+                let timeSinceLastSeen = now.timeIntervalSince(lastSeen)
+
+                if timeSinceLastSeen > staleTimeout {
+                    Log.info(.bond, "Out of range · \(bondedDevices[index].name) (last seen \(String(format: "%.1f", timeSinceLastSeen))s ago)")
+                    bondedDevices[index].currentRSSI = nil
+                    bondedDevices[index].lastSeen = nil
+                }
+            }
+        }
+    }
+    
+    deinit {
+        staleCheckTimer?.invalidate()
+    }
+
+    /// Drop every bond from memory and disk. Used by the "Wipe App Data"
+    /// flow — clearing UserDefaults alone leaves this in-memory cache
+    /// populated, so the device list keeps showing forgotten bonds and any
+    /// later save would re-persist them.
+    func clearAll() {
+        bondedDevices.removeAll()
+        UserDefaults.standard.removeObject(forKey: bondsKey)
+        Log.ok(.bond, "Cleared all bonds")
+    }
+    
+    // MARK: - Persistence
+    
+    private func saveBonds() {
+        do {
+            let encoder = JSONEncoder()
+            let data = try encoder.encode(bondedDevices)
+            UserDefaults.standard.set(data, forKey: bondsKey)
+            Log.info(.persist, "Saved \(bondedDevices.count) bonds")
+        } catch {
+            Log.err(.persist, "Save bonds · \(error)")
+        }
+    }
+
+    private func loadBonds() {
+        guard let data = UserDefaults.standard.data(forKey: bondsKey) else {
+            Log.info(.persist, "No saved bonds")
+            return
+        }
+
+        do {
+            let decoder = JSONDecoder()
+            bondedDevices = try decoder.decode([BondedDevice].self, from: data)
+            Log.info(.persist, "Loaded \(bondedDevices.count) bonds")
+        } catch {
+            Log.err(.persist, "Load bonds · \(error)")
+            bondedDevices = []
+        }
+    }
+}
