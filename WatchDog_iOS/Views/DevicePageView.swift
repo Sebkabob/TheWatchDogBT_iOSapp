@@ -280,6 +280,26 @@ struct DevicePageView: View {
                     // Device is in range (connected or just advertising) — show 3D model
                     if showModel {
                         ZStack {
+                            // Faint pulsing halo behind the model — a visual
+                            // affordance hinting the device is tappable. Only
+                            // shown when connected (tap actually does
+                            // something) and outside settings mode (where the
+                            // model becomes an interface, not a button).
+                            if isDeviceConnected && !inSettingsMode {
+                                Circle()
+                                    .fill(Color.white)
+                                    .frame(width: 320, height: 320)
+                                    .blur(radius: 60)
+                                    .phaseAnimator([0.03, 0.09]) { content, phase in
+                                        content.opacity(phase)
+                                    } animation: { _ in
+                                        .easeInOut(duration: 2.0)
+                                    }
+                                    .allowsHitTesting(false)
+                                    .frame(maxWidth: .infinity)
+                                    .transition(.opacity)
+                            }
+
                             // PCB is heavy (separate SCNView + render loop +
                             // wobble) — only mount it while the user is in
                             // settings, where it can actually be toggled in.
@@ -291,7 +311,7 @@ struct DevicePageView: View {
                                     bluetoothManager: bluetoothManager,
                                     onSettingsTap: { handleModelTap() },
                                     idleWobble: isDeviceConnected,
-                                    wobbleIntensity: 0.3,
+                                    wobbleIntensity: 0.5,
                                     inSettingsMode: inSettingsMode,
                                     applyPlasticTexture: false,
                                     modelYOffset: -2.45,
@@ -307,7 +327,7 @@ struct DevicePageView: View {
                                 bluetoothManager: bluetoothManager,
                                 onSettingsTap: isDeviceConnected ? { handleModelTap() } : nil,
                                 idleWobble: isDeviceConnected,
-                                wobbleIntensity: 0.3,
+                                wobbleIntensity: 0.5,
                                 inSettingsMode: inSettingsMode,
                                 passesEmptyTaps: true,
                                 rotationGestureEnabled: isDeviceConnected
