@@ -6,7 +6,7 @@ title: WatchDog Privacy Policy
 
 *Last updated: 7 May 2026*
 
-WatchDog is a companion app for the WatchDog Bluetooth case. We designed WatchDog to keep your data on your device. This policy explains what that means in practice.
+WatchDog is a companion app for the WatchDog Bluetooth device. We designed WatchDog to keep your data on your phone. This policy explains what that means in practice.
 
 ## Data we collect from you
 
@@ -16,16 +16,16 @@ None. WatchDog does not have user accounts, does not contact a server, and does 
 
 WatchDog stores the following locally on your iPhone, and only on your iPhone:
 
-- The list of WatchDog cases you have paired, including any nicknames, icons, and notes you assign to them.
-- A randomly-generated pairing token, kept in the iOS Keychain, that your WatchDog case reads back over Bluetooth so it can recognise your phone.
-- Motion events received from your WatchDog case.
+- The list of WatchDog devices you have paired, including any nicknames, icons, and notes you assign to them.
+- A randomly-generated pairing token, kept in the iOS Keychain, that your WatchDog device reads back over Bluetooth so it can recognise your phone.
+- Motion events received from your WatchDog device.
 - Your in-app preferences (language, settings).
 
 This information never leaves your device. Uninstalling the app removes it.
 
 ## Bluetooth
 
-WatchDog uses Bluetooth solely to communicate with your WatchDog case. Bluetooth scan results and device data are processed on your phone and are not transmitted anywhere else.
+WatchDog uses Bluetooth solely to communicate with your WatchDog device. Bluetooth scan results and device data are processed on your phone and are not transmitted anywhere else.
 
 ## Children
 
