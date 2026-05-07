@@ -1,6 +1,6 @@
 ## App Version
 
-**Current: V1.11.45**  (last reconciled at commit `65d939c`)
+**Current: V1.11.48**  (last reconciled at commit `dd75bb2`)
 
 Format: `V<MAJOR>.<MAIN>.<V2>` — single source of truth lives in
 `AppVersion.swift` (`AppVersion.major/main/v2`, plus `displayString`). This

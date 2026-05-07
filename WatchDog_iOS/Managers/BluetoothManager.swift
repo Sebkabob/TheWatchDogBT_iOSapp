@@ -881,6 +881,16 @@ class BluetoothManager: NSObject {
         Log.ok(.loyalty, "VERIFY_OK")
         loyaltyTimer?.invalidate(); loyaltyTimer = nil
         loyaltyState = .verified
+        // Defensive: if firmware returns VERIFY_OK in response to a CLAIM
+        // (e.g. iPhone wiped local bonds but firmware EEPROM still holds this
+        // token), the local bond never got recorded — leaving the user on
+        // the add-device screen with a live BLE connection. addBond is
+        // idempotent, so this is safe even on legitimate VERIFY paths.
+        if let peripheral = connectedDevice?.peripheral,
+           !BondManager.shared.isBonded(deviceID: peripheral.identifier) {
+            let name = connectedDevice?.name ?? "WatchDog"
+            BondManager.shared.addBond(deviceID: peripheral.identifier, name: name)
+        }
         onLoyaltyVerifiedHook()
     }
 
@@ -1298,10 +1308,18 @@ extension BluetoothManager: CBCentralManagerDelegate {
     
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         Log.ok(.ble, "Connected to \(peripheral.name ?? "Unknown") [\(peripheral.identifier.uuidString.prefix(8))]")
-        
+
+        // Demo mode: a connection that completes after enterDemoMode would
+        // overwrite `connectedDevice` and re-arm the BLE plumbing. Cancel and
+        // ignore.
+        if isDemoMode {
+            centralManager.cancelPeripheralConnection(peripheral)
+            return
+        }
+
         startConnectionDurationTimer()
         stopReconnecting()
-        
+
         DispatchQueue.main.async {
             self.connectionTimer?.invalidate()
             self.connectionTimer = nil
@@ -1462,6 +1480,11 @@ extension BluetoothManager: CBPeripheralDelegate {
         }
 
         guard let data = characteristic.value, data.count >= 1 else { return }
+
+        // Demo mode owns the published state. Stale notifications can arrive
+        // between `cancelPeripheralConnection` and `didDisconnect`, and they
+        // would overwrite the demo defaults (battery, MLC, accel, etc.).
+        if isDemoMode { return }
 
         // ─── BATTERYDIAG characteristic — now carries the TLV diagnostic blob ───
         // Firmware no longer auto-pushes; this only fires in response to 0xF4.
