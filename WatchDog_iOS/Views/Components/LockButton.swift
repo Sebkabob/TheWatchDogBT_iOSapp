@@ -23,7 +23,7 @@ struct LockButton: View {
 
     private var buttonText: String {
         let loc = LocalizationManager.shared
-        if isStabilizing { return "Stabilizing..." }
+        if isStabilizing { return loc.t(.holdToStop) }
         return isLocked ? loc.t(.holdToUnlock) : loc.t(.holdToLock)
     }
 
@@ -44,8 +44,9 @@ struct LockButton: View {
                     .easeInOut(duration: 0.8)
                 }
 
-            // Progress overlay (only show when not disabled and not stabilizing)
-            if !isDisabled && !isStabilizing {
+            // Progress overlay — visible during stabilizing too so the user
+            // sees their hold-to-stop progress.
+            if !isDisabled {
                 GeometryReader { geometry in
                     RoundedRectangle(cornerRadius: 20)
                         .fill(Color.white.opacity(0.4 * min(holdProgress / 0.09, 1.0)))

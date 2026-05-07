@@ -44,7 +44,7 @@ enum LocKey: Hashable {
     case motionLogs, deviceNotInRange
     case forgetTitle, forgetMessage, cancel, forgetConfirm
     case resetTitle, resetMessage, reset
-    case holdToLock, holdToUnlock
+    case holdToLock, holdToUnlock, holdToStop
     case addAWatchDog, searchingForWatchDogs, tapToPair, pairing, paired
     case noDeviceTryDemo
     case skip, done, ok, no, go
@@ -119,6 +119,7 @@ final class LocalizationManager {
             .reset: "Reset",
             .holdToLock: "Hold to Lock",
             .holdToUnlock: "Hold to Unlock",
+            .holdToStop: "Hold to Stop",
             .addAWatchDog: "Add a WatchDog",
             .searchingForWatchDogs: "Searching for WatchDogs...",
             .tapToPair: "Tap to pair",
@@ -178,6 +179,7 @@ final class LocalizationManager {
             .reset: "Reiniciar",
             .holdToLock: "Mantén para Bloquear",
             .holdToUnlock: "Mantén para Desbloquear",
+            .holdToStop: "Mantén para Detener",
             .addAWatchDog: "Añadir un WatchDog",
             .searchingForWatchDogs: "Buscando WatchDogs...",
             .tapToPair: "Toca para emparejar",
@@ -237,6 +239,7 @@ final class LocalizationManager {
             .reset: "Resetten",
             .holdToLock: "Houd vast om te Vergrendelen",
             .holdToUnlock: "Houd vast om te Ontgrendelen",
+            .holdToStop: "Houd vast om te Stoppen",
             .addAWatchDog: "WatchDog Toevoegen",
             .searchingForWatchDogs: "WatchDogs zoeken...",
             .tapToPair: "Tik om te koppelen",
@@ -296,6 +299,7 @@ final class LocalizationManager {
             .reset: "Réinitialiser",
             .holdToLock: "Maintenir pour Verrouiller",
             .holdToUnlock: "Maintenir pour Déverrouiller",
+            .holdToStop: "Maintenir pour Arrêter",
             .addAWatchDog: "Ajouter un WatchDog",
             .searchingForWatchDogs: "Recherche de WatchDogs...",
             .tapToPair: "Appuyer pour appairer",
@@ -355,6 +359,7 @@ final class LocalizationManager {
             .reset: "リセット",
             .holdToLock: "長押しでロック",
             .holdToUnlock: "長押しでロック解除",
+            .holdToStop: "長押しで停止",
             .addAWatchDog: "WatchDogを追加",
             .searchingForWatchDogs: "WatchDogを検索中...",
             .tapToPair: "タップしてペアリング",
@@ -414,6 +419,7 @@ final class LocalizationManager {
             .reset: "Reiniciar",
             .holdToLock: "Manter para Bloquear",
             .holdToUnlock: "Manter para Desbloquear",
+            .holdToStop: "Manter para Parar",
             .addAWatchDog: "Adicionar um WatchDog",
             .searchingForWatchDogs: "À procura de WatchDogs...",
             .tapToPair: "Tocar para emparelhar",
