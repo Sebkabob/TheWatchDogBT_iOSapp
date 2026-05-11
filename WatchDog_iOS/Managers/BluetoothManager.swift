@@ -674,13 +674,39 @@ class BluetoothManager: NSObject {
 
     func sendSettings() {
         guard !isDemoMode else { return }
-        let settingsByte = settingsManager.encodeSettings()
-        let deviceInfoByte = settingsManager.encodeDeviceInfo()
+        let settingsByte      = settingsManager.encodeSettings()
+        let deviceInfoByte    = settingsManager.encodeDeviceInfo()
         let alarmDurationByte = settingsManager.encodeAlarmDuration()
         let ledBrightnessByte = settingsManager.encodeLEDBrightness()
-        let data = Data([settingsByte, deviceInfoByte, alarmDurationByte, ledBrightnessByte])
+
+        // 4 settings bytes + 6-byte calendar tail = 10-byte payload. The
+        // firmware's `cmd_length >= 7` gate in lockservice_app.c then trips
+        // and feeds the tail into MotionLogger_SetBootTime() so motion-log
+        // event timestamps can be anchored to wall-clock time.
+        var data = Data([settingsByte, deviceInfoByte, alarmDurationByte, ledBrightnessByte])
+        data.append(contentsOf: Self.currentLocalCalendarBytes())
         sendData(data)
-        Log.tx(.settings, "Sent settings · 0x\(String(format: "%02X", settingsByte)) deviceInfo 0x\(String(format: "%02X", deviceInfoByte)) alarmDur=\(alarmDurationByte)s ledBright=\(ledBrightnessByte)")
+        Log.tx(.settings, "Sent settings + anchor · 0x\(String(format: "%02X", settingsByte)) deviceInfo 0x\(String(format: "%02X", deviceInfoByte)) alarmDur=\(alarmDurationByte)s ledBright=\(ledBrightnessByte)")
+    }
+
+    /// `[YY-2000, MM, DD, hh, mm, ss]` in the device user's local time.
+    /// Local — not UTC — because the firmware just adds elapsed ticks and
+    /// reports the result back verbatim; iOS doesn't apply a timezone on the
+    /// way back in (`RESP_EVENT_DATA` builds the Date with `Calendar.current`,
+    /// which is local). Keep both ends in local time so they round-trip cleanly.
+    private static func currentLocalCalendarBytes() -> [UInt8] {
+        let now = Date()
+        let cal = Calendar.current
+        let c = cal.dateComponents([.year, .month, .day, .hour, .minute, .second], from: now)
+        let yy = UInt8(max(0, min(255, (c.year ?? 2000) - 2000)))
+        return [
+            yy,
+            UInt8(c.month  ?? 1),
+            UInt8(c.day    ?? 1),
+            UInt8(c.hour   ?? 0),
+            UInt8(c.minute ?? 0),
+            UInt8(c.second ?? 0),
+        ]
     }
 
     func sendPing() {
@@ -929,6 +955,9 @@ class BluetoothManager: NSObject {
     private func onLoyaltyVerifiedHook() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self = self, self.connectedDevice != nil else { return }
+            // Anchor firmware's clock before pulling logs — otherwise events
+            // generated this session arrive with the unknown-time sentinel.
+            self.sendSettings()
             self.requestMotionLogCount()
         }
     }
@@ -1030,6 +1059,10 @@ class BluetoothManager: NSObject {
 
     func startMotionLogPolling(interval: TimeInterval = 0.25) {
         stopMotionLogPolling()
+        // Re-anchor the firmware clock right before pulling logs. TickToDateTime
+        // computes calendar time as (boot_time + elapsed_ms_since_anchor) — a
+        // fresh anchor minimizes accumulated quartz drift on each view session.
+        sendSettings()
         requestMotionLogCount()
         motionLogPollTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             guard let self = self, self.connectedDevice != nil, !self.isSyncingMotionLogs else { return }
@@ -1086,19 +1119,22 @@ class BluetoothManager: NSObject {
             let motionType = data[9]
             let batteryByte = data[10]
 
-            var timestamp: Date
-            if year == 0 && month <= 1 && day <= 1 {
-                timestamp = Date()
-            } else {
+            let timestamp: Date? = {
+                // Firmware's unanchored sentinel is (year=0, month=1, day=1, 00:00:00).
+                // Treat as missing rather than fabricating a wall-clock time —
+                // the UI renders nil as "Unknown time".
+                if year == 0 && month == 1 && day == 1 && hour == 0 && minute == 0 && second == 0 {
+                    return nil
+                }
                 var components = DateComponents()
-                components.year = 2000 + Int(year)
-                components.month = max(1, Int(month))
-                components.day = max(1, Int(day))
-                components.hour = Int(hour)
+                components.year   = 2000 + Int(year)
+                components.month  = max(1, Int(month))
+                components.day    = max(1, Int(day))
+                components.hour   = Int(hour)
                 components.minute = Int(minute)
                 components.second = Int(second)
-                timestamp = Calendar.current.date(from: components) ?? Date()
-            }
+                return Calendar.current.date(from: components)
+            }()
 
             let config = MotionTypeConfig.convert(firmwareType: motionType)
             guard let deviceID = self.connectedDevice?.id else { return }

@@ -21,12 +21,30 @@ class MotionLogManager {
     }
     
     // MARK: - Motion Event Management
-    
+
+    /// Compares two events for descending-by-time order, with `nil` timestamps
+    /// floating to the top so the user notices unknown-time events. UUID acts
+    /// as the deterministic tiebreaker when timestamps match exactly.
+    private static func sortsBefore(_ a: MotionEvent, _ b: MotionEvent) -> Bool {
+        switch (a.timestamp, b.timestamp) {
+        case (nil, nil):
+            return a.id.uuidString > b.id.uuidString
+        case (nil, _):
+            return true
+        case (_, nil):
+            return false
+        case let (ta?, tb?):
+            if ta == tb { return a.id.uuidString > b.id.uuidString }
+            return ta > tb
+        }
+    }
+
     func addMotionEvent(_ event: MotionEvent) {
-        let insertIndex = motionEvents.firstIndex { $0.timestamp <= event.timestamp } ?? motionEvents.endIndex
+        let insertIndex = motionEvents.firstIndex { Self.sortsBefore(event, $0) } ?? motionEvents.endIndex
         motionEvents.insert(event, at: insertIndex)
         saveMotionEvents()
-        Log.ok(.motion, "Event · \(event.eventType.displayName) at \(event.timestamp)")
+        let stampStr = event.timestamp.map { "\($0)" } ?? "unknown time"
+        Log.ok(.motion, "Event · \(event.eventType.displayName) at \(stampStr)")
     }
 
     func clearAllEvents(for deviceID: UUID) {
@@ -44,7 +62,8 @@ class MotionLogManager {
     func clearEventsForDate(_ date: Date, deviceID: UUID) {
         let calendar = Calendar.current
         motionEvents.removeAll { event in
-            event.deviceID == deviceID && calendar.isDate(event.timestamp, inSameDayAs: date)
+            guard event.deviceID == deviceID, let ts = event.timestamp else { return false }
+            return calendar.isDate(ts, inSameDayAs: date)
         }
         saveMotionEvents()
         Log.ok(.motion, "Cleared events for \(date) [\(deviceID.uuidString.prefix(8))]")
@@ -59,14 +78,22 @@ class MotionLogManager {
     func getEvents(for date: Date, deviceID: UUID) -> [MotionEvent] {
         let calendar = Calendar.current
         return motionEvents.filter { event in
-            event.deviceID == deviceID && calendar.isDate(event.timestamp, inSameDayAs: date)
+            guard event.deviceID == deviceID, let ts = event.timestamp else { return false }
+            return calendar.isDate(ts, inSameDayAs: date)
         }
+    }
+
+    /// Events for this device whose firmware-reported timestamp was the
+    /// unanchored sentinel — surfaced separately in the UI.
+    func unknownTimeEvents(for deviceID: UUID) -> [MotionEvent] {
+        motionEvents.filter { $0.deviceID == deviceID && $0.timestamp == nil }
     }
 
     func getDatesWithEvents(for deviceID: UUID) -> Set<Date> {
         let calendar = Calendar.current
-        return Set(eventsForDevice(deviceID).map { event in
-            calendar.startOfDay(for: event.timestamp)
+        return Set(eventsForDevice(deviceID).compactMap { event -> Date? in
+            guard let ts = event.timestamp else { return nil }
+            return calendar.startOfDay(for: ts)
         })
     }
     
@@ -92,7 +119,7 @@ class MotionLogManager {
         do {
             let decoder = JSONDecoder()
             motionEvents = try decoder.decode([MotionEvent].self, from: data)
-            motionEvents.sort { $0.timestamp > $1.timestamp }
+            motionEvents.sort(by: Self.sortsBefore)
             Log.info(.persist, "Loaded \(motionEvents.count) motion events")
         } catch {
             Log.err(.persist, "Load motion events · \(error)")

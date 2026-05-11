@@ -429,6 +429,11 @@ struct DeviceDiagnosticView: View {
         rows.append(DiagRow(label: "INT1 fires", value: "\(s.int1FiresSinceBoot)", status: .info))
         rows.append(DiagRow(label: "Motion events logged",
                             value: "\(s.motionEventsLoggedSinceBoot)", status: .info))
+        if let dismissed = s.validationsDismissedSinceBoot {
+            rows.append(DiagRow(label: "False alarms prevented since boot",
+                                value: "\(dismissed)",
+                                status: .info))
+        }
 
         return DiagCard(title: "Sensor", icon: "gyroscope", rows: rows)
     }

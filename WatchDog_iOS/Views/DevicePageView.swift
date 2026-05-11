@@ -70,6 +70,7 @@ struct DevicePageView: View {
     @State private var showingPCBView = false
     @State private var editableName: String = ""
     @State private var showForgetConfirmation = false
+    @State private var showRestartConfirmation = false
     private let maxNameLength = 16
 
     private let lightHaptic = UIImpactFeedbackGenerator(style: .light)
@@ -1316,20 +1317,36 @@ struct DevicePageView: View {
                 }
             }
 
-            Button(action: {}) {
+            Button(action: {
+                guard isDeviceConnected else { return }
+                showRestartConfirmation = true
+            }) {
                 HStack {
-                    Image(systemName: "arrow.down.circle.fill")
-                    Text(loc.t(.installLatestFirmware))
+                    Image(systemName: "arrow.clockwise.circle.fill")
+                    Text(loc.t(.restartDevice))
                 }
                 .font(.subheadline)
                 .fontWeight(.medium)
-                .foregroundColor(.gray)
+                .foregroundColor(.orange)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
                 .background(Color(white: 0.2))
                 .cornerRadius(10)
             }
-            .disabled(true)
+            .disabled(!isDeviceConnected)
+            .opacity(isDeviceConnected ? 1 : 0.4)
+            .confirmationDialog(
+                loc.t(.restartDeviceTitle),
+                isPresented: $showRestartConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button(loc.t(.restart), role: .destructive) {
+                    bluetoothManager.sendResetDevice()
+                }
+                Button(loc.t(.cancel), role: .cancel) { }
+            } message: {
+                Text(loc.t(.restartDeviceMessage))
+            }
         }
         .padding(.horizontal, 20)
         .frame(width: width, alignment: .leading)

@@ -38,7 +38,8 @@ enum LocKey: Hashable {
     case disableAlarm, disableAlarmCaption
     case ledBrightness, disableLED, disableLEDCaption
     case disableMotionLogging, disableMotionLoggingCaption
-    case language, installLatestFirmware
+    case language
+    case restartDevice, restartDeviceTitle, restartDeviceMessage, restart
     case locked, unlocked, locking
     case connect, connecting, connected, disconnect
     case motionLogs, deviceNotInRange
@@ -53,6 +54,7 @@ enum LocKey: Hashable {
     case wipeAppData, wipeAppDataConfirmTitle, wipeAppDataConfirmMessage, wipe
     case disconnectOnBackground, disconnectOnBackgroundCaption
     case setToDefaultSettings, setToDefaultSettingsTitle, setToDefaultSettingsMessage
+    case unknownTime
 }
 
 @Observable
@@ -105,7 +107,10 @@ final class LocalizationManager {
             .disableMotionLogging: "Disable Motion Logging",
             .disableMotionLoggingCaption: "Completely disable motion logging functionality.",
             .language: "Language",
-            .installLatestFirmware: "Install Latest Firmware",
+            .restartDevice: "Restart Device",
+            .restartDeviceTitle: "Restart Device?",
+            .restartDeviceMessage: "Are you sure you want to restart the WatchDog? The BLE connection will drop.",
+            .restart: "Restart",
             .locked: "Locked", .unlocked: "Unlocked", .locking: "Locking",
             .connect: "Connect", .connecting: "Connecting…", .connected: "Connected",
             .disconnect: "Disconnect",
@@ -137,7 +142,8 @@ final class LocalizationManager {
             .disconnectOnBackgroundCaption: "Disconnect from the WatchDog after the app has been minimized for more than 5 seconds.",
             .setToDefaultSettings: "Set to Default Settings",
             .setToDefaultSettingsTitle: "Restore Default Settings?",
-            .setToDefaultSettingsMessage: "This resets every WatchDog's sensitivity, alarm, duration, LED brightness, and other preferences back to their defaults. Bonded devices, custom names, and motion logs are kept."
+            .setToDefaultSettingsMessage: "This resets every WatchDog's sensitivity, alarm, duration, LED brightness, and other preferences back to their defaults. Bonded devices, custom names, and motion logs are kept.",
+            .unknownTime: "Unknown time"
         ],
         .spanish: [
             .settings: "Ajustes",
@@ -165,7 +171,10 @@ final class LocalizationManager {
             .disableMotionLogging: "Desactivar Registro de Movimiento",
             .disableMotionLoggingCaption: "Desactiva por completo la función de registro de movimiento.",
             .language: "Idioma",
-            .installLatestFirmware: "Instalar Último Firmware",
+            .restartDevice: "Reiniciar Dispositivo",
+            .restartDeviceTitle: "¿Reiniciar Dispositivo?",
+            .restartDeviceMessage: "¿Estás seguro de que quieres reiniciar el WatchDog? La conexión BLE se interrumpirá.",
+            .restart: "Reiniciar",
             .locked: "Bloqueado", .unlocked: "Desbloqueado", .locking: "Bloqueando",
             .connect: "Conectar", .connecting: "Conectando…", .connected: "Conectado",
             .disconnect: "Desconectar",
@@ -197,7 +206,8 @@ final class LocalizationManager {
             .disconnectOnBackgroundCaption: "Desconectarse del WatchDog cuando la aplicación haya estado minimizada durante más de 5 segundos.",
             .setToDefaultSettings: "Restablecer Ajustes",
             .setToDefaultSettingsTitle: "¿Restablecer Ajustes por Defecto?",
-            .setToDefaultSettingsMessage: "Esto restablece la sensibilidad, alarma, duración, brillo del LED y otras preferencias de cada WatchDog a sus valores predeterminados. Se conservan los dispositivos emparejados, nombres personalizados y registros de movimiento."
+            .setToDefaultSettingsMessage: "Esto restablece la sensibilidad, alarma, duración, brillo del LED y otras preferencias de cada WatchDog a sus valores predeterminados. Se conservan los dispositivos emparejados, nombres personalizados y registros de movimiento.",
+            .unknownTime: "Hora desconocida"
         ],
         .dutch: [
             .settings: "Instellingen",
@@ -225,7 +235,10 @@ final class LocalizationManager {
             .disableMotionLogging: "Bewegingsregistratie Uitschakelen",
             .disableMotionLoggingCaption: "Schakel de bewegingsregistratie volledig uit.",
             .language: "Taal",
-            .installLatestFirmware: "Nieuwste Firmware Installeren",
+            .restartDevice: "Apparaat Herstarten",
+            .restartDeviceTitle: "Apparaat Herstarten?",
+            .restartDeviceMessage: "Weet je zeker dat je de WatchDog wilt herstarten? De BLE-verbinding wordt verbroken.",
+            .restart: "Herstarten",
             .locked: "Vergrendeld", .unlocked: "Ontgrendeld", .locking: "Vergrendelen",
             .connect: "Verbinden", .connecting: "Verbinden…", .connected: "Verbonden",
             .disconnect: "Verbreken",
@@ -257,7 +270,8 @@ final class LocalizationManager {
             .disconnectOnBackgroundCaption: "Verbreek de verbinding met de WatchDog nadat de app meer dan 5 seconden is geminimaliseerd.",
             .setToDefaultSettings: "Standaardinstellingen Herstellen",
             .setToDefaultSettingsTitle: "Standaardinstellingen Herstellen?",
-            .setToDefaultSettingsMessage: "Dit zet de gevoeligheid, alarm, duur, LED-helderheid en andere voorkeuren van elke WatchDog terug naar de standaardwaarden. Gekoppelde apparaten, aangepaste namen en bewegingslogboeken blijven behouden."
+            .setToDefaultSettingsMessage: "Dit zet de gevoeligheid, alarm, duur, LED-helderheid en andere voorkeuren van elke WatchDog terug naar de standaardwaarden. Gekoppelde apparaten, aangepaste namen en bewegingslogboeken blijven behouden.",
+            .unknownTime: "Tijd onbekend"
         ],
         .french: [
             .settings: "Réglages",
@@ -285,7 +299,10 @@ final class LocalizationManager {
             .disableMotionLogging: "Désactiver le Journal de Mouvement",
             .disableMotionLoggingCaption: "Désactive complètement la fonction de journalisation des mouvements.",
             .language: "Langue",
-            .installLatestFirmware: "Installer le Dernier Firmware",
+            .restartDevice: "Redémarrer l'Appareil",
+            .restartDeviceTitle: "Redémarrer l'Appareil ?",
+            .restartDeviceMessage: "Êtes-vous sûr de vouloir redémarrer le WatchDog ? La connexion BLE sera interrompue.",
+            .restart: "Redémarrer",
             .locked: "Verrouillé", .unlocked: "Déverrouillé", .locking: "Verrouillage",
             .connect: "Connecter", .connecting: "Connexion…", .connected: "Connecté",
             .disconnect: "Déconnecter",
@@ -317,7 +334,8 @@ final class LocalizationManager {
             .disconnectOnBackgroundCaption: "Se déconnecter du WatchDog lorsque l'application est minimisée depuis plus de 5 secondes.",
             .setToDefaultSettings: "Rétablir les Réglages",
             .setToDefaultSettingsTitle: "Rétablir les Réglages par Défaut ?",
-            .setToDefaultSettingsMessage: "Cela rétablit la sensibilité, l'alarme, la durée, la luminosité de la LED et les autres préférences de chaque WatchDog à leurs valeurs par défaut. Les appareils appairés, noms personnalisés et journaux de mouvement sont conservés."
+            .setToDefaultSettingsMessage: "Cela rétablit la sensibilité, l'alarme, la durée, la luminosité de la LED et les autres préférences de chaque WatchDog à leurs valeurs par défaut. Les appareils appairés, noms personnalisés et journaux de mouvement sont conservés.",
+            .unknownTime: "Heure inconnue"
         ],
         .japanese: [
             .settings: "設定",
@@ -345,7 +363,10 @@ final class LocalizationManager {
             .disableMotionLogging: "モーションログを無効化",
             .disableMotionLoggingCaption: "モーションログ機能を完全に無効にします。",
             .language: "言語",
-            .installLatestFirmware: "最新のファームウェアをインストール",
+            .restartDevice: "デバイスを再起動",
+            .restartDeviceTitle: "デバイスを再起動しますか?",
+            .restartDeviceMessage: "WatchDogを再起動してもよろしいですか？BLE接続は切断されます。",
+            .restart: "再起動",
             .locked: "ロック中", .unlocked: "ロック解除", .locking: "ロック中…",
             .connect: "接続", .connecting: "接続中…", .connected: "接続済み",
             .disconnect: "切断",
@@ -377,7 +398,8 @@ final class LocalizationManager {
             .disconnectOnBackgroundCaption: "アプリが5秒以上バックグラウンドにある場合、WatchDogから切断します。",
             .setToDefaultSettings: "初期設定にリセット",
             .setToDefaultSettingsTitle: "初期設定に戻しますか?",
-            .setToDefaultSettingsMessage: "各WatchDogの感度、アラーム、持続時間、LEDの明るさなどの設定が初期値に戻ります。ペアリング済みのデバイス、カスタム名、モーションログは保持されます。"
+            .setToDefaultSettingsMessage: "各WatchDogの感度、アラーム、持続時間、LEDの明るさなどの設定が初期値に戻ります。ペアリング済みのデバイス、カスタム名、モーションログは保持されます。",
+            .unknownTime: "時刻不明"
         ],
         .portuguese: [
             .settings: "Ajustes",
@@ -405,7 +427,10 @@ final class LocalizationManager {
             .disableMotionLogging: "Desativar Registo de Movimento",
             .disableMotionLoggingCaption: "Desativa completamente a função de registo de movimento.",
             .language: "Idioma",
-            .installLatestFirmware: "Instalar Firmware Mais Recente",
+            .restartDevice: "Reiniciar Dispositivo",
+            .restartDeviceTitle: "Reiniciar Dispositivo?",
+            .restartDeviceMessage: "Tem a certeza de que quer reiniciar o WatchDog? A conexão BLE será interrompida.",
+            .restart: "Reiniciar",
             .locked: "Bloqueado", .unlocked: "Desbloqueado", .locking: "Bloqueando",
             .connect: "Conectar", .connecting: "Conectando…", .connected: "Conectado",
             .disconnect: "Desconectar",
@@ -437,7 +462,8 @@ final class LocalizationManager {
             .disconnectOnBackgroundCaption: "Desligar do WatchDog quando a app estiver minimizada há mais de 5 segundos.",
             .setToDefaultSettings: "Repor Predefinições",
             .setToDefaultSettingsTitle: "Repor Predefinições?",
-            .setToDefaultSettingsMessage: "Isto repõe a sensibilidade, alarme, duração, brilho do LED e outras preferências de cada WatchDog para os valores predefinidos. Dispositivos emparelhados, nomes personalizados e registos de movimento são mantidos."
+            .setToDefaultSettingsMessage: "Isto repõe a sensibilidade, alarme, duração, brilho do LED e outras preferências de cada WatchDog para os valores predefinidos. Dispositivos emparelhados, nomes personalizados e registos de movimento são mantidos.",
+            .unknownTime: "Hora desconhecida"
         ]
     ]
 }

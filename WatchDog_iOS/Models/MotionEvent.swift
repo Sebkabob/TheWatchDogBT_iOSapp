@@ -47,11 +47,14 @@ enum MotionEventType: UInt8, Codable {
 struct MotionEvent: Identifiable, Codable {
     let id: UUID
     let deviceID: UUID
-    let timestamp: Date
+    /// `nil` when the firmware reported the unanchored sentinel — i.e. it
+    /// had no idea what wall-clock time the event occurred at. We deliberately
+    /// don't substitute `Date()` here; downstream UI surfaces "Unknown time".
+    let timestamp: Date?
     let eventType: MotionEventType
     let alarmSounded: Bool
 
-    init(id: UUID = UUID(), deviceID: UUID, timestamp: Date, eventType: MotionEventType, alarmSounded: Bool) {
+    init(id: UUID = UUID(), deviceID: UUID, timestamp: Date?, eventType: MotionEventType, alarmSounded: Bool) {
         self.id = id
         self.deviceID = deviceID
         self.timestamp = timestamp

@@ -570,11 +570,11 @@ struct WatchDogSettingsView: View {
     private var sensitivityDescription: String {
         switch sensitivity {
         case .low:
-            return "Identifies motion type before triggering. Reduces false alarms."
+            return "Slow trigger; ignores brief disturbances."
         case .medium:
-            return "Balances identification and detection speed."
+            return "Balanced (recommended)."
         case .high:
-            return "Triggers on any motion immediately. Maximum security."
+            return "Fast trigger; may pick up environmental vibration."
         }
     }
 

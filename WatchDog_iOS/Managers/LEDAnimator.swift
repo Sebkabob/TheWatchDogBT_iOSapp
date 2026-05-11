@@ -73,8 +73,12 @@ class LEDAnimator {
         // Priority 4 — Not connected → off
         if !isConnected { return .off }
 
-        // Priority 5 — Alarm active
-        if isAlarmActive {
+        // Priority 5 — Alarm active.
+        // Silenced + stabilizing falls through so the post-motion lock-down
+        // pulse renders. The audible alarm is suppressed firmware-side; the
+        // LED needs to follow the visible settling state, not stay dark for
+        // the full 30 s alarm window.
+        if isAlarmActive && !(silenceEnabled && mlcState == .stabilizing) {
             guard lightsEnabled && !silenceEnabled else { return .off }
             switch alarmType {
             case .loud:          return .alarmLoud

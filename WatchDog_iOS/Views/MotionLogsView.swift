@@ -12,6 +12,7 @@ struct MotionLogsView: View {
     var bluetoothManager: BluetoothManager
     let deviceID: UUID
     private let motionLogManager = MotionLogManager.shared
+    private let loc = LocalizationManager.shared
     @State private var selectedDate: Date
     @State private var refreshID = UUID()
     @State private var showMonthYearPicker = false
@@ -29,7 +30,11 @@ struct MotionLogsView: View {
     private var filteredEvents: [MotionEvent] {
         motionLogManager.getEvents(for: selectedDate, deviceID: deviceID)
     }
-    
+
+    private var unknownTimeEvents: [MotionEvent] {
+        motionLogManager.unknownTimeEvents(for: deviceID)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Calendar Section
@@ -43,24 +48,24 @@ struct MotionLogsView: View {
                 )
                 .padding(.horizontal)
                 .padding(.top, 16)
-                
+
                 Divider()
                     .padding(.top, 16)
             }
             .background(Color(.systemBackground))
-            
+
             // Events List Section
-            if filteredEvents.isEmpty {
+            if filteredEvents.isEmpty && unknownTimeEvents.isEmpty {
                 Spacer()
                 VStack(spacing: 16) {
                     Image(systemName: "calendar.badge.exclamationmark")
                         .font(.system(size: 60))
                         .foregroundColor(.gray)
-                    
+
                     Text("No Motion Events")
                         .font(.title3)
                         .fontWeight(.semibold)
-                    
+
                     Text(selectedDateText)
                         .font(.subheadline)
                         .foregroundColor(.secondary)
@@ -69,16 +74,32 @@ struct MotionLogsView: View {
                 Spacer()
             } else {
                 List {
-                    Section(header:
-                        HStack {
-                            Text(selectedDateHeaderText)
-                            Spacer()
-                            Text("\(filteredEvents.count) event\(filteredEvents.count == 1 ? "" : "s")")
+                    if !unknownTimeEvents.isEmpty {
+                        Section(header:
+                            HStack {
+                                Text(loc.t(.unknownTime))
+                                Spacer()
+                                Text("\(unknownTimeEvents.count) event\(unknownTimeEvents.count == 1 ? "" : "s")")
+                            }
+                            .font(.subheadline)
+                        ) {
+                            ForEach(unknownTimeEvents) { event in
+                                MotionEventRow(event: event)
+                            }
                         }
-                        .font(.subheadline)
-                    ) {
-                        ForEach(filteredEvents) { event in
-                            MotionEventRow(event: event)
+                    }
+                    if !filteredEvents.isEmpty {
+                        Section(header:
+                            HStack {
+                                Text(selectedDateHeaderText)
+                                Spacer()
+                                Text("\(filteredEvents.count) event\(filteredEvents.count == 1 ? "" : "s")")
+                            }
+                            .font(.subheadline)
+                        ) {
+                            ForEach(filteredEvents) { event in
+                                MotionEventRow(event: event)
+                            }
                         }
                     }
                 }
@@ -196,7 +217,8 @@ struct MotionLogsView: View {
         let calendar = Calendar.current
 
         for event in motionLogManager.eventsForDevice(deviceID) {
-            let dayStart = calendar.startOfDay(for: event.timestamp)
+            guard let ts = event.timestamp else { continue }
+            let dayStart = calendar.startOfDay(for: ts)
             eventsPerDay[dayStart, default: 0] += 1
         }
 
@@ -209,7 +231,8 @@ struct MotionLogsView: View {
         let calendar = Calendar.current
 
         for event in motionLogManager.eventsForDevice(deviceID) {
-            let components = calendar.dateComponents([.year, .month], from: event.timestamp)
+            guard let ts = event.timestamp else { continue }
+            let components = calendar.dateComponents([.year, .month], from: ts)
             if let monthStart = calendar.date(from: components) {
                 eventsPerMonth[monthStart, default: 0] += 1
             }
@@ -556,11 +579,14 @@ struct DayCell: View {
 // MARK: - Motion Event Row
 struct MotionEventRow: View {
     let event: MotionEvent
-    
+
     private var timeString: String {
+        guard let ts = event.timestamp else {
+            return LocalizationManager.shared.t(.unknownTime)
+        }
         let formatter = DateFormatter()
         formatter.timeStyle = .short
-        return formatter.string(from: event.timestamp)
+        return formatter.string(from: ts)
     }
     
     var body: some View {
