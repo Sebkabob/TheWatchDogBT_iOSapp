@@ -598,8 +598,12 @@ struct MotionEventRow: View {
         guard let ts = event.timestamp else {
             return LocalizationManager.shared.t(.unknownTime)
         }
+        // .medium includes seconds (e.g. "11:15:30 AM" in en-US). The wire
+        // protocol always carries second precision — formerly the .short
+        // style here was truncating to minutes, which made two events a few
+        // seconds apart look identical.
         let formatter = DateFormatter()
-        formatter.timeStyle = .short
+        formatter.timeStyle = .medium
         return formatter.string(from: ts)
     }
     
