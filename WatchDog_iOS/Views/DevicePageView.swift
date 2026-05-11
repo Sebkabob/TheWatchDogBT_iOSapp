@@ -615,6 +615,12 @@ struct DevicePageView: View {
                 Log.info(.view, "Device disconnected")
                 updateModelVisibility()
                 stopGraphUpdates()
+                // Drop out of the settings/hardware panel — the user can't
+                // act on a disconnected device, and the panel hides the
+                // device view that surfaces reconnect controls.
+                if inSettingsMode {
+                    toggleSettingsMode()
+                }
             }
         }
         // Watch for changes in range status to update model
