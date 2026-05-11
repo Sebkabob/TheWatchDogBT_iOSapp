@@ -138,6 +138,12 @@ class BluetoothManager: NSObject {
     var pendingEventCount: Int = 0
     var isSyncingMotionLogs: Bool = false
     private var motionLogPollTimer: Timer?
+    /// Per-event watchdog. Armed when a CMD_REQUEST_EVENT is sent, cleared
+    /// on RESP_EVENT_DATA / RESP_NO_MORE_EVENTS / disconnect. If it fires,
+    /// the sync is force-ended so the user isn't stuck on a half-drained
+    /// view because one notification quietly disappeared.
+    private var eventFetchWatchdog: Timer?
+    private let eventFetchTimeoutSeconds: TimeInterval = 2.0
     
     private let settingsManager = SettingsManager.shared
     
@@ -623,6 +629,7 @@ class BluetoothManager: NSObject {
         pendingEventCount = 0
         isSyncingMotionLogs = false
         stopMotionLogPolling()
+        cancelEventFetchWatchdog()
         loyaltyTimer?.invalidate()
         loyaltyTimer = nil
         loyaltyState = .idle
@@ -1084,11 +1091,31 @@ class BluetoothManager: NSObject {
     func requestMotionEvent(at index: UInt16) {
         let data = Data([CMD_REQUEST_EVENT, UInt8((index >> 8) & 0xFF), UInt8(index & 0xFF)])
         sendData(data)
+        armEventFetchWatchdog(forIndex: index)
     }
-    
+
     func clearMotionLog() {
         let data = Data([CMD_CLEAR_LOG])
         sendData(data)
+    }
+
+    private func armEventFetchWatchdog(forIndex index: UInt16) {
+        eventFetchWatchdog?.invalidate()
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.eventFetchWatchdog = Timer.scheduledTimer(withTimeInterval: self.eventFetchTimeoutSeconds,
+                                                          repeats: false) { [weak self] _ in
+                guard let self = self else { return }
+                Log.warn(.motion, "Event fetch timed out at idx \(index) · ending sync")
+                self.isSyncingMotionLogs = false
+                self.eventFetchWatchdog = nil
+            }
+        }
+    }
+
+    private func cancelEventFetchWatchdog() {
+        eventFetchWatchdog?.invalidate()
+        eventFetchWatchdog = nil
     }
     
     private func handleMotionLogResponse(data: Data) {
@@ -1113,6 +1140,7 @@ class BluetoothManager: NSObject {
         case RESP_EVENT_DATA:
             // 11 bytes: 0xE1, index_hi, index_lo, year, month, day, hour, minute, second, motionType, battery
             guard data.count >= 11 else { return }
+            cancelEventFetchWatchdog()
             let index = (UInt16(data[1]) << 8) | UInt16(data[2])
             let year = data[3], month = data[4], day = data[5]
             let hour = data[6], minute = data[7], second = data[8]
@@ -1126,10 +1154,24 @@ class BluetoothManager: NSObject {
                 if year == 0 && month == 1 && day == 1 && hour == 0 && minute == 0 && second == 0 {
                     return nil
                 }
+                // Range-check every field. The old firmware's anchor-drift
+                // bug could emit values like year=255 / month=12 / day=31
+                // that DateComponents would silently coerce into real-but-
+                // wrong dates (e.g. year 2255). With the new firmware these
+                // shouldn't appear, but treating out-of-range as "unknown"
+                // is cheap insurance against future regressions.
+                guard year  <= 99,
+                      month >= 1, month <= 12,
+                      day   >= 1, day   <= 31,
+                      hour   <= 23,
+                      minute <= 59,
+                      second <= 59 else {
+                    return nil
+                }
                 var components = DateComponents()
                 components.year   = 2000 + Int(year)
-                components.month  = max(1, Int(month))
-                components.day    = max(1, Int(day))
+                components.month  = Int(month)
+                components.day    = Int(day)
                 components.hour   = Int(hour)
                 components.minute = Int(minute)
                 components.second = Int(second)
@@ -1159,9 +1201,11 @@ class BluetoothManager: NSObject {
             }
             
         case RESP_NO_MORE_EVENTS:
+            cancelEventFetchWatchdog()
             DispatchQueue.main.async { self.isSyncingMotionLogs = false }
-            
+
         case RESP_LOG_CLEARED:
+            cancelEventFetchWatchdog()
             DispatchQueue.main.async {
                 self.pendingEventCount = 0
                 self.isSyncingMotionLogs = false

@@ -138,7 +138,7 @@ struct MotionLogsView: View {
 
                         Button(role: .destructive, action: {
                             if skipConfirmation {
-                                motionLogManager.clearAllEvents(for: deviceID)
+                                clearAllEventsBothSides()
                             } else {
                                 showClearAllConfirmation = true
                             }
@@ -153,12 +153,12 @@ struct MotionLogsView: View {
         }
         .alert("Clear All Events?", isPresented: $showClearAllConfirmation) {
             Button("OK", role: .destructive) {
-                motionLogManager.clearAllEvents(for: deviceID)
+                clearAllEventsBothSides()
             }
             Button("No", role: .cancel) { }
             Button("Don't Show This Again", role: .destructive) {
                 skipConfirmation = true
-                motionLogManager.clearAllEvents(for: deviceID)
+                clearAllEventsBothSides()
             }
         } message: {
             Text("Are you sure you want to clear all events?")
@@ -190,6 +190,20 @@ struct MotionLogsView: View {
         }
     }
     
+    /// Clears events on iOS *and* on the firmware ring. Previously the
+    /// "Clear All Events" button only wiped the local UserDefaults cache,
+    /// so on the next sync the firmware would re-deliver everything that
+    /// the user had already dismissed. Firmware doesn't support per-event
+    /// delete (CMD_CLEAR_LOG wipes the whole ring), so "Clear Today's
+    /// Events" stays local-only — fine, it's a UI affordance for the
+    /// already-synced records.
+    private func clearAllEventsBothSides() {
+        motionLogManager.clearAllEvents(for: deviceID)
+        if bluetoothManager.connectedDevice != nil {
+            bluetoothManager.clearMotionLog()
+        }
+    }
+
     private var selectedDateText: String {
         if Calendar.current.isDateInToday(selectedDate) {
             return "No events recorded today"

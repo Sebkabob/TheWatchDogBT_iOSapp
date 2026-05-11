@@ -39,7 +39,33 @@ class MotionLogManager {
         }
     }
 
+    /// How close two timestamps must be (in seconds) to be considered the
+    /// same firmware-side event re-fetched after a connection drop. Firmware
+    /// stores 1-second precision and the wire format truncates fractional
+    /// seconds, so duplicates from a re-drain land at identical timestamps
+    /// — but allow a small slop window in case the firmware ever moves to
+    /// finer resolution and rounds differently.
+    private static let dedupWindowSeconds: TimeInterval = 2.0
+
     func addMotionEvent(_ event: MotionEvent) {
+        // Dedup. The firmware's CMD_ACK_EVENT is a no-op (only CMD_CLEAR_LOG
+        // prunes its ring), so if iOS drops mid-drain, the same ring slots
+        // come back on the next reconnect and the previous design appended
+        // them as fresh records. Match on (deviceID, eventType, timestamp
+        // ± dedupWindowSeconds). Unknown-time events can't be deduped this
+        // way — they're rare and fall through.
+        if let ts = event.timestamp {
+            let isDuplicate = motionEvents.contains { existing in
+                existing.deviceID == event.deviceID &&
+                existing.eventType == event.eventType &&
+                (existing.timestamp.map { abs($0.timeIntervalSince(ts)) < Self.dedupWindowSeconds } ?? false)
+            }
+            if isDuplicate {
+                Log.warn(.motion, "Duplicate suppressed · \(event.eventType.displayName) at \(ts)")
+                return
+            }
+        }
+
         let insertIndex = motionEvents.firstIndex { Self.sortsBefore(event, $0) } ?? motionEvents.endIndex
         motionEvents.insert(event, at: insertIndex)
         saveMotionEvents()
