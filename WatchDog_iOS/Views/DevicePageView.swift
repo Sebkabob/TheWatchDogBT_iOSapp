@@ -565,7 +565,7 @@ struct DevicePageView: View {
         .overlay(alignment: .topLeading) { settingsModeOverlay }
         .sheet(isPresented: $showMotionLogs) {
             NavigationStack {
-                MotionLogsView(bluetoothManager: bluetoothManager, deviceID: deviceID)
+                MotionReportView(bluetoothManager: bluetoothManager, deviceID: deviceID)
             }
         }
         .onAppear {
@@ -573,6 +573,13 @@ struct DevicePageView: View {
             if isShowingLiveDeviceState {
                 isLocked = (bluetoothManager.deviceState & 0x01) != 0
             }
+
+            // Ask for location permission the first time the user
+            // opens a device page. Idempotent — the system only
+            // shows the dialog once. If the user grants permission,
+            // CLLocationManager starts caching fixes in the
+            // background so the next lock has a fresh location.
+            SessionLocationStore.shared.requestAuthorizationIfNeeded()
 
             Log.info(.view, "DevicePage appeared [\(deviceID.uuidString.prefix(8))] · connected=\(isDeviceConnected) inRange=\(isDeviceInRange)")
 
@@ -788,10 +795,19 @@ struct DevicePageView: View {
     
     private func completeHold() {
         guard isDeviceConnected else { return }
-        
+
         heavyHaptic.impactOccurred(intensity: 1.0)
-        
+
         let newArmed = !isLocked
+        // Capture the current location right before the arm packet goes
+        // out — this is the lock location that the Motion Report map
+        // pin will use. SessionLocationStore stashes it in a pending
+        // slot; the SESSION_START marker that the firmware logs in
+        // response will pick it up by id when it drains back to iOS.
+        // No-op when the user disarms or when location is unauthorized.
+        if newArmed {
+            SessionLocationStore.shared.captureForUpcomingArm()
+        }
         settingsManager.updateSettings(armed: newArmed)
         settingsManager.setPersistedArmed(newArmed, for: deviceID)
         bluetoothManager.sendSettings()

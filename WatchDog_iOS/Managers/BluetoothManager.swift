@@ -1087,6 +1087,35 @@ class BluetoothManager: NSObject {
         let data = Data([CMD_REQUEST_LOG_COUNT])
         sendData(data)
     }
+
+    /// Background drain trigger — pulls anything fresh in the firmware ring
+    /// without requiring the user to open the Motion Report screen. Bails
+    /// silently if no device is connected, loyalty isn't verified yet, or a
+    /// drain is already in flight (the existing `isSyncingMotionLogs` flag
+    /// gates concurrent drains the same way `startMotionLogPolling` did).
+    /// Called from: ARMED-bit transitions (to pick up SESSION_START/END
+    /// markers promptly), motion-alert receipt (to pick up the underlying
+    /// MotionEvent rather than waiting on a periodic poll).
+    func triggerOpportunisticLogDrain() {
+        guard connectedDevice != nil,
+              loyaltyState == .verified,
+              !isSyncingMotionLogs else { return }
+        requestMotionLogCount()
+    }
+
+    /// Two-shot drain used after an ARMED 1→0 transition. The firmware
+    /// logs SESSION_END inside StateMachine_ChangeState, which is reached
+    /// the next time the state-machine loop iterates — almost always
+    /// within single-digit ms of receiving the disarm settings packet,
+    /// but a slow main loop or a deferred-EEPROM flush after ALARM_ACTIVE
+    /// could push it past the first drain. Schedule a second pull ~2 s
+    /// later so the SESSION_END almost certainly lands before the 5 s
+    /// watchdog gives up and marks the session INCOMPLETE.
+    private func scheduleFollowupDisarmDrain() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            self?.triggerOpportunisticLogDrain()
+        }
+    }
     
     func requestMotionEvent(at index: UInt16) {
         let data = Data([CMD_REQUEST_EVENT, UInt8((index >> 8) & 0xFF), UInt8(index & 0xFF)])
@@ -1623,6 +1652,13 @@ extension BluetoothManager: CBPeripheralDelegate {
                 self.alarmClearTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: false) { [weak self] _ in
                     self?.isAlarmActive = false
                 }
+                // Pull the underlying MotionEvent (and any SESSION marker
+                // that may have just been logged alongside it) from the
+                // firmware ring. The alert payload carries only the type
+                // byte — the wall-clock timestamp lives in the log entry,
+                // and we don't want to wait on the next polling cycle for
+                // the user-visible record to appear.
+                self.triggerOpportunisticLogDrain()
             }
             return
         }
@@ -1694,10 +1730,26 @@ extension BluetoothManager: CBPeripheralDelegate {
             if let firmware {
                 self.watchDogFirmwares[peripheralID] = firmware
             }
+            // Capture the pre-write ARMED bit so we can notice transitions
+            // (1→0 starts the post-disarm watchdog in MotionSessionsRepository;
+            // 0→1 clears stale watchdog state and opens a new session). The
+            // transition is also the moment a SESSION_START / SESSION_END
+            // marker has just been logged firmware-side, so kick an opportunistic
+            // drain so the marker doesn't sit in the firmware ring waiting on
+            // the next motion event to pull it.
+            let priorArmed = (self.deviceState & 0x01) != 0
             self.deviceState = settingsByte
             self.hasReceivedInitialState = true
             self.settingsManager.decodeSettings(from: settingsByte)
             if let deviceInfoByte { self.settingsManager.decodeDeviceInfo(from: deviceInfoByte) }
+            let newArmed = (settingsByte & 0x01) != 0
+            if priorArmed != newArmed {
+                MotionSessionsRepository.shared.noteArmedStateChange(armed: newArmed)
+                self.triggerOpportunisticLogDrain()
+                if priorArmed && !newArmed {
+                    self.scheduleFollowupDisarmDrain()
+                }
+            }
 
             // Clear alarm when device is no longer armed
             if !self.settingsManager.isArmed && self.isAlarmActive {

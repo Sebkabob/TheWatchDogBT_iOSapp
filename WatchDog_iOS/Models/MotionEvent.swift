@@ -16,6 +16,15 @@ enum MotionEventType: UInt8, Codable {
     case tilted       = 5
     case doorOpening  = 6
     case doorClosing  = 7
+    /// Firmware-emitted SESSION_START marker (motion-logger value 0x10).
+    /// Not a "motion" event per se — bookends a locked period for the
+    /// MotionSessionParser. Display strings are mostly never seen in
+    /// regular UI because the parser pulls these out of the events array
+    /// before rendering; they appear only in the Session detail screen's
+    /// event log as "Session start · locked".
+    case sessionStart = 0x10
+    /// Firmware-emitted SESSION_END marker (motion-logger value 0x11).
+    case sessionEnd   = 0x11
 
     var displayName: String {
         switch self {
@@ -27,6 +36,8 @@ enum MotionEventType: UInt8, Codable {
         case .tilted:       return "Tilted"
         case .doorOpening:  return "Door Opening"
         case .doorClosing:  return "Door Closing"
+        case .sessionStart: return "Session Start"
+        case .sessionEnd:   return "Session End"
         }
     }
 
@@ -40,7 +51,16 @@ enum MotionEventType: UInt8, Codable {
         case .tilted:       return "angle"
         case .doorOpening:  return "door.left.hand.open"
         case .doorClosing:  return "door.left.hand.closed"
+        case .sessionStart: return "lock.fill"
+        case .sessionEnd:   return "lock.open.fill"
         }
+    }
+
+    /// True for the firmware session-boundary markers (0x10, 0x11). The
+    /// MotionSessionParser treats these as control events and excludes
+    /// them from a session's `events` array.
+    var isSessionMarker: Bool {
+        self == .sessionStart || self == .sessionEnd
     }
 }
 
