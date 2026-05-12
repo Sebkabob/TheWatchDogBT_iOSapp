@@ -30,6 +30,10 @@ struct MotionReportView: View {
     @State private var calendarSelectedDate: Date = Date()
     @State private var showClearAllConfirmation = false
     @State private var showMonthYearPicker = false
+    /// Day-keyed set of feed sections the user has tapped "Show more"
+    /// on. Empty by default — days with >2 sessions render the first
+    /// two and an expand button until the user opts in.
+    @State private var expandedFeedDays: Set<Date> = []
     @AppStorage("skipClearEventsConfirmation") private var skipConfirmation = false
 
     enum Tab: String, CaseIterable, Identifiable {
@@ -199,47 +203,87 @@ struct MotionReportView: View {
 
     // MARK: - Feed
 
+    @ViewBuilder
     private var feedTab: some View {
-        Group {
-            if deviceSessions.isEmpty {
-                emptyState(
-                    icon: "lock.shield",
-                    title: "No sessions yet",
-                    message: "Lock your WatchDog to start the first session."
-                )
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        if let active = deviceSessions.first(where: { $0.status == .active }) {
-                            ActiveSessionCard(session: active, deviceID: deviceID)
-                                .padding(.horizontal, 16)
-                                .padding(.bottom, 14)
-                        }
+        if deviceSessions.isEmpty {
+            emptyState(
+                icon: "lock.shield",
+                title: "No sessions yet",
+                message: "Lock your WatchDog to start the first session."
+            )
+        } else {
+            feedScrollContent
+        }
+    }
 
-                        let closed = deviceSessions.filter { $0.status != .active }
-                        ForEach(Array(groupedByDay(closed)), id: \.key) { day, group in
-                            SectionHeader(text: sectionTitle(for: day))
-                                .padding(.horizontal, 20)
-                                .padding(.top, 4)
-                                .padding(.bottom, 6)
-
-                            ForEach(group) { session in
-                                NavigationLink {
-                                    SessionDetailView(session: session)
-                                } label: {
-                                    SessionCard(session: session)
-                                        .padding(.horizontal, 16)
-                                        .padding(.bottom, 10)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                    }
-                    .padding(.top, 4)
-                    .padding(.bottom, 24)
+    /// Pulled out of `feedTab` because the combined expression (Group +
+    /// ScrollView + LazyVStack + nested ForEach with conditional rows
+    /// + animation closure) tipped Swift's type-checker over its
+    /// inference budget. Splitting the body into named subviews keeps
+    /// each piece simple enough for the compiler to chew through.
+    private var feedScrollContent: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                feedActiveCard
+                let closed = deviceSessions.filter { $0.status != .active }
+                let grouped = groupedByDay(closed)
+                ForEach(Array(grouped), id: \.key) { day, group in
+                    feedDaySection(day: day, group: group)
                 }
             }
+            .padding(.top, 8)
+            .padding(.bottom, 24)
         }
+    }
+
+    @ViewBuilder
+    private var feedActiveCard: some View {
+        if let active = deviceSessions.first(where: { $0.status == .active }) {
+            ActiveSessionCard(session: active, deviceID: deviceID)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 18)
+        }
+    }
+
+    @ViewBuilder
+    private func feedDaySection(day: Date, group: [MotionSession]) -> some View {
+        SectionHeader(text: sectionTitle(for: day))
+            .padding(.horizontal, 20)
+            .padding(.top, 6)
+            .padding(.bottom, 8)
+
+        let isExpanded = expandedFeedDays.contains(day)
+        let visible: [MotionSession] = isExpanded ? group : Array(group.prefix(2))
+
+        ForEach(visible) { session in
+            feedSessionRow(session: session)
+        }
+
+        if !isExpanded && group.count > 2 {
+            FeedExpandRow(hiddenCount: group.count - 2) {
+                // Discard `insert`'s tuple return so the closure's
+                // inferred type stays `() -> Void` to match
+                // FeedExpandRow.onTap. Without the explicit `_ =`,
+                // Swift propagates the (Bool, Date) tuple all the
+                // way up and the compiler rejects the call.
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    _ = expandedFeedDays.insert(day)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 10)
+        }
+    }
+
+    private func feedSessionRow(session: MotionSession) -> some View {
+        NavigationLink {
+            SessionDetailView(session: session)
+        } label: {
+            SessionCard(session: session)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 10)
+        }
+        .buttonStyle(.plain)
     }
 
     /// Bucket sessions by their start day (or distantPast for unknown-start).
@@ -298,8 +342,8 @@ struct MotionReportView: View {
                     LazyVStack(spacing: 0) {
                         SectionHeader(text: dayLabel(calendarSelectedDate).uppercased())
                             .padding(.horizontal, 20)
-                            .padding(.top, 12)
-                            .padding(.bottom, 6)
+                            .padding(.top, 14)
+                            .padding(.bottom, 8)
 
                         ForEach(dayList) { session in
                             NavigationLink {
@@ -469,6 +513,7 @@ struct MotionReportView: View {
 
         motionLogManager.clearAllEvents(for: deviceID, protecting: protected)
         locationStore.forget(sessionIDs: doomedLocationIDs)
+        SessionNameStore.shared.forget(sessionIDs: doomedLocationIDs)
         if bluetoothManager.connectedDevice != nil {
             bluetoothManager.clearMotionLog()
         }
@@ -564,6 +609,7 @@ struct MotionReportView: View {
                                             deviceID: deviceID,
                                             protecting: protected)
         locationStore.forget(sessionIDs: doomedLocationIDs)
+        SessionNameStore.shared.forget(sessionIDs: doomedLocationIDs)
     }
 
     // MARK: - Lifecycle hooks
@@ -604,12 +650,45 @@ private struct SectionHeader: View {
     var body: some View {
         HStack {
             Text(text)
-                .font(.caption)
+                .font(.subheadline)
                 .fontWeight(.semibold)
                 .foregroundColor(.secondary)
-                .tracking(0.5)
+                .tracking(0.4)
             Spacer()
         }
+    }
+}
+
+/// "Show N more" row that replaces hidden session cards in a feed day
+/// section when the day has more than 2 sessions. Styled as a compact
+/// link-style row centred under the visible cards.
+private struct FeedExpandRow: View {
+    let hiddenCount: Int
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 6) {
+                Image(systemName: "ellipsis")
+                    .font(.callout)
+                    .fontWeight(.semibold)
+                Text("Show \(hiddenCount) more")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+            }
+            .foregroundColor(.accentColor)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color(.systemBackground))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color(.separator).opacity(0.6), lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
     }
 }
 

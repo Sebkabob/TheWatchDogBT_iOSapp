@@ -35,11 +35,35 @@ struct SessionDetailView: View {
     @State private var liveNow: Date = Date()
     private let timer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
 
+    /// User-editable session name. Initialised from SessionNameStore in
+    /// `onAppear` so the field reflects any previously-set name, then
+    /// kept in sync on every change.
+    @State private var sessionName: String = ""
+
+    /// Reverse-geocoded street-level description of the lock location.
+    /// Filled in asynchronously by CLGeocoder when the view appears.
+    /// nil while loading or when the session has no location at all;
+    /// the UI shows the address-row only when a value is available.
+    @State private var addressLine: String? = nil
+    private static let geocoder = CLGeocoder()
+
+    private let maxNameLength = 32
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                sessionNameField
+                    .padding(.horizontal, 16)
+
                 statusBanner
                     .padding(.horizontal, 16)
+
+                if let addressLine, !addressLine.isEmpty {
+                    Text("Near \(addressLine)")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 16)
+                }
 
                 mapThumbnail
                     .padding(.horizontal, 16)
@@ -90,6 +114,38 @@ struct SessionDetailView: View {
             }
         }
         .onReceive(timer) { liveNow = $0 }
+        .onAppear {
+            sessionName = SessionNameStore.shared.name(for: session.id) ?? ""
+            startReverseGeocode()
+        }
+    }
+
+    // MARK: - Session name
+
+    /// Editable name field, same visual style as the device-name field
+    /// in DevicePageView's settings panel. Empty by default; the user
+    /// can type a label like "Office desk" or "Bike at Blue Bottle" and
+    /// it persists to UserDefaults via SessionNameStore.
+    private var sessionNameField: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Session name")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            TextField("Name this session", text: $sessionName)
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(Color(.systemGray5))
+                .cornerRadius(10)
+                .submitLabel(.done)
+                .autocorrectionDisabled(true)
+                .onChange(of: sessionName) { _, newValue in
+                    // Enforce the same length cap WatchDog names use.
+                    let limited = String(newValue.prefix(maxNameLength))
+                    if limited != newValue { sessionName = limited }
+                    SessionNameStore.shared.setName(limited, for: session.id)
+                }
+        }
     }
 
     // MARK: - Banner
@@ -165,14 +221,28 @@ struct SessionDetailView: View {
     @ViewBuilder
     private var mapThumbnail: some View {
         if let location = SessionLocationStore.shared.location(for: session.id) {
-            DetailMap(location: location, status: session.status)
-                .frame(maxWidth: .infinity)
-                .frame(height: 140)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(Color(.separator).opacity(0.8), lineWidth: 1.2)
-                )
+            Button {
+                openInAppleMaps(location: location)
+            } label: {
+                DetailMap(location: location, status: session.status)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 140)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color(.separator).opacity(0.8), lineWidth: 1.2)
+                    )
+                    // Tap glyph in the corner so it's discoverable that
+                    // the map is interactive. The Map view itself has
+                    // interactionModes = [] so it doesn't catch the tap.
+                    .overlay(alignment: .topTrailing) {
+                        Image(systemName: "arrow.up.forward.square.fill")
+                            .font(.title3)
+                            .foregroundStyle(.white, Color.accentColor)
+                            .padding(8)
+                    }
+            }
+            .buttonStyle(.plain)
         } else {
             VStack(spacing: 6) {
                 Image(systemName: "mappin.slash")
@@ -198,6 +268,56 @@ struct SessionDetailView: View {
                             .stroke(Color(.separator).opacity(0.8), lineWidth: 1.2)
                     )
             )
+        }
+    }
+
+    // MARK: - Map interaction helpers
+
+    /// Launches Apple Maps centred on the lock coordinate with a pin.
+    /// Uses the captured session name (if any) as the pin title so the
+    /// destination card reads "Office desk" / "Bike at Blue Bottle"
+    /// rather than the raw coordinate.
+    private func openInAppleMaps(location: SessionLocation) {
+        let coordinate = location.coordinate
+        let placemark = MKPlacemark(coordinate: coordinate)
+        let mapItem = MKMapItem(placemark: placemark)
+        let trimmed = sessionName.trimmingCharacters(in: .whitespacesAndNewlines)
+        mapItem.name = trimmed.isEmpty ? "WatchDog session" : trimmed
+        mapItem.openInMaps(launchOptions: [
+            MKLaunchOptionsMapTypeKey: MKMapType.standard.rawValue
+        ])
+    }
+
+    /// Reverse-geocode the lock coordinate into a short human-readable
+    /// line ("Near 1234 State St") that renders above the map. CLGeocoder
+    /// is rate-limited and asynchronous; we cache nothing here because
+    /// reverse-geocoding once per detail-view appearance is well below
+    /// the daily quota, but we do bail silently on any error.
+    private func startReverseGeocode() {
+        guard let location = SessionLocationStore.shared.location(for: session.id) else {
+            addressLine = nil
+            return
+        }
+        let cl = CLLocation(latitude: location.lat, longitude: location.lng)
+        Self.geocoder.reverseGeocodeLocation(cl) { placemarks, _ in
+            guard let placemark = placemarks?.first else { return }
+            // Prefer "subThoroughfare thoroughfare" (e.g. "1234 State
+            // St"); fall back to thoroughfare alone, then name, then
+            // locality so we always have something useful to show.
+            let pieces = [placemark.subThoroughfare, placemark.thoroughfare]
+                .compactMap { $0 }
+                .filter { !$0.isEmpty }
+            let line: String?
+            if !pieces.isEmpty {
+                line = pieces.joined(separator: " ")
+            } else if let name = placemark.name, !name.isEmpty {
+                line = name
+            } else {
+                line = placemark.locality
+            }
+            DispatchQueue.main.async {
+                self.addressLine = line
+            }
         }
     }
 

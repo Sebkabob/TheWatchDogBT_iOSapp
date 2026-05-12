@@ -235,30 +235,73 @@ private struct SessionMapPinView: View {
 // MARK: - Cluster detail (tap a multi-session pin)
 
 /// Shown when the user taps a cluster pin that bundles more than one
-/// session. Plain list of session cards in newest-first order, each
-/// pushing to the regular SessionDetailView. Reuses SessionCard from
-/// MotionReportView so the visual language matches the feed exactly.
+/// session. Groups sessions by the day they started so the user can see
+/// which dates the bundled sessions occurred on (the original request:
+/// "show the dates they occurred on"). Each session row pushes to the
+/// regular SessionDetailView via the shared SessionCard.
 struct ClusterDetailView: View {
     let cluster: SessionCluster
 
+    /// Sessions bucketed by start-of-day, sorted newest-day-first. The
+    /// inner array within each day is newest-first too, so the most
+    /// recent session in the group surfaces at the top of its day.
+    private var sessionsByDay: [(day: Date, sessions: [MotionSession])] {
+        let cal = Calendar.current
+        var buckets: [Date: [MotionSession]] = [:]
+        for session in cluster.sessionsNewestFirst {
+            let day: Date = session.startedAt
+                .map { cal.startOfDay(for: $0) } ?? .distantPast
+            buckets[day, default: []].append(session)
+        }
+        return buckets
+            .map { ($0.key, $0.value) }
+            .sorted { $0.0 > $1.0 }
+    }
+
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: 10) {
-                ForEach(cluster.sessionsNewestFirst) { session in
-                    NavigationLink {
-                        SessionDetailView(session: session)
-                    } label: {
-                        SessionCard(session: session)
-                            .padding(.horizontal, 16)
+            LazyVStack(spacing: 0) {
+                ForEach(Array(sessionsByDay.enumerated()), id: \.element.day) { _, bucket in
+                    HStack {
+                        Text(dayHeader(for: bucket.day))
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.secondary)
+                            .tracking(0.4)
+                        Spacer()
                     }
-                    .buttonStyle(.plain)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 14)
+                    .padding(.bottom, 8)
+
+                    ForEach(bucket.sessions) { session in
+                        NavigationLink {
+                            SessionDetailView(session: session)
+                        } label: {
+                            SessionCard(session: session)
+                                .padding(.horizontal, 16)
+                                .padding(.bottom, 10)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
             }
-            .padding(.vertical, 14)
+            .padding(.top, 4)
+            .padding(.bottom, 24)
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("\(cluster.count) sessions here")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func dayHeader(for day: Date) -> String {
+        let cal = Calendar.current
+        if day == .distantPast { return "UNKNOWN DATE" }
+        if cal.isDateInToday(day)     { return "TODAY" }
+        if cal.isDateInYesterday(day) { return "YESTERDAY" }
+        let f = DateFormatter()
+        f.dateFormat = "EEEE, MMMM d"
+        return f.string(from: day).uppercased()
     }
 }
 
