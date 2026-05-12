@@ -803,6 +803,29 @@ struct DevicePageView: View {
         settingsManager.updateSettings(armed: newArmed)
         settingsManager.setPersistedArmed(newArmed, for: deviceID)
         bluetoothManager.sendSettings()
+        // Synthesise a session-boundary MotionEvent iOS-side. The
+        // firmware used to log these via MOTION_TYPE_SESSION_START /
+        // _END, but we backed that out because the auto-disarm path
+        // at reconnect was adding a ~20 ms EEPROM write inside the
+        // loyalty handshake window. The user's arm/disarm tap is the
+        // authoritative iOS-side signal of a session boundary, so we
+        // emit the marker here and the parser picks it up unchanged.
+        //
+        // Gated on the "Disable motion logging" hardware switch — when
+        // logging is off, we skip creating the boundary marker, which
+        // means no session record is built for this arm cycle. The
+        // Motion Report stays silent for the duration of the disabled
+        // period. Re-enabling logging restores normal behaviour from
+        // the next arm tap forward.
+        if settingsManager.loggingEnabled {
+            let marker = MotionEvent(
+                deviceID: deviceID,
+                timestamp: Date(),
+                eventType: newArmed ? .sessionStart : .sessionEnd,
+                alarmSounded: false
+            )
+            MotionLogManager.shared.addMotionEvent(marker)
+        }
         // Location capture happens AFTER the lock command goes out so
         // SessionLocationStore's first-time CLLocationManager
         // initialisation (which can take a few ms on the main thread)

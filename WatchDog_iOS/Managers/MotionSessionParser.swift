@@ -51,6 +51,7 @@ struct MotionSessionParser {
     ///   - now: injection seam for tests.
     static func parse(events: [MotionEvent],
                       currentlyArmed: Bool,
+                      isConnected: Bool = true,
                       lastDisarmAt: Date?,
                       gracePeriod: TimeInterval = defaultGracePeriod,
                       now: Date = Date()) -> [MotionSession] {
@@ -120,8 +121,21 @@ struct MotionSessionParser {
         }
 
         if let start = openStart {
+            // Tail-status rules:
+            //   - Disconnected: we can't observe the device's current
+            //     state, so the session is `.activeOffline` regardless
+            //     of what currentlyArmed reads. (deviceState gets reset
+            //     to 0 on disconnect, so currentlyArmed is misleading
+            //     here — we'd otherwise wrongly say .incomplete.)
+            //   - Connected + armed: live session, `.active`.
+            //   - Connected + recently disarmed (within grace window):
+            //     still `.active`; SESSION_END is presumably en route.
+            //   - Connected + not armed past grace: truly orphaned →
+            //     `.incomplete`.
             let tailStatus: SessionStatus
-            if currentlyArmed {
+            if !isConnected {
+                tailStatus = .activeOffline
+            } else if currentlyArmed {
                 tailStatus = .active
             } else if let disarm = lastDisarmAt,
                       now.timeIntervalSince(disarm) < gracePeriod {

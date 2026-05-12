@@ -158,9 +158,15 @@ struct SessionDetailView: View {
                     .fontWeight(.semibold)
                     .tracking(0.4)
                 Spacer()
-                Text(durationString)
-                    .font(.caption)
-                    .monospacedDigit()
+                // Self-driving duration counter — TimelineView re-runs
+                // its closure every second so an active session's
+                // elapsed time advances live, regardless of whether
+                // any other state in the view is changing.
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    Text(session.shortDurationString(now: context.date))
+                        .font(.caption)
+                        .monospacedDigit()
+                }
             }
             Text(headlineText)
                 .font(.headline)
@@ -178,17 +184,17 @@ struct SessionDetailView: View {
         )
     }
 
-    private var durationString: String {
-        session.shortDurationString(now: liveNow)
-    }
+    // (durationString helper removed — the banner now renders its own
+    // duration via TimelineView so this property had no callers.)
 
     private var headlineText: String {
         switch session.status {
-        case .alarmed:    return "Alarm fired during this session"
-        case .disturbed:  return "Motion detected"
-        case .peaceful:   return "Nothing happened"
-        case .active:     return "Session in progress"
-        case .incomplete: return "Session ended uncleanly"
+        case .alarmed:        return "Alarm fired during this session"
+        case .disturbed:      return "Motion detected"
+        case .peaceful:       return "Nothing happened"
+        case .active:         return "Session in progress"
+        case .activeOffline:  return "Session in progress (device offline)"
+        case .incomplete:     return "Session ended uncleanly"
         }
     }
 

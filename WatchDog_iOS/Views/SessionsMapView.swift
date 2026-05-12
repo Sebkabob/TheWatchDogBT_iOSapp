@@ -180,7 +180,7 @@ struct SessionsMapView: View {
     /// rule in MotionReportView so an alarmed session in a cluster
     /// surfaces the way an alarmed day on the calendar would.
     private static func worstStatus(in pins: [SessionMapPin]) -> SessionStatus {
-        let order: [SessionStatus] = [.peaceful, .disturbed, .incomplete, .active, .alarmed]
+        let order: [SessionStatus] = [.peaceful, .disturbed, .incomplete, .activeOffline, .active, .alarmed]
         var idx = 0
         for pin in pins {
             if let pinIdx = order.firstIndex(of: pin.session.status), pinIdx > idx {

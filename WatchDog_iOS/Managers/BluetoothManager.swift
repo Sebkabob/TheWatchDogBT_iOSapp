@@ -959,12 +959,22 @@ class BluetoothManager: NSObject {
     /// Called once after CLAIM_OK or VERIFY_OK. Triggers the deferred
     /// "we're now ready to send normal commands" work that used to run
     /// unconditionally 1.0 s post-connect.
+    ///
+    /// Notable change: we no longer send settings here. `sendSettings`
+    /// encodes the iOS-side `SettingsManager` state (including the
+    /// ARMED bit) and writes it back to the firmware. If the user
+    /// disconnected mid-session while the device was still armed,
+    /// `settingsManager.isArmed` stays `true` locally; the firmware
+    /// auto-disarms on reconnect, then this hook used to "helpfully"
+    /// re-send ARMED=1 and re-arm the device, producing the visible
+    /// unlock → stabilize → relock cycle. The fix: only kick the log
+    /// drain. Settings will re-sync the next time the user actually
+    /// changes something (which also handles the clock-anchor
+    /// concern). Events drained at reconnect may carry unknown-time
+    /// timestamps until the next user-initiated settings change.
     private func onLoyaltyVerifiedHook() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self = self, self.connectedDevice != nil else { return }
-            // Anchor firmware's clock before pulling logs — otherwise events
-            // generated this session arrive with the unknown-time sentinel.
-            self.sendSettings()
             self.requestMotionLogCount()
         }
     }
@@ -1178,7 +1188,12 @@ class BluetoothManager: NSObject {
                 return Calendar.current.date(from: components)
             }()
 
-            let config = MotionTypeConfig.convert(firmwareType: motionType)
+            // Events arriving via the log drain were logged firmware-
+            // side during the prior disconnected window (per the
+            // motion-logger's connectionStatus gate), so `wasConnected`
+            // is false — silent-when-connected can't have suppressed
+            // them.
+            let config = MotionTypeConfig.convert(firmwareType: motionType, wasConnected: false)
             guard let deviceID = self.connectedDevice?.id else { return }
             let event = MotionEvent(deviceID: deviceID, timestamp: timestamp, eventType: config.eventType, alarmSounded: config.alarmSounded)
             let charging = (batteryByte & 0x80) != 0
@@ -1623,17 +1638,31 @@ extension BluetoothManager: CBPeripheralDelegate {
                 self.alarmClearTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: false) { [weak self] _ in
                     self?.isAlarmActive = false
                 }
-                // NOTE: previously we triggered an opportunistic log
-                // drain here so the underlying MotionEvent landed in
-                // iOS immediately. That was creating BLE traffic on
-                // every motion alert — during an active alarm, motion
-                // alerts can fire several times a second, and each one
-                // queued another CMD_REQUEST_LOG_COUNT against the
-                // firmware while the alarm was still running. The
-                // events still get pulled — at the 2 s follow-up after
-                // the user disarms — and the alert payload itself
-                // already carries the live state for the iOS UI to
-                // reflect immediately.
+                // Synthesise the MotionEvent iOS-side using wall-clock
+                // time. Firmware skips its EEPROM write while connected
+                // (saves write wear, avoids the page-commit stall) and
+                // relies on this iOS-side record for the in-session
+                // view. Events that happen while disconnected are
+                // still logged firmware-side and drain on reconnect.
+                //
+                // Gated on the LOGGING bit so the "Disable motion
+                // logging" hardware setting reaches iOS too: when off,
+                // the live alert path stops creating MotionEvent
+                // records, so sessions during that period show no
+                // motion data (consistent with the firmware-side
+                // suppression of EEPROM logging).
+                if let deviceID = self.connectedDevice?.id,
+                   SettingsManager.shared.loggingEnabled {
+                    let config = MotionTypeConfig.convert(firmwareType: motionType.rawValue,
+                                                          wasConnected: true)
+                    let event = MotionEvent(
+                        deviceID: deviceID,
+                        timestamp: Date(),
+                        eventType: config.eventType,
+                        alarmSounded: config.alarmSounded
+                    )
+                    MotionLogManager.shared.addMotionEvent(event)
+                }
             }
             return
         }

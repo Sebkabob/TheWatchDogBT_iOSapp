@@ -28,6 +28,13 @@ import SwiftUI
 
 enum SessionStatus: String, Codable {
     case active
+    /// Session was open at the last known connection but iOS is no
+    /// longer connected to the device, so we genuinely don't know its
+    /// current state — it might still be armed and protecting, or it
+    /// might have been disarmed by an event we can't see. Distinct
+    /// from `.incomplete` (which is reserved for sessions where we
+    /// know the device is no longer armed but no SESSION_END landed).
+    case activeOffline
     case peaceful
     case disturbed
     case alarmed
@@ -35,11 +42,12 @@ enum SessionStatus: String, Codable {
 
     var label: String {
         switch self {
-        case .active:     return "Active"
-        case .peaceful:   return "Peaceful"
-        case .disturbed:  return "Disturbed"
-        case .alarmed:    return "Alarmed"
-        case .incomplete: return "Incomplete"
+        case .active:         return "Active"
+        case .activeOffline:  return "Offline"
+        case .peaceful:       return "Peaceful"
+        case .disturbed:      return "Disturbed"
+        case .alarmed:        return "Alarmed"
+        case .incomplete:     return "Incomplete"
         }
     }
 
@@ -48,11 +56,12 @@ enum SessionStatus: String, Codable {
     /// hand-rolling palettes.
     var badgeForeground: Color {
         switch self {
-        case .active:     return .blue
-        case .peaceful:   return .green
-        case .disturbed:  return .orange
-        case .alarmed:    return .red
-        case .incomplete: return .orange
+        case .active:         return .blue
+        case .activeOffline:  return .gray
+        case .peaceful:       return .green
+        case .disturbed:      return .orange
+        case .alarmed:        return .red
+        case .incomplete:     return .orange
         }
     }
 

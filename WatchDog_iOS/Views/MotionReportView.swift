@@ -59,9 +59,11 @@ struct MotionReportView: View {
     /// when multiple WatchDogs share the same iOS install.
     private var deviceSessions: [MotionSession] {
         let myEvents = motionLogManager.motionEvents.filter { $0.deviceID == deviceID }
+        let isConnected = bluetoothManager.connectedDevice?.id == deviceID
         return MotionSessionParser.parse(
             events: myEvents,
             currentlyArmed: (bluetoothManager.deviceState & 0x01) != 0,
+            isConnected: isConnected,
             lastDisarmAt: nil
         )
     }
@@ -400,7 +402,7 @@ struct MotionReportView: View {
 
     private func worst(_ a: SessionStatus?, _ b: SessionStatus) -> SessionStatus {
         guard let a = a else { return b }
-        let order: [SessionStatus] = [.peaceful, .disturbed, .incomplete, .active, .alarmed]
+        let order: [SessionStatus] = [.peaceful, .disturbed, .incomplete, .activeOffline, .active, .alarmed]
         let ai = order.firstIndex(of: a) ?? 0
         let bi = order.firstIndex(of: b) ?? 0
         return ai > bi ? a : b
@@ -490,8 +492,13 @@ struct MotionReportView: View {
     /// normally. The firmware ring being temporarily out of sync with
     /// iOS is harmless — the eventual SESSION_END is what matters.
     private func protectedEventIDs() -> Set<UUID> {
+        // Both `.active` (connected, armed) and `.activeOffline`
+        // (open session but we lost the connection mid-session) count
+        // as still-in-progress for clear-immunity purposes — we don't
+        // want a wipe to torch a session we genuinely don't know the
+        // current state of.
         guard let active = deviceSessions
-            .first(where: { $0.status == .active }) else {
+            .first(where: { $0.status == .active || $0.status == .activeOffline }) else {
             return []
         }
         var ids: Set<UUID> = [active.id]            // SESSION_START
@@ -716,10 +723,6 @@ struct SessionStatusBadge: View {
 private struct ActiveSessionCard: View {
     let session: MotionSession
     let deviceID: UUID
-    @State private var liveNow: Date = Date()
-    /// Tick once a second so the duration counter advances live. Keep
-    /// state-local so other cards don't redraw on this timer.
-    private let timer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
 
     var body: some View {
         NavigationLink {
@@ -738,10 +741,19 @@ private struct ActiveSessionCard: View {
                             .foregroundColor(SessionStatus.active.badgeForeground)
                     }
                     Spacer()
-                    Text(session.shortDurationString(now: liveNow))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .monospacedDigit()
+                    // TimelineView gives us a self-driving redraw of
+                    // just this Text every second, without competing
+                    // with the parent's observation tracking the way
+                    // a manual Timer.publish + onReceive does. The
+                    // duration counter now ticks reliably while the
+                    // user is on the feed without depending on motion
+                    // events to trigger a re-render.
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        Text(session.shortDurationString(now: context.date))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .monospacedDigit()
+                    }
                 }
                 Text(locationPlaceholder)
                     .font(.subheadline)
@@ -781,10 +793,17 @@ private struct ActiveSessionCard: View {
             )
         }
         .buttonStyle(.plain)
-        .onReceive(timer) { liveNow = $0 }
     }
 
-    private var locationPlaceholder: String { "WatchDog session" }
+    /// User-supplied session name if any, else the default placeholder.
+    /// Reads from SessionNameStore (@Observable) so the card updates
+    /// reactively when the user types in the SessionDetailView name
+    /// field.
+    private var displayName: String {
+        SessionNameStore.shared.name(for: session.id) ?? "WatchDog session"
+    }
+
+    private var locationPlaceholder: String { displayName }
 
     private var activeSubtitle: String {
         let count = session.events.count
@@ -834,7 +853,9 @@ struct SessionCard: View {
         )
     }
 
-    private var locationPlaceholder: String { "WatchDog session" }
+    private var locationPlaceholder: String {
+        SessionNameStore.shared.name(for: session.id) ?? "WatchDog session"
+    }
 
     private var timeRangeText: String {
         let f = DateFormatter()
