@@ -240,7 +240,10 @@ private struct SessionMapPinView: View {
 /// "show the dates they occurred on"). Each session row pushes to the
 /// regular SessionDetailView via the shared SessionCard.
 struct ClusterDetailView: View {
+    @Environment(\.dismiss) private var dismiss
     let cluster: SessionCluster
+
+    @State private var showDeleteConfirmation = false
 
     /// Sessions bucketed by start-of-day, sorted newest-day-first. The
     /// inner array within each day is newest-first too, so the most
@@ -292,6 +295,40 @@ struct ClusterDetailView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle("\(cluster.count) sessions here")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Menu {
+                    Button(role: .destructive) {
+                        showDeleteConfirmation = true
+                    } label: {
+                        Label("Delete sessions at this location",
+                              systemImage: "trash")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.title3)
+                }
+            }
+        }
+        .confirmationDialog(
+            "Delete \(cluster.count) sessions at this location?",
+            isPresented: $showDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) { deleteAllAtLocation() }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("This wipes every session pinned to this spot and the events inside them. The pin and any name you've set will be removed too.")
+        }
+    }
+
+    private func deleteAllAtLocation() {
+        let sessions = cluster.sessionsNewestFirst
+        let ids = Set(sessions.map { $0.id })
+        MotionLogManager.shared.remove(sessions: sessions)
+        SessionLocationStore.shared.forget(sessionIDs: ids)
+        SessionNameStore.shared.forget(sessionIDs: ids)
+        dismiss()
     }
 
     private func dayHeader(for day: Date) -> String {

@@ -32,10 +32,20 @@ struct MotionTypeConfig {
                         wasConnected: Bool) -> (eventType: MotionEventType, alarmSounded: Bool) {
         let eventType = MotionEventType(rawValue: firmwareType) ?? .none
         let settings = SettingsManager.shared
-        let triggers = settings.shouldTriggerAlarm(for: eventType)
+
+        // The firmware escalates any of {inMotion, shaken, impact,
+        // freefall} to ALARM_ACTIVE when the device is armed — the
+        // iOS-only `alarmTriggers` per-type set never flowed to the
+        // firmware, so honouring it here was misreporting reality.
+        // The session-detail event log will now correctly show
+        // "alarm fired" for every event that actually rang the
+        // buzzer, regardless of whether iOS thought that type was
+        // "filterable" via its local set.
+        let firmwareFiresOn: Set<MotionEventType> = [.inMotion, .shaken, .impact, .freefall]
+        let isAlarmTriggering = firmwareFiresOn.contains(eventType)
         let alarmEnabled = settings.alarmType != .none && !settings.alarmDisabled
         let silencedByConnection = wasConnected && settings.disableAlarmWhenConnected
-        let actuallyFires = triggers && alarmEnabled && !silencedByConnection
+        let actuallyFires = isAlarmTriggering && alarmEnabled && !silencedByConnection
         return (eventType, actuallyFires)
     }
 }

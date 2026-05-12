@@ -122,27 +122,31 @@ struct MotionSessionParser {
 
         if let start = openStart {
             // Tail-status rules:
-            //   - Disconnected: we can't observe the device's current
-            //     state, so the session is `.activeOffline` regardless
-            //     of what currentlyArmed reads. (deviceState gets reset
-            //     to 0 on disconnect, so currentlyArmed is misleading
-            //     here — we'd otherwise wrongly say .incomplete.)
-            //   - Connected + armed: live session, `.active`.
-            //   - Connected + recently disarmed (within grace window):
-            //     still `.active`; SESSION_END is presumably en route.
-            //   - Connected + not armed past grace: truly orphaned →
-            //     `.incomplete`.
-            let tailStatus: SessionStatus
-            if !isConnected {
-                tailStatus = .activeOffline
-            } else if currentlyArmed {
-                tailStatus = .active
-            } else if let disarm = lastDisarmAt,
-                      now.timeIntervalSince(disarm) < gracePeriod {
-                tailStatus = .active
-            } else {
-                tailStatus = .incomplete
-            }
+            //   - Connected: an open session (no SESSION_END logged) is
+            //     `.active`. We deliberately do NOT consult
+            //     `currentlyArmed` here — the firmware's ARMED bit
+            //     briefly flickers around settings writes (e.g. when
+            //     the user toggles "Silent when connected" mid-session,
+            //     the status notify ordering produced transient
+            //     ARMED=0 reads and the session would flip to
+            //     `.incomplete` before settling back). Since SESSION_END
+            //     is now synthesised iOS-side on disarm-tap, the
+            //     absence of SESSION_END means the session is genuinely
+            //     still open.
+            //   - Disconnected: same open session, but the device is
+            //     out of reach — `.activeOffline` so the UI surfaces
+            //     that we can't confirm current state.
+            // Orphaned SESSION_STARTs (two starts without an end
+            // between them) still resolve to `.incomplete` via the
+            // case handler above.
+            // Parameters `currentlyArmed`, `lastDisarmAt`, and
+            // `gracePeriod` are kept on the signature for the test
+            // harness but no longer steer the tail status.
+            _ = currentlyArmed
+            _ = lastDisarmAt
+            _ = gracePeriod
+            _ = now
+            let tailStatus: SessionStatus = isConnected ? .active : .activeOffline
             sessions.append(makeSession(start: start,
                                         endEvent: nil,
                                         events: openEvents,
@@ -196,6 +200,7 @@ struct MotionSessionParser {
                                     events: [MotionEvent],
                                     status: SessionStatus) -> MotionSession {
         MotionSession(id: start.id,
+                      endEventID: endEvent?.id,
                       deviceID: start.deviceID,
                       startedAt: start.timestamp,
                       endedAt: endEvent?.timestamp,

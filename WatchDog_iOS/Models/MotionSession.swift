@@ -78,6 +78,11 @@ struct MotionSession: Identifiable {
     /// The id of the SESSION_START MotionEvent — stable across rebuilds so
     /// SwiftUI ForEach diffing doesn't churn the rows.
     let id: UUID
+    /// id of the SESSION_END MotionEvent if the session was closed
+    /// cleanly. Used by delete actions to wipe the matching boundary
+    /// marker alongside the SESSION_START. nil for open or orphaned
+    /// sessions.
+    let endEventID: UUID?
     let deviceID: UUID
     /// Calendar time the session was opened. `nil` if the SESSION_START
     /// landed before iOS anchored the firmware clock — the parser will
@@ -91,6 +96,17 @@ struct MotionSession: Identifiable {
     /// those live as startedAt / endedAt. The detail screen's timeline
     /// chart and event log are both driven by this array.
     let events: [MotionEvent]
+
+    /// Every MotionEvent id that belongs to this session: the SESSION_START,
+    /// every motion event between bookends, and the SESSION_END (when the
+    /// session was closed). Used by the delete-session menus to remove the
+    /// whole record from MotionLogManager in one pass.
+    var allEventIDs: Set<UUID> {
+        var ids: Set<UUID> = [id]
+        ids.formUnion(events.map { $0.id })
+        if let endEventID { ids.insert(endEventID) }
+        return ids
+    }
 
     /// First moment the alarm sounded during this session, if any. Used by
     /// the detail-screen banner to surface the headline time.

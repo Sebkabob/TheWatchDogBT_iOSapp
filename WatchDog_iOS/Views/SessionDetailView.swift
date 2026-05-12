@@ -45,6 +45,7 @@ struct SessionDetailView: View {
     /// nil while loading or when the session has no location at all;
     /// the UI shows the address-row only when a value is available.
     @State private var addressLine: String? = nil
+    @State private var showDeleteConfirmation = false
     private static let geocoder = CLGeocoder()
 
     private let maxNameLength = 32
@@ -112,12 +113,45 @@ struct SessionDetailView: View {
                 Text("Session")
                     .font(.headline)
             }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Menu {
+                    Button(role: .destructive) {
+                        showDeleteConfirmation = true
+                    } label: {
+                        Label("Delete this session", systemImage: "trash")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.title3)
+                }
+            }
+        }
+        .confirmationDialog(
+            "Delete this session?",
+            isPresented: $showDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) { deleteThisSession() }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("This wipes the session's events, its pin, and any name you've set. Cannot be undone.")
         }
         .onReceive(timer) { liveNow = $0 }
         .onAppear {
             sessionName = SessionNameStore.shared.name(for: session.id) ?? ""
             startReverseGeocode()
         }
+    }
+
+    private func deleteThisSession() {
+        MotionLogManager.shared.remove(sessions: [session])
+        SessionLocationStore.shared.forget(sessionIDs: [session.id])
+        SessionNameStore.shared.forget(sessionIDs: [session.id])
+        // Pop back to whatever pushed us — feed, calendar, or cluster
+        // detail. The parent's body recomputes deviceSessions from
+        // MotionLogManager.motionEvents on its next render and the
+        // now-deleted session simply won't be in the list.
+        dismiss()
     }
 
     // MARK: - Session name
@@ -641,6 +675,7 @@ private struct DetailMap: View {
     NavigationStack {
         SessionDetailView(session: MotionSession(
             id: UUID(),
+            endEventID: nil,
             deviceID: UUID(),
             startedAt: Date().addingTimeInterval(-2 * 3600),
             endedAt: Date(),

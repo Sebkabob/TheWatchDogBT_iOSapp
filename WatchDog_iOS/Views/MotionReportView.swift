@@ -77,6 +77,12 @@ struct MotionReportView: View {
                 .padding(.top, 8)
                 .padding(.bottom, 14)
 
+            if !SettingsManager.shared.loggingEnabled {
+                LoggingDisabledBanner()
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
+            }
+
             Group {
                 switch selectedTab {
                 case .feed:     feedTab
@@ -663,6 +669,39 @@ private struct SectionHeader: View {
                 .tracking(0.4)
             Spacer()
         }
+    }
+}
+
+/// Warning banner shown at the top of every Motion Report tab when the
+/// "Disable motion logging" hardware setting is currently on. Surfaces
+/// the state so the user doesn't think the app is broken when sessions
+/// stop appearing — most often this gets flipped on accidentally from
+/// the hardware-settings panel.
+private struct LoggingDisabledBanner: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.body)
+                .foregroundColor(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Motion logging is off")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                Text("New sessions won't be tracked. Re-enable in the device's hardware settings.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            Spacer()
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.orange.opacity(0.12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.orange.opacity(0.4), lineWidth: 1)
+                )
+        )
     }
 }
 

@@ -124,6 +124,26 @@ class MotionLogManager {
         Log.ok(.motion, "Cleared events in [\(range.lowerBound) … \(range.upperBound)) [\(deviceID.uuidString.prefix(8))] · protected \(protecting.count)")
     }
 
+    /// Remove the events that make up the given sessions — the
+    /// SESSION_START marker, every motion event between bookends, and
+    /// the SESSION_END marker (when present). Used by the per-session
+    /// and per-location delete menus in Motion Report. iOS-local
+    /// only; the firmware ring is unaffected.
+    func remove(sessions: [MotionSession]) {
+        guard !sessions.isEmpty else { return }
+        var idsToRemove = Set<UUID>()
+        for session in sessions {
+            idsToRemove.formUnion(session.allEventIDs)
+        }
+        let before = motionEvents.count
+        motionEvents.removeAll { idsToRemove.contains($0.id) }
+        let removed = before - motionEvents.count
+        if removed > 0 {
+            saveMotionEvents()
+            Log.ok(.motion, "Removed \(sessions.count) session(s), \(removed) event(s)")
+        }
+    }
+
     // MARK: - Query Methods
 
     func eventsForDevice(_ deviceID: UUID) -> [MotionEvent] {
