@@ -71,24 +71,14 @@ class MotionLogManager {
         saveMotionEvents()
         let stampStr = event.timestamp.map { "\($0)" } ?? "unknown time"
         Log.ok(.motion, "Event · \(event.eventType.displayName) at \(stampStr)")
-
-        // SESSION_START is the moment we bind the lock-time location
-        // (captured by DevicePageView a moment ago) to this session's id,
-        // so the Map tab can pin it later. Done before rebuild() so the
-        // first parser pass that observes this event already sees the
-        // associated location.
-        if event.eventType == .sessionStart {
-            SessionLocationStore.shared.associateIfPending(
-                eventID: event.id,
-                eventTimestamp: event.timestamp
-            )
-        }
-
-        // Cascade: sessions are a pure derivation of motionEvents, so a new
-        // event invalidates them. Repository's rebuild is cheap (parser is
-        // O(n) over typically <200 events). Done after the log write so the
-        // session list never reads ahead of the persisted truth.
-        MotionSessionsRepository.shared.rebuild()
+        // Session-repository rebuild + SessionLocationStore.associate
+        // used to run here, but accessing those singletons lazily on the
+        // BLE-drain hot path can chain into CLLocationManager init and
+        // a full parser pass over hundreds of events — both on the main
+        // thread inside a CoreBluetooth callback — which was eating the
+        // loyalty-handshake budget and breaking connections. Both pieces
+        // of work are now triggered from MotionReportView's onAppear
+        // instead: same end result, none of it on the BLE path.
     }
 
     func clearAllEvents(for deviceID: UUID, protecting: Set<UUID> = []) {
@@ -98,14 +88,12 @@ class MotionLogManager {
         }
         saveMotionEvents()
         Log.ok(.motion, "Cleared all events [\(deviceID.uuidString.prefix(8))] · protected \(protecting.count)")
-        MotionSessionsRepository.shared.rebuild()
     }
 
     func clearAll() {
         motionEvents.removeAll()
         UserDefaults.standard.removeObject(forKey: motionEventsKey)
         Log.ok(.motion, "Cleared all motion events")
-        MotionSessionsRepository.shared.rebuild()
     }
 
     func clearEventsForDate(_ date: Date, deviceID: UUID) {
@@ -116,7 +104,6 @@ class MotionLogManager {
         }
         saveMotionEvents()
         Log.ok(.motion, "Cleared events for \(date) [\(deviceID.uuidString.prefix(8))]")
-        MotionSessionsRepository.shared.rebuild()
     }
 
     /// Remove every event for `deviceID` whose timestamp falls inside the
@@ -135,7 +122,6 @@ class MotionLogManager {
         }
         saveMotionEvents()
         Log.ok(.motion, "Cleared events in [\(range.lowerBound) … \(range.upperBound)) [\(deviceID.uuidString.prefix(8))] · protected \(protecting.count)")
-        MotionSessionsRepository.shared.rebuild()
     }
 
     // MARK: - Query Methods

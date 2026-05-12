@@ -23,8 +23,8 @@ struct MotionReportView: View {
     let bluetoothManager: BluetoothManager
     let deviceID: UUID
 
-    private let sessionsRepo = MotionSessionsRepository.shared
     private let motionLogManager = MotionLogManager.shared
+    private let locationStore = SessionLocationStore.shared
 
     @State private var selectedTab: Tab = .feed
     @State private var calendarSelectedDate: Date = Date()
@@ -46,8 +46,20 @@ struct MotionReportView: View {
         }
     }
 
+    /// Recomputed on every body render directly from
+    /// `MotionLogManager.shared.motionEvents`. SwiftUI's Observation
+    /// framework tracks the read and re-renders when motion events change
+    /// (e.g. while a drain is in progress and the polling timer is
+    /// pulling fresh data). Pre-filtering by deviceID before parsing
+    /// keeps each device's session boundaries from getting cross-mixed
+    /// when multiple WatchDogs share the same iOS install.
     private var deviceSessions: [MotionSession] {
-        sessionsRepo.sessions(for: deviceID)
+        let myEvents = motionLogManager.motionEvents.filter { $0.deviceID == deviceID }
+        return MotionSessionParser.parse(
+            events: myEvents,
+            currentlyArmed: (bluetoothManager.deviceState & 0x01) != 0,
+            lastDisarmAt: nil
+        )
     }
 
     var body: some View {
@@ -69,6 +81,8 @@ struct MotionReportView: View {
         }
         .background(Color(.systemBackground))
         .toolbar(.hidden, for: .navigationBar)
+        .onAppear { onMotionReportAppeared() }
+        .onDisappear { onMotionReportDisappeared() }
         .alert("Clear All Sessions?", isPresented: $showClearAllConfirmation) {
             Button("OK", role: .destructive) {
                 clearAllSessionsBothSides()
@@ -271,7 +285,7 @@ struct MotionReportView: View {
 
             Divider()
 
-            let dayList = sessionsRepo.sessions(on: calendarSelectedDate, deviceID: deviceID)
+            let dayList = sessionsOn(calendarSelectedDate)
 
             if dayList.isEmpty {
                 emptyState(
@@ -432,7 +446,7 @@ struct MotionReportView: View {
     /// normally. The firmware ring being temporarily out of sync with
     /// iOS is harmless — the eventual SESSION_END is what matters.
     private func protectedEventIDs() -> Set<UUID> {
-        guard let active = sessionsRepo.sessions(for: deviceID)
+        guard let active = deviceSessions
             .first(where: { $0.status == .active }) else {
             return []
         }
@@ -448,16 +462,28 @@ struct MotionReportView: View {
         // preserved alongside its protected event ids.
         let protected = protectedEventIDs()
         let doomedLocationIDs: Set<UUID> = Set(
-            sessionsRepo.sessions(for: deviceID)
+            deviceSessions
                 .map { $0.id }
                 .filter { !protected.contains($0) }
         )
 
         motionLogManager.clearAllEvents(for: deviceID, protecting: protected)
-        SessionLocationStore.shared.forget(sessionIDs: doomedLocationIDs)
+        locationStore.forget(sessionIDs: doomedLocationIDs)
         if bluetoothManager.connectedDevice != nil {
             bluetoothManager.clearMotionLog()
         }
+    }
+
+    /// Sessions on a specific day for this device, oldest-first.
+    /// Inline replacement for the old MotionSessionsRepository helper —
+    /// reads the same parser output that the rest of the view uses.
+    private func sessionsOn(_ day: Date) -> [MotionSession] {
+        let cal = Calendar.current
+        return deviceSessions.filter { session in
+            guard let start = session.startedAt else { return false }
+            return cal.isDate(start, inSameDayAs: day)
+        }
+        .sorted { ($0.startedAt ?? .distantPast) < ($1.startedAt ?? .distantPast) }
     }
 
     /// Sunday-first calendar — the user asked for "A week is Sunday –
@@ -525,7 +551,7 @@ struct MotionReportView: View {
     private func clearEvents(in range: Range<Date>) {
         let protected = protectedEventIDs()
         let doomedLocationIDs: Set<UUID> = Set(
-            sessionsRepo.sessions(for: deviceID)
+            deviceSessions
                 .filter { session in
                     guard !protected.contains(session.id) else { return false }
                     guard let start = session.startedAt else { return false }
@@ -537,7 +563,37 @@ struct MotionReportView: View {
         motionLogManager.clearEventsInRange(range,
                                             deviceID: deviceID,
                                             protecting: protected)
-        SessionLocationStore.shared.forget(sessionIDs: doomedLocationIDs)
+        locationStore.forget(sessionIDs: doomedLocationIDs)
+    }
+
+    // MARK: - Lifecycle hooks
+
+    /// Called from the view's onAppear. Does all the work that used to
+    /// live on the BLE / event hot path:
+    ///   - Asks for location permission (idempotent — system shows the
+    ///     dialog at most once).
+    ///   - Sweeps any SESSION_START events that haven't yet been bound
+    ///     to a location and tries to associate them with whatever
+    ///     pending capture lives in SessionLocationStore.
+    ///   - Starts the motion-log polling timer so the feed and event
+    ///     log stay live while the user is on this screen — same
+    ///     behaviour the deleted MotionLogsView used to have.
+    private func onMotionReportAppeared() {
+        locationStore.requestAuthorizationIfNeeded()
+
+        for event in motionLogManager.motionEvents
+            where event.eventType == .sessionStart
+            && event.deviceID == deviceID
+            && locationStore.location(for: event.id) == nil {
+            locationStore.associateIfPending(eventID: event.id,
+                                             eventTimestamp: event.timestamp)
+        }
+
+        bluetoothManager.startMotionLogPolling()
+    }
+
+    private func onMotionReportDisappeared() {
+        bluetoothManager.stopMotionLogPolling()
     }
 }
 

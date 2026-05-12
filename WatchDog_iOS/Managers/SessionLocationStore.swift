@@ -131,16 +131,21 @@ class SessionLocationStore: NSObject, CLLocationManagerDelegate {
     }
 
     /// Called from MotionLogManager.addMotionEvent for SESSION_START
-    /// markers. Binds the most recent pending capture to this event id,
-    /// provided the pending capture is within `pendingWindow` of the
-    /// event's wall-clock timestamp.
+    /// markers. Binds the most recent pending capture to this event id
+    /// provided the pending capture was made within `pendingWindow`
+    /// wall-clock seconds ago.
+    ///
+    /// Freshness is measured against `Date()`, NOT the event's reported
+    /// timestamp. The firmware's anchor can be stale, mis-set, or zero
+    /// (especially on the first SESSION_START of a boot, before iOS
+    /// re-anchors the clock), and a comparison against `event.timestamp`
+    /// would discard perfectly valid pending entries because of that
+    /// drift. The pending entry is local-iOS time and we know when we
+    /// stamped it.
     func associateIfPending(eventID: UUID, eventTimestamp: Date?) {
+        _ = eventTimestamp  // intentionally unused; see comment above
         guard let pending else { return }
-        // Use the event's wall-clock time when we have it; otherwise
-        // fall back to now (firmware-unanchored SESSION_START arriving
-        // immediately after iOS captured the pending entry).
-        let referenceTime = eventTimestamp ?? Date()
-        if abs(referenceTime.timeIntervalSince(pending.capturedAt)) > pendingWindow {
+        if Date().timeIntervalSince(pending.capturedAt) > pendingWindow {
             self.pending = nil
             return
         }
@@ -221,10 +226,15 @@ class SessionLocationStore: NSObject, CLLocationManagerDelegate {
 
     func locationManager(_ manager: CLLocationManager,
                          didUpdateLocations locations: [CLLocation]) {
-        // Latest fix lives in manager.location automatically; we don't
-        // need to do anything here. Stop continuous updates after the
-        // first fix so we're not running the GPS forever.
-        manager.stopUpdatingLocation()
+        // Intentionally do NOT stopUpdatingLocation here. The previous
+        // implementation stopped after the first fix to save battery,
+        // but that left manager.location frozen at the first-fix value
+        // for the rest of the session — when the user moved to a new
+        // place and locked there, captureForUpcomingArm() snapshotted
+        // the stale fix or nil. Keeping updates running at
+        // kCLLocationAccuracyHundredMeters + 50m distance filter is
+        // low-cost (the system batches significant-motion deltas) and
+        // makes the lock-time fix actually current.
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
