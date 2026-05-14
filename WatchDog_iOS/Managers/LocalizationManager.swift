@@ -37,6 +37,7 @@ enum LocKey: Hashable {
     case disableDisconnectSound, disableDisconnectSoundCaption
     case disableAlarm, disableAlarmCaption
     case ledBrightness, disableLED, disableLEDCaption
+    case bleTxPower, bleTxPowerCaption, bleTxPowerNormal, bleTxPowerHigh
     case disableMotionLogging, disableMotionLoggingCaption
     case language
     case restartDevice, restartDeviceTitle, restartDeviceMessage, restart
@@ -104,6 +105,10 @@ final class LocalizationManager {
             .ledBrightness: "LED Brightness",
             .disableLED: "Disable LED",
             .disableLEDCaption: "Turns off all indicator lights except for charging status.",
+            .bleTxPower: "BLE Power",
+            .bleTxPowerCaption: "Sets the radio transmit power. Normal saves battery; High Power extends connection range.",
+            .bleTxPowerNormal: "Normal",
+            .bleTxPowerHigh: "High Power",
             .disableMotionLogging: "Disable Motion Logging",
             .disableMotionLoggingCaption: "Completely disable motion logging functionality.",
             .language: "Language",
@@ -168,6 +173,10 @@ final class LocalizationManager {
             .ledBrightness: "Brillo del LED",
             .disableLED: "Desactivar LED",
             .disableLEDCaption: "Apaga todas las luces indicadoras excepto la del estado de carga.",
+            .bleTxPower: "Potencia BLE",
+            .bleTxPowerCaption: "Ajusta la potencia de transmisión del radio. Normal ahorra batería; Alta Potencia amplía el alcance de la conexión.",
+            .bleTxPowerNormal: "Normal",
+            .bleTxPowerHigh: "Alta Potencia",
             .disableMotionLogging: "Desactivar Registro de Movimiento",
             .disableMotionLoggingCaption: "Desactiva por completo la función de registro de movimiento.",
             .language: "Idioma",
@@ -232,6 +241,10 @@ final class LocalizationManager {
             .ledBrightness: "LED-helderheid",
             .disableLED: "LED Uitschakelen",
             .disableLEDCaption: "Schakelt alle indicatorlampjes uit behalve voor de oplaadstatus.",
+            .bleTxPower: "BLE-vermogen",
+            .bleTxPowerCaption: "Stelt het zendvermogen van de radio in. Normaal spaart batterij; Hoog Vermogen vergroot het bereik van de verbinding.",
+            .bleTxPowerNormal: "Normaal",
+            .bleTxPowerHigh: "Hoog Vermogen",
             .disableMotionLogging: "Bewegingsregistratie Uitschakelen",
             .disableMotionLoggingCaption: "Schakel de bewegingsregistratie volledig uit.",
             .language: "Taal",
@@ -296,6 +309,10 @@ final class LocalizationManager {
             .ledBrightness: "Luminosité de la LED",
             .disableLED: "Désactiver la LED",
             .disableLEDCaption: "Éteint tous les voyants sauf celui de l'état de charge.",
+            .bleTxPower: "Puissance BLE",
+            .bleTxPowerCaption: "Règle la puissance d'émission de la radio. Normal économise la batterie ; Haute Puissance étend la portée de la connexion.",
+            .bleTxPowerNormal: "Normal",
+            .bleTxPowerHigh: "Haute Puissance",
             .disableMotionLogging: "Désactiver le Journal de Mouvement",
             .disableMotionLoggingCaption: "Désactive complètement la fonction de journalisation des mouvements.",
             .language: "Langue",
@@ -360,6 +377,10 @@ final class LocalizationManager {
             .ledBrightness: "LEDの明るさ",
             .disableLED: "LEDを無効化",
             .disableLEDCaption: "充電状態を除き、すべてのインジケーターランプを消灯します。",
+            .bleTxPower: "BLE出力",
+            .bleTxPowerCaption: "無線の送信電力を設定します。標準はバッテリーを節約し、高出力は接続範囲を広げます。",
+            .bleTxPowerNormal: "標準",
+            .bleTxPowerHigh: "高出力",
             .disableMotionLogging: "モーションログを無効化",
             .disableMotionLoggingCaption: "モーションログ機能を完全に無効にします。",
             .language: "言語",
@@ -424,6 +445,10 @@ final class LocalizationManager {
             .ledBrightness: "Brilho do LED",
             .disableLED: "Desativar LED",
             .disableLEDCaption: "Desliga todas as luzes indicadoras, exceto o status de carregamento.",
+            .bleTxPower: "Potência BLE",
+            .bleTxPowerCaption: "Define a potência de transmissão do rádio. Normal economiza bateria; Alta Potência amplia o alcance da conexão.",
+            .bleTxPowerNormal: "Normal",
+            .bleTxPowerHigh: "Alta Potência",
             .disableMotionLogging: "Desativar Registo de Movimento",
             .disableMotionLoggingCaption: "Desativa completamente a função de registo de movimento.",
             .language: "Idioma",

@@ -685,15 +685,18 @@ class BluetoothManager: NSObject {
         let deviceInfoByte    = settingsManager.encodeDeviceInfo()
         let alarmDurationByte = settingsManager.encodeAlarmDuration()
         let ledBrightnessByte = settingsManager.encodeLEDBrightness()
+        let bleTxPowerByte    = settingsManager.encodeBleTxPower()
 
-        // 4 settings bytes + 6-byte calendar tail = 10-byte payload. The
+        // 5 settings bytes + 6-byte calendar tail = 11-byte payload. The
         // firmware's `cmd_length >= 7` gate in lockservice_app.c then trips
         // and feeds the tail into MotionLogger_SetBootTime() so motion-log
-        // event timestamps can be anchored to wall-clock time.
-        var data = Data([settingsByte, deviceInfoByte, alarmDurationByte, ledBrightnessByte])
+        // event timestamps can be anchored to wall-clock time. Firmware ≤
+        // V1.12.10 ignores the extra bleTxPower byte (length check is
+        // optional). Firmware ≥ V1.12.11 honours it.
+        var data = Data([settingsByte, deviceInfoByte, alarmDurationByte, ledBrightnessByte, bleTxPowerByte])
         data.append(contentsOf: Self.currentLocalCalendarBytes())
         sendData(data)
-        Log.tx(.settings, "Sent settings + anchor · 0x\(String(format: "%02X", settingsByte)) deviceInfo 0x\(String(format: "%02X", deviceInfoByte)) alarmDur=\(alarmDurationByte)s ledBright=\(ledBrightnessByte)")
+        Log.tx(.settings, "Sent settings + anchor · 0x\(String(format: "%02X", settingsByte)) deviceInfo 0x\(String(format: "%02X", deviceInfoByte)) alarmDur=\(alarmDurationByte)s ledBright=\(ledBrightnessByte) bleTxPwr=\(bleTxPowerByte)")
     }
 
     /// `[YY-2000, MM, DD, hh, mm, ss]` in the device user's local time.

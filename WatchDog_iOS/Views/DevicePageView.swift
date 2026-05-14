@@ -1070,6 +1070,16 @@ struct DevicePageView: View {
         )
     }
 
+    private var bleTxPowerBinding: Binding<BleTxPower> {
+        Binding(
+            get: { settingsManager.bleTxPower },
+            set: { newValue in
+                settingsManager.updateSettings(bleTxPower: newValue)
+                if isDeviceConnected { bluetoothManager.sendSettings() }
+            }
+        )
+    }
+
     private func forgetDevice() {
         if isDemoMode {
             onDemoExit?()
@@ -1362,6 +1372,18 @@ struct DevicePageView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(loc.t(.bleTxPower))
+                    .font(.subheadline)
+                AnimatedSegmentedControl(
+                    selection: bleTxPowerBinding,
+                    options: BleTxPower.allCases
+                )
+                Text(loc.t(.bleTxPowerCaption))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
 
             Button(action: {
