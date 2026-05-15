@@ -150,9 +150,13 @@ struct DevicePageView: View {
 
     private var mlcIndicatorVisible: Bool {
         guard isShowingLiveDeviceState else { return false }
+        // The MLC readout is only semantically meaningful while armed —
+        // STABILIZING/LOCKED/ALARM are the only states where the classifier is
+        // running. Hiding when unlocked also defends against a stale notify
+        // arriving between settings-write and the firmware state transition.
+        guard isLocked else { return false }
         let mlc = bluetoothManager.mlcState
         if mlc == .unknown { return false }
-        if mlc == .stationary && !isLocked { return false }
         return true
     }
 

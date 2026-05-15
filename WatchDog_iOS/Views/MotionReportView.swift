@@ -59,13 +59,23 @@ struct MotionReportView: View {
     /// when multiple WatchDogs share the same iOS install.
     private var deviceSessions: [MotionSession] {
         let myEvents = motionLogManager.motionEvents.filter { $0.deviceID == deviceID }
-        let isConnected = bluetoothManager.connectedDevice?.id == deviceID
         return MotionSessionParser.parse(
             events: myEvents,
             currentlyArmed: (bluetoothManager.deviceState & 0x01) != 0,
             isConnected: isConnected,
             lastDisarmAt: nil
         )
+    }
+
+    /// True only while the BT layer reports the target device as the
+    /// active connection. Used to gate UI that shouldn't speak about
+    /// the current device-side state while we can't observe it — most
+    /// notably the LoggingDisabledBanner, which previously fired off
+    /// `SettingsManager.shared.loggingEnabled` alone and showed up
+    /// whenever the device was out of range with the default-`false`
+    /// flag still cached locally.
+    private var isConnected: Bool {
+        bluetoothManager.connectedDevice?.id == deviceID
     }
 
     var body: some View {
@@ -77,7 +87,12 @@ struct MotionReportView: View {
                 .padding(.top, 8)
                 .padding(.bottom, 14)
 
-            if !SettingsManager.shared.loggingEnabled {
+            // Only surface the "logging is off" warning while we're
+            // actually talking to the device. Out-of-range / disconnected
+            // means `loggingEnabled` is just the last-cached value (or
+            // its `false` default if we never connected), so showing the
+            // banner there scares the user with a state we can't confirm.
+            if isConnected && !SettingsManager.shared.loggingEnabled {
                 LoggingDisabledBanner()
                     .padding(.horizontal, 16)
                     .padding(.bottom, 10)

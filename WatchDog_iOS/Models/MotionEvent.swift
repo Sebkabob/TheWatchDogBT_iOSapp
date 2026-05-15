@@ -73,12 +73,32 @@ struct MotionEvent: Identifiable, Codable {
     let timestamp: Date?
     let eventType: MotionEventType
     let alarmSounded: Bool
+    /// How long the underlying motion lasted, in 250 ms ticks (firmware
+    /// field width — 1..255 → 0.25..63.75 s). `nil` only for legacy
+    /// records persisted before the duration field shipped; the parser
+    /// surfaces those as "—" and downstream views skip the duration
+    /// column. Instantaneous events (FSM impact/freefall, MLC blips
+    /// that never reached the deferred-settle path) always carry 1.
+    let durationTicks250ms: UInt8?
 
-    init(id: UUID = UUID(), deviceID: UUID, timestamp: Date?, eventType: MotionEventType, alarmSounded: Bool) {
+    /// Convenience: duration as a TimeInterval (seconds). `nil` propagates
+    /// the legacy/unknown case from `durationTicks250ms`.
+    var durationSeconds: TimeInterval? {
+        guard let ticks = durationTicks250ms else { return nil }
+        return Double(ticks) * 0.25
+    }
+
+    init(id: UUID = UUID(),
+         deviceID: UUID,
+         timestamp: Date?,
+         eventType: MotionEventType,
+         alarmSounded: Bool,
+         durationTicks250ms: UInt8? = nil) {
         self.id = id
         self.deviceID = deviceID
         self.timestamp = timestamp
         self.eventType = eventType
         self.alarmSounded = alarmSounded
+        self.durationTicks250ms = durationTicks250ms
     }
 }

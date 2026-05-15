@@ -1151,14 +1151,21 @@ class BluetoothManager: NSObject {
             }
             
         case RESP_EVENT_DATA:
-            // 11 bytes: 0xE1, index_hi, index_lo, year, month, day, hour, minute, second, motionType, battery
+            // Current firmware emits 12 bytes:
+            //   0xE1, index_hi, index_lo, year, month, day, hour, minute,
+            //   second, motionType, duration_250ms, battery
+            // Old firmware (pre-duration-byte) shipped 11 bytes with the
+            // battery at offset 10. Branch on length so an iOS update that
+            // lands ahead of the firmware update doesn't drop events.
             guard data.count >= 11 else { return }
             cancelEventFetchWatchdog()
             let index = (UInt16(data[1]) << 8) | UInt16(data[2])
             let year = data[3], month = data[4], day = data[5]
             let hour = data[6], minute = data[7], second = data[8]
             let motionType = data[9]
-            let batteryByte = data[10]
+            let hasDuration = data.count >= 12
+            let durationByte: UInt8? = hasDuration ? data[10] : nil
+            let batteryByte = hasDuration ? data[11] : data[10]
 
             let timestamp: Date? = {
                 // Firmware's unanchored sentinel is (year=0, month=1, day=1, 00:00:00).
@@ -1198,7 +1205,11 @@ class BluetoothManager: NSObject {
             // them.
             let config = MotionTypeConfig.convert(firmwareType: motionType, wasConnected: false)
             guard let deviceID = self.connectedDevice?.id else { return }
-            let event = MotionEvent(deviceID: deviceID, timestamp: timestamp, eventType: config.eventType, alarmSounded: config.alarmSounded)
+            let event = MotionEvent(deviceID: deviceID,
+                                    timestamp: timestamp,
+                                    eventType: config.eventType,
+                                    alarmSounded: config.alarmSounded,
+                                    durationTicks250ms: durationByte)
             let charging = (batteryByte & 0x80) != 0
             let battery = Int(batteryByte & 0x7F)
 
@@ -1615,18 +1626,30 @@ extension BluetoothManager: CBPeripheralDelegate {
         }
 
         // ─── Motion alert (0xFF) ───
+        // Current firmware emits 4 bytes: [0xFF, motionType, duration_250ms, battery].
+        // Pre-duration firmware emitted 3 bytes: [0xFF, motionType, battery].
+        // Pre-motionType firmware emitted 2 bytes: [0xFF, battery]. Branch
+        // on length so a stale firmware blob still produces a usable event.
         if firstByte == MOTION_ALERT_MARKER {
             let motionType: MotionEventType
             let batteryByte: UInt8
+            let durationByte: UInt8?
 
-            if data.count >= 3 {
-                motionType = MotionEventType(rawValue: data[1]) ?? .inMotion
+            if data.count >= 4 {
+                motionType  = MotionEventType(rawValue: data[1]) ?? .inMotion
+                durationByte = data[2]
+                batteryByte = data[3]
+            } else if data.count >= 3 {
+                motionType  = MotionEventType(rawValue: data[1]) ?? .inMotion
+                durationByte = nil
                 batteryByte = data[2]
             } else if data.count >= 2 {
-                motionType = .inMotion
+                motionType  = .inMotion
+                durationByte = nil
                 batteryByte = data[1]
             } else {
-                motionType = .inMotion
+                motionType  = .inMotion
+                durationByte = nil
                 batteryByte = 0
             }
 
@@ -1662,7 +1685,8 @@ extension BluetoothManager: CBPeripheralDelegate {
                         deviceID: deviceID,
                         timestamp: Date(),
                         eventType: config.eventType,
-                        alarmSounded: config.alarmSounded
+                        alarmSounded: config.alarmSounded,
+                        durationTicks250ms: durationByte
                     )
                     MotionLogManager.shared.addMotionEvent(event)
                 }
@@ -1737,10 +1761,12 @@ extension BluetoothManager: CBPeripheralDelegate {
             if let firmware {
                 self.watchDogFirmwares[peripheralID] = firmware
             }
+            let wasArmed = self.settingsManager.isArmed
             self.deviceState = settingsByte
             self.hasReceivedInitialState = true
             self.settingsManager.decodeSettings(from: settingsByte)
             if let deviceInfoByte { self.settingsManager.decodeDeviceInfo(from: deviceInfoByte) }
+            let armedNow = self.settingsManager.isArmed
 
             // Clear alarm when device is no longer armed
             if !self.settingsManager.isArmed && self.isAlarmActive {
@@ -1752,7 +1778,11 @@ extension BluetoothManager: CBPeripheralDelegate {
             self.updateBatteryState(charging: charging, battery: battery)
             self.debugCurrentDraw = current
             self.debugVoltage = voltage
-            self.mlcState = mlc
+            // On disarm transition, force stationary so a stale "Moving"/
+            // "Shaken" notify (sent between the iOS settings-write and the
+            // firmware state-machine transition) doesn't briefly survive
+            // into the unlocked state. The next fresh notify overwrites.
+            self.mlcState = (wasArmed && !armedNow) ? .stationary : mlc
             self.debugAccelX = accelX
             self.debugAccelY = accelY
             self.debugAccelZ = accelZ

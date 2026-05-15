@@ -392,7 +392,16 @@ struct SessionDetailView: View {
                         emphasised: false)
             ForEach(Array(session.events.enumerated()), id: \.offset) { _, event in
                 Divider()
-                let label = "\(event.eventType.displayName)\(event.alarmSounded ? " · alarm fired" : "")"
+                // Compose label: "Type [· 1.2s] [· alarm fired]". The
+                // duration segment is only shown when the firmware reports
+                // a meaningful value (>1 tick — a 1-tick event is the
+                // instantaneous floor and tells the user nothing). Legacy
+                // events recorded before the duration byte shipped have a
+                // nil ticks field and naturally fall through to the
+                // single-segment label.
+                let durSegment = MotionEventLabel.durationSuffix(forTicks: event.durationTicks250ms)
+                let alarmSegment = event.alarmSounded ? " · alarm fired" : ""
+                let label = "\(event.eventType.displayName)\(durSegment)\(alarmSegment)"
                 EventLogRow(time: event.timestamp,
                             referenceDay: referenceDay,
                             label: label,
@@ -421,6 +430,41 @@ struct SessionDetailView: View {
                         .stroke(Color(.separator).opacity(0.8), lineWidth: 1.2)
                 )
         )
+    }
+}
+
+/// Formatting helpers shared by the event log + (future) any other surface
+/// that wants to render a motion event's duration in human terms.
+enum MotionEventLabel {
+    /// Format the firmware's 250 ms-tick duration field for inline use in
+    /// event-log labels. Returns either " · <value>" or "" — the leading
+    /// " · " is part of the suffix so callers can interpolate it directly
+    /// after the event-type name without juggling separators.
+    ///
+    /// Rules:
+    /// - nil ticks (legacy event recorded before the firmware shipped the
+    ///   duration byte) → "".
+    /// - 1 tick is the instantaneous floor — FSM impact/freefall, MLC
+    ///   blips that never reached deferred-settle. Showing "0.3s" there
+    ///   misleads, since it just means "no real measurement available."
+    ///   Suppress.
+    /// - <10s: one decimal place ("2.5s"), feels natural for door-handling
+    ///   and the like.
+    /// - ≥10s: integer seconds ("12s"), avoids spurious precision on
+    ///   long events that are usually rounded anyway.
+    /// - 255 ticks is the saturation sentinel (~63.75s) — denote with "+"
+    ///   so a graph reader can tell the field maxed out.
+    static func durationSuffix(forTicks ticks: UInt8?) -> String {
+        guard let ticks, ticks > 1 else { return "" }
+        let seconds = Double(ticks) * 0.25
+        let saturated = (ticks == 255)
+        let body: String
+        if seconds < 10 {
+            body = String(format: "%.1fs", seconds)
+        } else {
+            body = String(format: "%.0fs", seconds)
+        }
+        return " · \(body)\(saturated ? "+" : "")"
     }
 }
 
@@ -496,11 +540,19 @@ struct SessionTimelineChart: View {
                 let dotsY = h - 3
 
                 ZStack(alignment: .topLeading) {
-                    if let alarmRect = alarmShadingRect(in: CGSize(width: w, height: axisY)) {
+                    // Per-alarm-event narrow bands rather than one big
+                    // shaded rectangle spanning the alarm window. The old
+                    // rectangle extended from first alarm event to
+                    // last + 20 s, which on a multi-hour session with
+                    // alarms bookending it filled almost the entire chart
+                    // and looked like "everything is highlighted." A
+                    // narrow band per event reads correctly as "this is
+                    // when the alarm fired."
+                    ForEach(Array(alarmBands(width: w, height: axisY).enumerated()), id: \.offset) { _, band in
                         Rectangle()
                             .fill(SessionStatus.alarmed.badgeBackground)
-                            .frame(width: alarmRect.width, height: alarmRect.height)
-                            .position(x: alarmRect.midX, y: alarmRect.midY)
+                            .frame(width: band.width, height: band.height)
+                            .position(x: band.midX, y: band.midY)
                     }
 
                     Path { path in
@@ -601,24 +653,32 @@ struct SessionTimelineChart: View {
         return pts
     }
 
-    /// Shaded rectangle behind the chart marking the alarm window.
-    /// Heuristic: alarm fired at `alarmFiredAt`, ended either when the
-    /// last alarm-classified event settled or 20 s after the first fire
-    /// — firmware doesn't expose the exact LOCKED return timestamp.
-    private func alarmShadingRect(in size: CGSize) -> CGRect? {
+    /// Narrow vertical bands behind the chart, one per alarm-classified
+    /// event. Replaces the single wide rectangle that used to span the
+    /// alarm window (first alarm event → last + 20 s) — on a multi-hour
+    /// session that filled nearly the whole chart and read as "everything
+    /// is highlighted." Each band is centered on the event's timestamp
+    /// and clamped to a minimum width so a tap-and-set-down (instantaneous
+    /// event) still leaves a visible marker.
+    private func alarmBands(width: CGFloat, height: CGFloat) -> [CGRect] {
         guard session.status == .alarmed,
               let start = session.startedAt,
-              let end = endReference else { return nil }
-        guard let fired = session.alarmFiredAt else { return nil }
+              let end = endReference else { return [] }
         let total = max(1, end.timeIntervalSince(start))
 
-        let firedFrac = max(0, min(1, fired.timeIntervalSince(start) / total))
-        let lastAlarmTime = session.events.last(where: { $0.alarmSounded })?.timestamp ?? fired
-        let endFrac = max(firedFrac, min(1, (lastAlarmTime.timeIntervalSince(start) + 20) / total))
+        // Minimum pixel width per band so the marker is visible even
+        // for an instantaneous event. Scales gently with chart width so
+        // a wider phone gets a slightly wider band; never less than 6 pt.
+        let bandWidth = max(CGFloat(6), width * 0.012)
 
-        let x = CGFloat(firedFrac) * size.width
-        let w = max(8, CGFloat(endFrac - firedFrac) * size.width)
-        return CGRect(x: x, y: 0, width: w, height: size.height)
+        var bands: [CGRect] = []
+        for event in session.events where event.alarmSounded {
+            guard let ts = event.timestamp else { continue }
+            let frac = max(0, min(1, ts.timeIntervalSince(start) / total))
+            let x = CGFloat(frac) * width - bandWidth / 2
+            bands.append(CGRect(x: x, y: 0, width: bandWidth, height: height))
+        }
+        return bands
     }
 
     /// Each event becomes one colored dot beneath the axis.
