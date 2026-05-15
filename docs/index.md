@@ -4,9 +4,9 @@ title: WatchDog
 
 # WatchDog
 
-WatchDog is the iOS companion app for the WatchDog Bluetooth case.
+WatchDog is the iOS companion app for the WatchDog Bluetooth device.
 
-Pair your case, watch its motion in real time on a 3D model, keep a log of motion events, and run on-device diagnostics — all without an account, a server, or a single tracking pixel.
+Pair your device, watch its motion in real time on a 3D model, keep a log of motion events, and run on-device diagnostics — all without an account, a server, or a single tracking pixel.
 
 ## Support
 

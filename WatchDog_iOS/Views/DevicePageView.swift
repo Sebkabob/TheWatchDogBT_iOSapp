@@ -70,6 +70,7 @@ struct DevicePageView: View {
     @State private var showingPCBView = false
     @State private var editableName: String = ""
     @State private var showForgetConfirmation = false
+    @State private var showRestartConfirmation = false
     private let maxNameLength = 16
 
     private let lightHaptic = UIImpactFeedbackGenerator(style: .light)
@@ -149,9 +150,13 @@ struct DevicePageView: View {
 
     private var mlcIndicatorVisible: Bool {
         guard isShowingLiveDeviceState else { return false }
+        // The MLC readout is only semantically meaningful while armed —
+        // STABILIZING/LOCKED/ALARM are the only states where the classifier is
+        // running. Hiding when unlocked also defends against a stale notify
+        // arriving between settings-write and the firmware state transition.
+        guard isLocked else { return false }
         let mlc = bluetoothManager.mlcState
         if mlc == .unknown { return false }
-        if mlc == .stationary && !isLocked { return false }
         return true
     }
 
@@ -564,7 +569,7 @@ struct DevicePageView: View {
         .overlay(alignment: .topLeading) { settingsModeOverlay }
         .sheet(isPresented: $showMotionLogs) {
             NavigationStack {
-                MotionLogsView(bluetoothManager: bluetoothManager, deviceID: deviceID)
+                MotionReportView(bluetoothManager: bluetoothManager, deviceID: deviceID)
             }
         }
         .onAppear {
@@ -572,6 +577,14 @@ struct DevicePageView: View {
             if isShowingLiveDeviceState {
                 isLocked = (bluetoothManager.deviceState & 0x01) != 0
             }
+
+            // Location permission is now requested from MotionReportView's
+            // onAppear instead of here. Eagerly initializing
+            // SessionLocationStore (which constructs a CLLocationManager)
+            // during DevicePage's appearance was firing right as the user
+            // tapped Connect and was implicated in the connection
+            // reliability regression — moving it to a screen the user
+            // opens explicitly keeps the device-page path clean.
 
             Log.info(.view, "DevicePage appeared [\(deviceID.uuidString.prefix(8))] · connected=\(isDeviceConnected) inRange=\(isDeviceInRange)")
 
@@ -614,6 +627,12 @@ struct DevicePageView: View {
                 Log.info(.view, "Device disconnected")
                 updateModelVisibility()
                 stopGraphUpdates()
+                // Drop out of the settings/hardware panel — the user can't
+                // act on a disconnected device, and the panel hides the
+                // device view that surfaces reconnect controls.
+                if inSettingsMode {
+                    toggleSettingsMode()
+                }
             }
         }
         // Watch for changes in range status to update model
@@ -781,13 +800,46 @@ struct DevicePageView: View {
     
     private func completeHold() {
         guard isDeviceConnected else { return }
-        
+
         heavyHaptic.impactOccurred(intensity: 1.0)
-        
+
         let newArmed = !isLocked
         settingsManager.updateSettings(armed: newArmed)
         settingsManager.setPersistedArmed(newArmed, for: deviceID)
         bluetoothManager.sendSettings()
+        // Synthesise a session-boundary MotionEvent iOS-side. The
+        // firmware used to log these via MOTION_TYPE_SESSION_START /
+        // _END, but we backed that out because the auto-disarm path
+        // at reconnect was adding a ~20 ms EEPROM write inside the
+        // loyalty handshake window. The user's arm/disarm tap is the
+        // authoritative iOS-side signal of a session boundary, so we
+        // emit the marker here and the parser picks it up unchanged.
+        //
+        // Gated on the "Disable motion logging" hardware switch — when
+        // logging is off, we skip creating the boundary marker, which
+        // means no session record is built for this arm cycle. The
+        // Motion Report stays silent for the duration of the disabled
+        // period. Re-enabling logging restores normal behaviour from
+        // the next arm tap forward.
+        if settingsManager.loggingEnabled {
+            let marker = MotionEvent(
+                deviceID: deviceID,
+                timestamp: Date(),
+                eventType: newArmed ? .sessionStart : .sessionEnd,
+                alarmSounded: false
+            )
+            MotionLogManager.shared.addMotionEvent(marker)
+        }
+        // Location capture happens AFTER the lock command goes out so
+        // SessionLocationStore's first-time CLLocationManager
+        // initialisation (which can take a few ms on the main thread)
+        // can't delay the BLE write. The Map-tab pin association uses
+        // the pending entry as long as it's still within
+        // SessionLocationStore.pendingWindow when the user later opens
+        // Motion Report, so a brief delay here is harmless.
+        if newArmed {
+            SessionLocationStore.shared.captureForUpcomingArm()
+        }
         // Demo: keep the BluetoothManager's deviceState bit aligned with the
         // toggle so `syncLockedFromDeviceIfApplicable` doesn't immediately
         // bounce the lock back. Real flow does this implicitly via the
@@ -1017,6 +1069,16 @@ struct DevicePageView: View {
             get: { !settingsManager.loggingEnabled },
             set: { newValue in
                 settingsManager.updateSettings(logging: !newValue)
+                if isDeviceConnected { bluetoothManager.sendSettings() }
+            }
+        )
+    }
+
+    private var bleTxPowerBinding: Binding<BleTxPower> {
+        Binding(
+            get: { settingsManager.bleTxPower },
+            set: { newValue in
+                settingsManager.updateSettings(bleTxPower: newValue)
                 if isDeviceConnected { bluetoothManager.sendSettings() }
             }
         )
@@ -1316,20 +1378,48 @@ struct DevicePageView: View {
                 }
             }
 
-            Button(action: {}) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(loc.t(.bleTxPower))
+                    .font(.subheadline)
+                AnimatedSegmentedControl(
+                    selection: bleTxPowerBinding,
+                    options: BleTxPower.allCases
+                )
+                Text(loc.t(.bleTxPowerCaption))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Button(action: {
+                guard isDeviceConnected else { return }
+                showRestartConfirmation = true
+            }) {
                 HStack {
-                    Image(systemName: "arrow.down.circle.fill")
-                    Text(loc.t(.installLatestFirmware))
+                    Image(systemName: "arrow.clockwise.circle.fill")
+                    Text(loc.t(.restartDevice))
                 }
                 .font(.subheadline)
                 .fontWeight(.medium)
-                .foregroundColor(.gray)
+                .foregroundColor(.orange)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
                 .background(Color(white: 0.2))
                 .cornerRadius(10)
             }
-            .disabled(true)
+            .disabled(!isDeviceConnected)
+            .opacity(isDeviceConnected ? 1 : 0.4)
+            .confirmationDialog(
+                loc.t(.restartDeviceTitle),
+                isPresented: $showRestartConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button(loc.t(.restart), role: .destructive) {
+                    bluetoothManager.sendResetDevice()
+                }
+                Button(loc.t(.cancel), role: .cancel) { }
+            } message: {
+                Text(loc.t(.restartDeviceMessage))
+            }
         }
         .padding(.horizontal, 20)
         .frame(width: width, alignment: .leading)

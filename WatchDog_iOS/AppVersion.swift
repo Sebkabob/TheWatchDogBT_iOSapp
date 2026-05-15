@@ -9,8 +9,8 @@ import Foundation
 /// Format: V<major>.<main>.<v2>. Display string includes leading-zero v2.
 enum AppVersion {
     static let major: Int = 1
-    static let main:  Int = 11
-    static let v2:    Int = 54
+    static let main:  Int = 23
+    static let v2:    Int = 0
 
     /// "V1.0.00" — note the two-digit V2 field for display.
     static var displayString: String {

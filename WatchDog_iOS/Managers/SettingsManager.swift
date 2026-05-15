@@ -41,6 +41,11 @@ class SettingsManager {
     var disconnectSoundDisabled: Bool = false
     /// LED brightness in app units (1...100). Mapped to firmware's 1...255 on send.
     var ledBrightness: Int = 100
+    /// BLE radio TX power. `normal` = 0 dBm, `highPower` = +8 dBm. Default is
+    /// `highPower` so first-pair behaviour matches the legacy firmware
+    /// (which booted at +8 dBm before this setting existed). Persisted
+    /// per-device. Firmware ≥ V1.12.11.
+    var bleTxPower: BleTxPower = .highPower
 
     /// True while a DemoSession is active. Persistence calls (`saveDeviceSettings`,
     /// `saveGlobalSettings`, `setPersistedArmed`) become no-ops so the demo's
@@ -69,6 +74,7 @@ class SettingsManager {
         var alarmDisabled: Bool
         var disconnectSoundDisabled: Bool
         var ledBrightness: Int
+        var bleTxPower: BleTxPower
     }
 
     // UserDefaults keys — per-device settings
@@ -84,6 +90,7 @@ class SettingsManager {
     private let alarmDisabledKey = "watchdog_alarm_disabled"
     private let disconnectSoundDisabledKey = "watchdog_disconnect_sound_disabled"
     private let ledBrightnessKey = "watchdog_led_brightness"
+    private let bleTxPowerKey = "watchdog_ble_tx_power"
 
     // UserDefaults keys — global settings
     private let deviceNameKey = "watchdog_device_name"
@@ -187,12 +194,20 @@ class SettingsManager {
         return UInt8(max(1, min(255, scaled)))
     }
 
-    /// Decodes deviceInfo byte from WatchDog
+    /// Encodes the BLE TX power level — single byte at cmd_data[4] in the
+    /// settings write. Firmware enum: 0 = NORMAL (0 dBm), 1 = HIGH (+8 dBm).
+    func encodeBleTxPower() -> UInt8 {
+        bleTxPower.bitValue
+    }
+
+    /// Decodes deviceInfo byte from WatchDog. Bit 3 carries the BLE TX power
+    /// level (0 = NORMAL, 1 = HIGH). Firmware ≥ V1.12.11.
     func decodeDeviceInfo(from byte: UInt8) {
         highPerformanceMode = (byte & (1 << 0)) != 0
         alarmDisabled = (byte & (1 << 1)) != 0
         disconnectSoundDisabled = (byte & (1 << 2)) != 0
-        Log.info(.settings, "deviceInfo · highPerformance=\(highPerformanceMode) alarmDisabled=\(alarmDisabled) disconnectSoundDisabled=\(disconnectSoundDisabled)")
+        bleTxPower = BleTxPower.from(bitValue: (byte >> 3) & 0b1)
+        Log.info(.settings, "deviceInfo · highPerformance=\(highPerformanceMode) alarmDisabled=\(alarmDisabled) disconnectSoundDisabled=\(disconnectSoundDisabled) bleTxPower=\(bleTxPower.rawValue)")
         saveDeviceSettings()
     }
 
@@ -295,6 +310,13 @@ class SettingsManager {
         } else {
             ledBrightness = 100
         }
+
+        if let s = ud.string(forKey: deviceKey(bleTxPowerKey, deviceID)),
+           let v = BleTxPower(rawValue: s) {
+            bleTxPower = v
+        } else {
+            bleTxPower = .highPower
+        }
     }
 
     private func saveDeviceSettings() {
@@ -314,6 +336,7 @@ class SettingsManager {
         ud.set(alarmDisabled, forKey: deviceKey(alarmDisabledKey, deviceID))
         ud.set(disconnectSoundDisabled, forKey: deviceKey(disconnectSoundDisabledKey, deviceID))
         ud.set(ledBrightness, forKey: deviceKey(ledBrightnessKey, deviceID))
+        ud.set(bleTxPower.rawValue, forKey: deviceKey(bleTxPowerKey, deviceID))
     }
 
     // MARK: - Global Persistence
@@ -347,7 +370,7 @@ class SettingsManager {
                        dataLogging: Bool? = nil, triggers: Set<MotionEventType>? = nil,
                        preset: String? = nil, alarmDuration: Int? = nil,
                        alarmDisabled: Bool? = nil, disconnectSoundDisabled: Bool? = nil,
-                       ledBrightness: Int? = nil) {
+                       ledBrightness: Int? = nil, bleTxPower: BleTxPower? = nil) {
         if let name = name { deviceName = name }
         if let armed = armed { isArmed = armed }
         if let alarm = alarm { alarmType = alarm }
@@ -371,6 +394,7 @@ class SettingsManager {
         if let ledBrightness = ledBrightness {
             self.ledBrightness = max(1, min(100, ledBrightness))
         }
+        if let bleTxPower = bleTxPower { self.bleTxPower = bleTxPower }
 
         saveDeviceSettings()
         saveGlobalSettings()
@@ -396,7 +420,7 @@ class SettingsManager {
             armedKey, alarmTypeKey, sensitivityKey, lightsKey, loggingKey,
             disableAlarmWhenConnectedKey, alarmTriggersKey, selectedPresetKey,
             alarmDurationKey, alarmDisabledKey, disconnectSoundDisabledKey,
-            ledBrightnessKey
+            ledBrightnessKey, bleTxPowerKey
         ]
         for key in ud.dictionaryRepresentation().keys {
             if bases.contains(where: { key.hasSuffix("_\($0)") }) {
@@ -416,6 +440,7 @@ class SettingsManager {
         alarmDisabled = false
         disconnectSoundDisabled = false
         ledBrightness = 100
+        bleTxPower = .highPower
         highPerformanceMode = devModeUnlocked
 
         if currentDeviceID != nil {
@@ -453,7 +478,8 @@ class SettingsManager {
             alarmDuration: alarmDuration,
             alarmDisabled: alarmDisabled,
             disconnectSoundDisabled: disconnectSoundDisabled,
-            ledBrightness: ledBrightness
+            ledBrightness: ledBrightness,
+            bleTxPower: bleTxPower
         )
         isDemoMode = true
         currentDeviceID = deviceID
@@ -470,6 +496,7 @@ class SettingsManager {
         alarmDisabled = false
         disconnectSoundDisabled = false
         ledBrightness = 100
+        bleTxPower = .highPower
     }
 
     /// Restores every observable property to the value captured at
@@ -498,6 +525,7 @@ class SettingsManager {
         alarmDisabled = snap.alarmDisabled
         disconnectSoundDisabled = snap.disconnectSoundDisabled
         ledBrightness = snap.ledBrightness
+        bleTxPower = snap.bleTxPower
         demoSnapshot = nil
     }
 
@@ -510,7 +538,7 @@ class SettingsManager {
             armedKey, alarmTypeKey, sensitivityKey, lightsKey, loggingKey,
             disableAlarmWhenConnectedKey, alarmTriggersKey, selectedPresetKey,
             alarmDurationKey, alarmDisabledKey, disconnectSoundDisabledKey,
-            ledBrightnessKey
+            ledBrightnessKey, bleTxPowerKey
         ]
         for key in ud.dictionaryRepresentation().keys {
             if bases.contains(where: { key.hasSuffix("_\($0)") }) {
@@ -542,6 +570,7 @@ class SettingsManager {
         alarmDisabled = false
         disconnectSoundDisabled = false
         ledBrightness = 100
+        bleTxPower = .highPower
     }
 }
 
@@ -583,6 +612,37 @@ extension SensitivityLevel {
         case 0b01: return .medium
         case 0b10: return .high
         default: return .medium
+        }
+    }
+}
+
+/// BLE radio TX power. `normal` = 0 dBm, `highPower` = +8 dBm. String raw
+/// values are used so the existing `AnimatedSegmentedControl` widget can
+/// display the enum; the wire byte uses `bitValue` (0 / 1) to match the
+/// firmware enum at `power_management.h::BleTxPower_t`. Firmware ≥ V1.12.11.
+enum BleTxPower: String, CaseIterable, LocalizedSegmentLabel {
+    case normal    = "Normal"
+    case highPower = "HighPower"
+
+    var bitValue: UInt8 {
+        switch self {
+        case .normal:    return 0
+        case .highPower: return 1
+        }
+    }
+
+    static func from(bitValue: UInt8) -> BleTxPower {
+        switch bitValue {
+        case 0:  return .normal
+        case 1:  return .highPower
+        default: return .highPower
+        }
+    }
+
+    var segmentLabel: String {
+        switch self {
+        case .normal:    return LocalizationManager.shared.t(.bleTxPowerNormal)
+        case .highPower: return LocalizationManager.shared.t(.bleTxPowerHigh)
         }
     }
 }

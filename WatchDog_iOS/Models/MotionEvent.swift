@@ -16,6 +16,15 @@ enum MotionEventType: UInt8, Codable {
     case tilted       = 5
     case doorOpening  = 6
     case doorClosing  = 7
+    /// Firmware-emitted SESSION_START marker (motion-logger value 0x10).
+    /// Not a "motion" event per se — bookends a locked period for the
+    /// MotionSessionParser. Display strings are mostly never seen in
+    /// regular UI because the parser pulls these out of the events array
+    /// before rendering; they appear only in the Session detail screen's
+    /// event log as "Session start · locked".
+    case sessionStart = 0x10
+    /// Firmware-emitted SESSION_END marker (motion-logger value 0x11).
+    case sessionEnd   = 0x11
 
     var displayName: String {
         switch self {
@@ -27,6 +36,8 @@ enum MotionEventType: UInt8, Codable {
         case .tilted:       return "Tilted"
         case .doorOpening:  return "Door Opening"
         case .doorClosing:  return "Door Closing"
+        case .sessionStart: return "Session Start"
+        case .sessionEnd:   return "Session End"
         }
     }
 
@@ -40,22 +51,54 @@ enum MotionEventType: UInt8, Codable {
         case .tilted:       return "angle"
         case .doorOpening:  return "door.left.hand.open"
         case .doorClosing:  return "door.left.hand.closed"
+        case .sessionStart: return "lock.fill"
+        case .sessionEnd:   return "lock.open.fill"
         }
+    }
+
+    /// True for the firmware session-boundary markers (0x10, 0x11). The
+    /// MotionSessionParser treats these as control events and excludes
+    /// them from a session's `events` array.
+    var isSessionMarker: Bool {
+        self == .sessionStart || self == .sessionEnd
     }
 }
 
 struct MotionEvent: Identifiable, Codable {
     let id: UUID
     let deviceID: UUID
-    let timestamp: Date
+    /// `nil` when the firmware reported the unanchored sentinel — i.e. it
+    /// had no idea what wall-clock time the event occurred at. We deliberately
+    /// don't substitute `Date()` here; downstream UI surfaces "Unknown time".
+    let timestamp: Date?
     let eventType: MotionEventType
     let alarmSounded: Bool
+    /// How long the underlying motion lasted, in 250 ms ticks (firmware
+    /// field width — 1..255 → 0.25..63.75 s). `nil` only for legacy
+    /// records persisted before the duration field shipped; the parser
+    /// surfaces those as "—" and downstream views skip the duration
+    /// column. Instantaneous events (FSM impact/freefall, MLC blips
+    /// that never reached the deferred-settle path) always carry 1.
+    let durationTicks250ms: UInt8?
 
-    init(id: UUID = UUID(), deviceID: UUID, timestamp: Date, eventType: MotionEventType, alarmSounded: Bool) {
+    /// Convenience: duration as a TimeInterval (seconds). `nil` propagates
+    /// the legacy/unknown case from `durationTicks250ms`.
+    var durationSeconds: TimeInterval? {
+        guard let ticks = durationTicks250ms else { return nil }
+        return Double(ticks) * 0.25
+    }
+
+    init(id: UUID = UUID(),
+         deviceID: UUID,
+         timestamp: Date?,
+         eventType: MotionEventType,
+         alarmSounded: Bool,
+         durationTicks250ms: UInt8? = nil) {
         self.id = id
         self.deviceID = deviceID
         self.timestamp = timestamp
         self.eventType = eventType
         self.alarmSounded = alarmSounded
+        self.durationTicks250ms = durationTicks250ms
     }
 }

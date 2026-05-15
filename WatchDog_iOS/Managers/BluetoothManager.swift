@@ -138,6 +138,12 @@ class BluetoothManager: NSObject {
     var pendingEventCount: Int = 0
     var isSyncingMotionLogs: Bool = false
     private var motionLogPollTimer: Timer?
+    /// Per-event watchdog. Armed when a CMD_REQUEST_EVENT is sent, cleared
+    /// on RESP_EVENT_DATA / RESP_NO_MORE_EVENTS / disconnect. If it fires,
+    /// the sync is force-ended so the user isn't stuck on a half-drained
+    /// view because one notification quietly disappeared.
+    private var eventFetchWatchdog: Timer?
+    private let eventFetchTimeoutSeconds: TimeInterval = 2.0
     
     private let settingsManager = SettingsManager.shared
     
@@ -623,6 +629,7 @@ class BluetoothManager: NSObject {
         pendingEventCount = 0
         isSyncingMotionLogs = false
         stopMotionLogPolling()
+        cancelEventFetchWatchdog()
         loyaltyTimer?.invalidate()
         loyaltyTimer = nil
         loyaltyState = .idle
@@ -674,13 +681,42 @@ class BluetoothManager: NSObject {
 
     func sendSettings() {
         guard !isDemoMode else { return }
-        let settingsByte = settingsManager.encodeSettings()
-        let deviceInfoByte = settingsManager.encodeDeviceInfo()
+        let settingsByte      = settingsManager.encodeSettings()
+        let deviceInfoByte    = settingsManager.encodeDeviceInfo()
         let alarmDurationByte = settingsManager.encodeAlarmDuration()
         let ledBrightnessByte = settingsManager.encodeLEDBrightness()
-        let data = Data([settingsByte, deviceInfoByte, alarmDurationByte, ledBrightnessByte])
+        let bleTxPowerByte    = settingsManager.encodeBleTxPower()
+
+        // 5 settings bytes + 6-byte calendar tail = 11-byte payload. The
+        // firmware's `cmd_length >= 7` gate in lockservice_app.c then trips
+        // and feeds the tail into MotionLogger_SetBootTime() so motion-log
+        // event timestamps can be anchored to wall-clock time. Firmware ≤
+        // V1.12.10 ignores the extra bleTxPower byte (length check is
+        // optional). Firmware ≥ V1.12.11 honours it.
+        var data = Data([settingsByte, deviceInfoByte, alarmDurationByte, ledBrightnessByte, bleTxPowerByte])
+        data.append(contentsOf: Self.currentLocalCalendarBytes())
         sendData(data)
-        Log.tx(.settings, "Sent settings · 0x\(String(format: "%02X", settingsByte)) deviceInfo 0x\(String(format: "%02X", deviceInfoByte)) alarmDur=\(alarmDurationByte)s ledBright=\(ledBrightnessByte)")
+        Log.tx(.settings, "Sent settings + anchor · 0x\(String(format: "%02X", settingsByte)) deviceInfo 0x\(String(format: "%02X", deviceInfoByte)) alarmDur=\(alarmDurationByte)s ledBright=\(ledBrightnessByte) bleTxPwr=\(bleTxPowerByte)")
+    }
+
+    /// `[YY-2000, MM, DD, hh, mm, ss]` in the device user's local time.
+    /// Local — not UTC — because the firmware just adds elapsed ticks and
+    /// reports the result back verbatim; iOS doesn't apply a timezone on the
+    /// way back in (`RESP_EVENT_DATA` builds the Date with `Calendar.current`,
+    /// which is local). Keep both ends in local time so they round-trip cleanly.
+    private static func currentLocalCalendarBytes() -> [UInt8] {
+        let now = Date()
+        let cal = Calendar.current
+        let c = cal.dateComponents([.year, .month, .day, .hour, .minute, .second], from: now)
+        let yy = UInt8(max(0, min(255, (c.year ?? 2000) - 2000)))
+        return [
+            yy,
+            UInt8(c.month  ?? 1),
+            UInt8(c.day    ?? 1),
+            UInt8(c.hour   ?? 0),
+            UInt8(c.minute ?? 0),
+            UInt8(c.second ?? 0),
+        ]
     }
 
     func sendPing() {
@@ -926,6 +962,19 @@ class BluetoothManager: NSObject {
     /// Called once after CLAIM_OK or VERIFY_OK. Triggers the deferred
     /// "we're now ready to send normal commands" work that used to run
     /// unconditionally 1.0 s post-connect.
+    ///
+    /// Notable change: we no longer send settings here. `sendSettings`
+    /// encodes the iOS-side `SettingsManager` state (including the
+    /// ARMED bit) and writes it back to the firmware. If the user
+    /// disconnected mid-session while the device was still armed,
+    /// `settingsManager.isArmed` stays `true` locally; the firmware
+    /// auto-disarms on reconnect, then this hook used to "helpfully"
+    /// re-send ARMED=1 and re-arm the device, producing the visible
+    /// unlock → stabilize → relock cycle. The fix: only kick the log
+    /// drain. Settings will re-sync the next time the user actually
+    /// changes something (which also handles the clock-anchor
+    /// concern). Events drained at reconnect may carry unknown-time
+    /// timestamps until the next user-initiated settings change.
     private func onLoyaltyVerifiedHook() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self = self, self.connectedDevice != nil else { return }
@@ -1030,6 +1079,10 @@ class BluetoothManager: NSObject {
 
     func startMotionLogPolling(interval: TimeInterval = 0.25) {
         stopMotionLogPolling()
+        // Re-anchor the firmware clock right before pulling logs. TickToDateTime
+        // computes calendar time as (boot_time + elapsed_ms_since_anchor) — a
+        // fresh anchor minimizes accumulated quartz drift on each view session.
+        sendSettings()
         requestMotionLogCount()
         motionLogPollTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             guard let self = self, self.connectedDevice != nil, !self.isSyncingMotionLogs else { return }
@@ -1047,15 +1100,35 @@ class BluetoothManager: NSObject {
         let data = Data([CMD_REQUEST_LOG_COUNT])
         sendData(data)
     }
-    
+
     func requestMotionEvent(at index: UInt16) {
         let data = Data([CMD_REQUEST_EVENT, UInt8((index >> 8) & 0xFF), UInt8(index & 0xFF)])
         sendData(data)
+        armEventFetchWatchdog(forIndex: index)
     }
-    
+
     func clearMotionLog() {
         let data = Data([CMD_CLEAR_LOG])
         sendData(data)
+    }
+
+    private func armEventFetchWatchdog(forIndex index: UInt16) {
+        eventFetchWatchdog?.invalidate()
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.eventFetchWatchdog = Timer.scheduledTimer(withTimeInterval: self.eventFetchTimeoutSeconds,
+                                                          repeats: false) { [weak self] _ in
+                guard let self = self else { return }
+                Log.warn(.motion, "Event fetch timed out at idx \(index) · ending sync")
+                self.isSyncingMotionLogs = false
+                self.eventFetchWatchdog = nil
+            }
+        }
+    }
+
+    private func cancelEventFetchWatchdog() {
+        eventFetchWatchdog?.invalidate()
+        eventFetchWatchdog = nil
     }
     
     private func handleMotionLogResponse(data: Data) {
@@ -1078,31 +1151,65 @@ class BluetoothManager: NSObject {
             }
             
         case RESP_EVENT_DATA:
-            // 11 bytes: 0xE1, index_hi, index_lo, year, month, day, hour, minute, second, motionType, battery
+            // Current firmware emits 12 bytes:
+            //   0xE1, index_hi, index_lo, year, month, day, hour, minute,
+            //   second, motionType, duration_250ms, battery
+            // Old firmware (pre-duration-byte) shipped 11 bytes with the
+            // battery at offset 10. Branch on length so an iOS update that
+            // lands ahead of the firmware update doesn't drop events.
             guard data.count >= 11 else { return }
+            cancelEventFetchWatchdog()
             let index = (UInt16(data[1]) << 8) | UInt16(data[2])
             let year = data[3], month = data[4], day = data[5]
             let hour = data[6], minute = data[7], second = data[8]
             let motionType = data[9]
-            let batteryByte = data[10]
+            let hasDuration = data.count >= 12
+            let durationByte: UInt8? = hasDuration ? data[10] : nil
+            let batteryByte = hasDuration ? data[11] : data[10]
 
-            var timestamp: Date
-            if year == 0 && month <= 1 && day <= 1 {
-                timestamp = Date()
-            } else {
+            let timestamp: Date? = {
+                // Firmware's unanchored sentinel is (year=0, month=1, day=1, 00:00:00).
+                // Treat as missing rather than fabricating a wall-clock time —
+                // the UI renders nil as "Unknown time".
+                if year == 0 && month == 1 && day == 1 && hour == 0 && minute == 0 && second == 0 {
+                    return nil
+                }
+                // Range-check every field. The old firmware's anchor-drift
+                // bug could emit values like year=255 / month=12 / day=31
+                // that DateComponents would silently coerce into real-but-
+                // wrong dates (e.g. year 2255). With the new firmware these
+                // shouldn't appear, but treating out-of-range as "unknown"
+                // is cheap insurance against future regressions.
+                guard year  <= 99,
+                      month >= 1, month <= 12,
+                      day   >= 1, day   <= 31,
+                      hour   <= 23,
+                      minute <= 59,
+                      second <= 59 else {
+                    return nil
+                }
                 var components = DateComponents()
-                components.year = 2000 + Int(year)
-                components.month = max(1, Int(month))
-                components.day = max(1, Int(day))
-                components.hour = Int(hour)
+                components.year   = 2000 + Int(year)
+                components.month  = Int(month)
+                components.day    = Int(day)
+                components.hour   = Int(hour)
                 components.minute = Int(minute)
                 components.second = Int(second)
-                timestamp = Calendar.current.date(from: components) ?? Date()
-            }
+                return Calendar.current.date(from: components)
+            }()
 
-            let config = MotionTypeConfig.convert(firmwareType: motionType)
+            // Events arriving via the log drain were logged firmware-
+            // side during the prior disconnected window (per the
+            // motion-logger's connectionStatus gate), so `wasConnected`
+            // is false — silent-when-connected can't have suppressed
+            // them.
+            let config = MotionTypeConfig.convert(firmwareType: motionType, wasConnected: false)
             guard let deviceID = self.connectedDevice?.id else { return }
-            let event = MotionEvent(deviceID: deviceID, timestamp: timestamp, eventType: config.eventType, alarmSounded: config.alarmSounded)
+            let event = MotionEvent(deviceID: deviceID,
+                                    timestamp: timestamp,
+                                    eventType: config.eventType,
+                                    alarmSounded: config.alarmSounded,
+                                    durationTicks250ms: durationByte)
             let charging = (batteryByte & 0x80) != 0
             let battery = Int(batteryByte & 0x7F)
 
@@ -1123,9 +1230,11 @@ class BluetoothManager: NSObject {
             }
             
         case RESP_NO_MORE_EVENTS:
+            cancelEventFetchWatchdog()
             DispatchQueue.main.async { self.isSyncingMotionLogs = false }
-            
+
         case RESP_LOG_CLEARED:
+            cancelEventFetchWatchdog()
             DispatchQueue.main.async {
                 self.pendingEventCount = 0
                 self.isSyncingMotionLogs = false
@@ -1517,18 +1626,30 @@ extension BluetoothManager: CBPeripheralDelegate {
         }
 
         // ─── Motion alert (0xFF) ───
+        // Current firmware emits 4 bytes: [0xFF, motionType, duration_250ms, battery].
+        // Pre-duration firmware emitted 3 bytes: [0xFF, motionType, battery].
+        // Pre-motionType firmware emitted 2 bytes: [0xFF, battery]. Branch
+        // on length so a stale firmware blob still produces a usable event.
         if firstByte == MOTION_ALERT_MARKER {
             let motionType: MotionEventType
             let batteryByte: UInt8
+            let durationByte: UInt8?
 
-            if data.count >= 3 {
-                motionType = MotionEventType(rawValue: data[1]) ?? .inMotion
+            if data.count >= 4 {
+                motionType  = MotionEventType(rawValue: data[1]) ?? .inMotion
+                durationByte = data[2]
+                batteryByte = data[3]
+            } else if data.count >= 3 {
+                motionType  = MotionEventType(rawValue: data[1]) ?? .inMotion
+                durationByte = nil
                 batteryByte = data[2]
             } else if data.count >= 2 {
-                motionType = .inMotion
+                motionType  = .inMotion
+                durationByte = nil
                 batteryByte = data[1]
             } else {
-                motionType = .inMotion
+                motionType  = .inMotion
+                durationByte = nil
                 batteryByte = 0
             }
 
@@ -1542,6 +1663,32 @@ extension BluetoothManager: CBPeripheralDelegate {
                 self.alarmClearTimer?.invalidate()
                 self.alarmClearTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: false) { [weak self] _ in
                     self?.isAlarmActive = false
+                }
+                // Synthesise the MotionEvent iOS-side using wall-clock
+                // time. Firmware skips its EEPROM write while connected
+                // (saves write wear, avoids the page-commit stall) and
+                // relies on this iOS-side record for the in-session
+                // view. Events that happen while disconnected are
+                // still logged firmware-side and drain on reconnect.
+                //
+                // Gated on the LOGGING bit so the "Disable motion
+                // logging" hardware setting reaches iOS too: when off,
+                // the live alert path stops creating MotionEvent
+                // records, so sessions during that period show no
+                // motion data (consistent with the firmware-side
+                // suppression of EEPROM logging).
+                if let deviceID = self.connectedDevice?.id,
+                   SettingsManager.shared.loggingEnabled {
+                    let config = MotionTypeConfig.convert(firmwareType: motionType.rawValue,
+                                                          wasConnected: true)
+                    let event = MotionEvent(
+                        deviceID: deviceID,
+                        timestamp: Date(),
+                        eventType: config.eventType,
+                        alarmSounded: config.alarmSounded,
+                        durationTicks250ms: durationByte
+                    )
+                    MotionLogManager.shared.addMotionEvent(event)
                 }
             }
             return
@@ -1614,10 +1761,12 @@ extension BluetoothManager: CBPeripheralDelegate {
             if let firmware {
                 self.watchDogFirmwares[peripheralID] = firmware
             }
+            let wasArmed = self.settingsManager.isArmed
             self.deviceState = settingsByte
             self.hasReceivedInitialState = true
             self.settingsManager.decodeSettings(from: settingsByte)
             if let deviceInfoByte { self.settingsManager.decodeDeviceInfo(from: deviceInfoByte) }
+            let armedNow = self.settingsManager.isArmed
 
             // Clear alarm when device is no longer armed
             if !self.settingsManager.isArmed && self.isAlarmActive {
@@ -1629,7 +1778,11 @@ extension BluetoothManager: CBPeripheralDelegate {
             self.updateBatteryState(charging: charging, battery: battery)
             self.debugCurrentDraw = current
             self.debugVoltage = voltage
-            self.mlcState = mlc
+            // On disarm transition, force stationary so a stale "Moving"/
+            // "Shaken" notify (sent between the iOS settings-write and the
+            // firmware state-machine transition) doesn't briefly survive
+            // into the unlocked state. The next fresh notify overwrites.
+            self.mlcState = (wasArmed && !armedNow) ? .stationary : mlc
             self.debugAccelX = accelX
             self.debugAccelY = accelY
             self.debugAccelZ = accelZ

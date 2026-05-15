@@ -216,6 +216,9 @@ struct DiagSensor {
     let mlcTransitionsSinceBoot: UInt32
     let int1FiresSinceBoot: UInt32
     let motionEventsLoggedSinceBoot: UInt32
+    // Appended by firmware that gates MLC alarms behind a 200–600 ms
+    // validation window. Nil on older firmware that omits the field.
+    let validationsDismissedSinceBoot: UInt16?
 
     init?(_ d: Data) {
         guard let m = d.u8(0),
@@ -228,6 +231,7 @@ struct DiagSensor {
         mlcTransitionsSinceBoot = t
         int1FiresSinceBoot = i
         motionEventsLoggedSinceBoot = me
+        validationsDismissedSinceBoot = d.u16(14)
     }
 
     var mlcStateLabel: String {

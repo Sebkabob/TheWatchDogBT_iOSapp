@@ -399,6 +399,17 @@ struct WatchDogSettingsView: View {
                     selection: $alarmType,
                     options: AlarmType.allCases
                 )
+
+                Text(alarmType.description)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // .contentTransition crossfades the text content when the
+                    // value bound to the .animation modifier changes — much
+                    // smoother than the default "instant swap" you get from
+                    // just toggling a Text's string.
+                    .contentTransition(.opacity)
+                    .animation(.easeInOut(duration: 0.18), value: alarmType)
             }
             .padding(.vertical, 4)
 
@@ -570,11 +581,11 @@ struct WatchDogSettingsView: View {
     private var sensitivityDescription: String {
         switch sensitivity {
         case .low:
-            return "Identifies motion type before triggering. Reduces false alarms."
+            return "Slow trigger; ignores brief disturbances."
         case .medium:
-            return "Balances identification and detection speed."
+            return "Balanced (recommended)."
         case .high:
-            return "Triggers on any motion immediately. Maximum security."
+            return "Fast trigger; may pick up environmental vibration."
         }
     }
 
@@ -819,6 +830,17 @@ enum AlarmType: String, CaseIterable, LocalizedSegmentLabel {
         case .calm:   return LocalizationManager.shared.t(.alarmCalm)
         case .normal: return LocalizationManager.shared.t(.alarmNormal)
         case .loud:   return LocalizationManager.shared.t(.alarmLoud)
+        }
+    }
+
+    /// One-line description shown in gray under the Alarm Type segmented
+    /// control. Updates as the user picks a different option.
+    var description: String {
+        switch self {
+        case .none:   return "No alarm at all — best for subtle monitoring."
+        case .calm:   return "Lets someone know they're being watched."
+        case .normal: return "Loud enough to get the attention of anyone nearby."
+        case .loud:   return "Gets everyone's attention. Very, very loud!"
         }
     }
 }

@@ -47,10 +47,6 @@
 		1ADEC7F42EB43AAA005E4F52 /* Exceptions for "WatchDog_iOS" folder in "WatchDog_iOS" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				APP_STORE_READINESS_PROMPT.md,
-				fix_settings_transition_prompt.md,
-				FW_DIAG_VERIFICATION_PROMPT.md,
-				FW_POWER_OPT_PROMPT.md,
 				Info.plist,
 				WatchDogBT_Power_Optimization_Research.docx,
 			);
@@ -65,16 +61,6 @@
 				1ADEC7F42EB43AAA005E4F52 /* Exceptions for "WatchDog_iOS" folder in "WatchDog_iOS" target */,
 			);
 			path = WatchDog_iOS;
-			sourceTree = "<group>";
-		};
-		1AD1B8FC2EB4385200A88B25 /* BluetoothTestingTests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = BluetoothTestingTests;
-			sourceTree = "<group>";
-		};
-		1AD1B9062EB4385200A88B25 /* BluetoothTestingUITests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = BluetoothTestingUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -108,8 +94,6 @@
 			isa = PBXGroup;
 			children = (
 				1AD1B8EE2EB4385000A88B25 /* WatchDog_iOS */,
-				1AD1B8FC2EB4385200A88B25 /* BluetoothTestingTests */,
-				1AD1B9062EB4385200A88B25 /* BluetoothTestingUITests */,
 				1ADEC7FA2EB48F92005E4F52 /* Frameworks */,
 				1AD1B8ED2EB4385000A88B25 /* Products */,
 			);
@@ -172,9 +156,6 @@
 			dependencies = (
 				1AD1B8FB2EB4385200A88B25 /* PBXTargetDependency */,
 			);
-			fileSystemSynchronizedGroups = (
-				1AD1B8FC2EB4385200A88B25 /* BluetoothTestingTests */,
-			);
 			name = WatchDog_iOSTests;
 			packageProductDependencies = (
 			);
@@ -194,9 +175,6 @@
 			);
 			dependencies = (
 				1AD1B9052EB4385200A88B25 /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				1AD1B9062EB4385200A88B25 /* BluetoothTestingUITests */,
 			);
 			name = WatchDog_iOSUITests;
 			packageProductDependencies = (
@@ -450,8 +428,8 @@
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIRequiredDeviceCapabilities = "bluetooth-le";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = UIInterfaceOrientationPortrait;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -485,8 +463,8 @@
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIRequiredDeviceCapabilities = "bluetooth-le";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = UIInterfaceOrientationPortrait;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
