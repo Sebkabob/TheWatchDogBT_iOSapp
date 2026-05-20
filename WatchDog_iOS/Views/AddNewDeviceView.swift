@@ -19,17 +19,24 @@ struct AddNewDeviceView: View {
 
     enum PairingPhase: Equatable {
         case searching
+        case notFound
         case found
         case pairing(UUID)
         case paired(UUID)
 
         var deviceID: UUID? {
             switch self {
-            case .searching, .found: return nil
+            case .searching, .notFound, .found: return nil
             case .pairing(let id), .paired(let id): return id
             }
         }
     }
+
+    /// How long to wait in `.searching` before falling back to `.notFound`.
+    /// App Store review (May 2026) failed the build because the spinner ran
+    /// indefinitely when no device was nearby — this gives the user an
+    /// explicit "no result + retry" affordance instead.
+    private static let searchTimeoutSeconds: TimeInterval = 10.0
 
     @State private var phase: PairingPhase = .searching
     @State private var selectedDeviceIndex: Int = 0
@@ -39,6 +46,7 @@ struct AddNewDeviceView: View {
     @State private var readyToShow = false
     @State private var pairingStartTime: Date?
     @State private var statusTextVisible = true
+    @State private var searchTimeoutTask: DispatchWorkItem?
 
     // SceneView3D rotation
     @State private var rotX: Double = 0
@@ -93,6 +101,10 @@ struct AddNewDeviceView: View {
                             .scaleEffect(1.5)
                             .transition(.opacity)
 
+                    case .notFound:
+                        retryButton
+                            .transition(.opacity)
+
                     case .found:
                         if let device = selectedDevice {
                             deviceCarouselView(device: device)
@@ -137,7 +149,13 @@ struct AddNewDeviceView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 readyToShow = true
                 checkForDevice()
+                if case .searching = phase {
+                    startSearchTimeout()
+                }
             }
+        }
+        .onDisappear {
+            cancelSearchTimeout()
         }
         .onChange(of: bluetoothManager.discoveredDevices.count) { _, _ in
             if readyToShow {
@@ -162,6 +180,7 @@ struct AddNewDeviceView: View {
                     } else {
                         modelVisible = false
                         phase = .searching
+                        startSearchTimeout()
                     }
                 }
             }
@@ -181,6 +200,7 @@ struct AddNewDeviceView: View {
                     modelVisible = false
                     phase = .searching
                 }
+                startSearchTimeout()
             }
         } message: { msg in
             Text(msg)
@@ -324,6 +344,10 @@ struct AddNewDeviceView: View {
             Text(LocalizationManager.shared.t(.searchingForWatchDogs))
                 .font(.title3)
                 .foregroundColor(.white.opacity(0.5))
+        case .notFound:
+            Text(LocalizationManager.shared.t(.noWatchDogsFound))
+                .font(.title3)
+                .foregroundColor(.white.opacity(0.5))
         case .found:
             Text(LocalizationManager.shared.t(.tapToPair))
                 .font(.title3)
@@ -341,6 +365,31 @@ struct AddNewDeviceView: View {
         }
     }
 
+    // MARK: - Retry Button
+
+    @ViewBuilder
+    private var retryButton: some View {
+        Button {
+            tapToRetry()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.clockwise")
+                    .font(.body)
+                Text(LocalizationManager.shared.t(.tapToRetry))
+                    .font(.body)
+                    .fontWeight(.medium)
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 12)
+            .background(
+                Capsule()
+                    .stroke(Color.white.opacity(0.5), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
     // MARK: - Actions
 
     private var clampedIndex: Int {
@@ -356,9 +405,17 @@ struct AddNewDeviceView: View {
     }
 
     private func checkForDevice() {
-        guard case .searching = phase else { return }
+        // Allow recovery from .notFound too — if a device pops up after the
+        // timeout (e.g. user moved closer), promote straight to .found.
+        switch phase {
+        case .searching, .notFound:
+            break
+        default:
+            return
+        }
         guard !availableDevices.isEmpty else { return }
 
+        cancelSearchTimeout()
         selectedDeviceIndex = 0
         withAnimation(.easeInOut(duration: 0.3)) {
             phase = .found
@@ -366,6 +423,40 @@ struct AddNewDeviceView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             modelVisible = true
         }
+    }
+
+    private func tapToRetry() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        bluetoothManager.ensureScanning()
+        withAnimation(.easeInOut(duration: 0.3)) {
+            phase = .searching
+        }
+        // If devices are already in the discovered list (e.g. cached), pick
+        // one up immediately; otherwise restart the timeout window.
+        checkForDevice()
+        if case .searching = phase {
+            startSearchTimeout()
+        }
+    }
+
+    private func startSearchTimeout() {
+        cancelSearchTimeout()
+        let task = DispatchWorkItem {
+            guard case .searching = phase, availableDevices.isEmpty else { return }
+            withAnimation(.easeInOut(duration: 0.3)) {
+                phase = .notFound
+            }
+        }
+        searchTimeoutTask = task
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.searchTimeoutSeconds,
+            execute: task
+        )
+    }
+
+    private func cancelSearchTimeout() {
+        searchTimeoutTask?.cancel()
+        searchTimeoutTask = nil
     }
 
     private func tapToPair(_ deviceID: UUID) {

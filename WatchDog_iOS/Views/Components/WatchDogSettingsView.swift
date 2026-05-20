@@ -228,17 +228,7 @@ struct WatchDogSettingsView: View {
                     let baseDist = circularDistance(from: selectedIdx, to: index, count: count)
                     let dist = Double(baseDist) + dragProgress
 
-                    PresetCard(preset: preset, isSelected: selectedPreset == preset)
-                        .frame(width: cardWidth)
-                        .scaleEffect(max(0.88, 1.0 - abs(dist) * 0.12))
-                        .opacity(max(0, 1.0 - abs(dist) * 0.5))
-                        .rotation3DEffect(
-                            .degrees(dist * -25),
-                            axis: (x: 0, y: 1, z: 0),
-                            perspective: 0.4
-                        )
-                        .offset(x: dist * step)
-                        .onTapGesture { selectPreset(preset) }
+                    presetCardView(preset: preset, dist: dist, cardWidth: cardWidth, step: step)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -288,6 +278,26 @@ struct WatchDogSettingsView: View {
         }
         .frame(height: 180)
         .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private func presetCardView(preset: WatchDogPreset, dist: Double, cardWidth: CGFloat, step: CGFloat) -> some View {
+        let scale = max(0.88, 1.0 - abs(dist) * 0.12)
+        let alpha = max(0.0, 1.0 - abs(dist) * 0.5)
+        let rotation = dist * -25.0
+        let xOffset = dist * Double(step)
+
+        PresetCard(preset: preset, isSelected: selectedPreset == preset)
+            .frame(width: cardWidth)
+            .scaleEffect(scale)
+            .opacity(alpha)
+            .rotation3DEffect(
+                .degrees(rotation),
+                axis: (x: 0, y: 1, z: 0),
+                perspective: 0.4
+            )
+            .offset(x: xOffset)
+            .onTapGesture { selectPreset(preset) }
     }
 
     private func circularDistance(from: Int, to: Int, count: Int) -> Int {

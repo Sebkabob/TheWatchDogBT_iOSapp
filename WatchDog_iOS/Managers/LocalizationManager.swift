@@ -48,6 +48,7 @@ enum LocKey: Hashable {
     case resetTitle, resetMessage, reset
     case holdToLock, holdToUnlock, holdToStop
     case addAWatchDog, searchingForWatchDogs, tapToPair, pairing, paired
+    case noWatchDogsFound, tapToRetry
     case noDeviceTryDemo
     case skip, done, ok, no, go
     case yourWatchDogs
@@ -135,6 +136,8 @@ final class LocalizationManager {
             .tapToPair: "Tap to pair",
             .pairing: "Pairing...",
             .paired: "Paired!",
+            .noWatchDogsFound: "No WatchDogs Found",
+            .tapToRetry: "Tap to Retry",
             .skip: "Skip", .done: "Done", .ok: "OK", .no: "No", .go: "Go",
             .noDeviceTryDemo: "No device? Try demo",
             .yourWatchDogs: "Your WatchDogs",
@@ -203,6 +206,8 @@ final class LocalizationManager {
             .tapToPair: "Toca para emparejar",
             .pairing: "Emparejando...",
             .paired: "¡Emparejado!",
+            .noWatchDogsFound: "No se encontraron WatchDogs",
+            .tapToRetry: "Toca para reintentar",
             .skip: "Omitir", .done: "Listo", .ok: "OK", .no: "No", .go: "Ir",
             .noDeviceTryDemo: "¿Sin dispositivo? Probar demo",
             .yourWatchDogs: "Tus WatchDogs",
@@ -271,6 +276,8 @@ final class LocalizationManager {
             .tapToPair: "Tik om te koppelen",
             .pairing: "Koppelen...",
             .paired: "Gekoppeld!",
+            .noWatchDogsFound: "Geen WatchDogs gevonden",
+            .tapToRetry: "Tik om opnieuw te proberen",
             .skip: "Overslaan", .done: "Klaar", .ok: "OK", .no: "Nee", .go: "Ga",
             .noDeviceTryDemo: "Geen apparaat? Probeer demo",
             .yourWatchDogs: "Jouw WatchDogs",
@@ -339,6 +346,8 @@ final class LocalizationManager {
             .tapToPair: "Appuyer pour appairer",
             .pairing: "Appairage...",
             .paired: "Appairé !",
+            .noWatchDogsFound: "Aucun WatchDog trouvé",
+            .tapToRetry: "Appuyer pour réessayer",
             .skip: "Passer", .done: "OK", .ok: "OK", .no: "Non", .go: "Aller",
             .noDeviceTryDemo: "Pas d'appareil ? Essayer la démo",
             .yourWatchDogs: "Vos WatchDogs",
@@ -407,6 +416,8 @@ final class LocalizationManager {
             .tapToPair: "タップしてペアリング",
             .pairing: "ペアリング中...",
             .paired: "ペアリング完了!",
+            .noWatchDogsFound: "WatchDogが見つかりません",
+            .tapToRetry: "タップして再試行",
             .skip: "スキップ", .done: "完了", .ok: "OK", .no: "いいえ", .go: "実行",
             .noDeviceTryDemo: "デバイスがない?デモを試す",
             .yourWatchDogs: "あなたのWatchDog",
@@ -475,6 +486,8 @@ final class LocalizationManager {
             .tapToPair: "Tocar para emparelhar",
             .pairing: "A emparelhar...",
             .paired: "Emparelhado!",
+            .noWatchDogsFound: "Nenhum WatchDog encontrado",
+            .tapToRetry: "Tocar para tentar novamente",
             .skip: "Saltar", .done: "Concluído", .ok: "OK", .no: "Não", .go: "Ir",
             .noDeviceTryDemo: "Sem dispositivo? Experimentar demo",
             .yourWatchDogs: "Os Seus WatchDogs",
