@@ -1829,6 +1829,33 @@ extension BluetoothManager: CBPeripheralDelegate {
                 self.alarmClearTimer = nil
             }
 
+            // Implicit-arm detection. The firmware's ARMED-bit persistence
+            // (added for brownout safety) means a device that browns out
+            // while locked boots back into LOCKED on its own — no iOS tap,
+            // no DevicePageView session synthesis, no location capture. We
+            // observe this from the iOS side as a 0→1 ARMED transition on
+            // a DEVICESTATUS notify that the user didn't initiate, and
+            // backfill: a synthetic SESSION_START dated to "now" (reconnect
+            // time — the original arm time is lost) plus a location capture
+            // at the user's current spot. Gated on the logging-enabled
+            // switch to match the manual-arm path's behaviour. Gated on
+            // "no open session exists for this device" so a reconnect blip
+            // doesn't double-up sessions and so a long-running lock that
+            // survives a quick disconnect stays as one continuous session.
+            if !wasArmed && armedNow,
+               SettingsManager.shared.loggingEnabled,
+               !MotionSessionsRepository.shared.hasOpenSession(for: peripheralID) {
+                Log.info(.motion, "Implicit arm detected — synthesising SESSION_START + location capture")
+                let marker = MotionEvent(
+                    deviceID: peripheralID,
+                    timestamp: Date(),
+                    eventType: .sessionStart,
+                    alarmSounded: false
+                )
+                MotionLogManager.shared.addMotionEvent(marker)
+                SessionLocationStore.shared.captureForUpcomingArm()
+            }
+
             self.updateBatteryState(charging: charging, battery: battery)
             self.debugCurrentDraw = current
             self.debugVoltage = voltage

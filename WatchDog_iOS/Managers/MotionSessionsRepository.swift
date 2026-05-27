@@ -156,4 +156,14 @@ class MotionSessionsRepository {
     func sessions(for deviceID: UUID) -> [MotionSession] {
         sessions.filter { $0.deviceID == deviceID }
     }
+
+    /// True iff at least one session for `deviceID` has no SESSION_END
+    /// recorded yet. Used by BluetoothManager to decide whether to
+    /// synthesise a fresh SESSION_START when reconnecting to a device
+    /// that booted back into LOCKED state on its own (firmware ARMED-bit
+    /// persistence). If a session is still open, we want to extend it,
+    /// not double-up.
+    func hasOpenSession(for deviceID: UUID) -> Bool {
+        sessions.contains { $0.deviceID == deviceID && $0.endedAt == nil }
+    }
 }
