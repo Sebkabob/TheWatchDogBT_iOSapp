@@ -114,12 +114,12 @@ struct DeviceDiagnosticView: View {
                 staleHeader(r)
                 summaryBanner(r)
 
-                if let s = r.system  { systemCard(s) }
-                if let b = r.battery { batteryCard(b) }
-                if let l = r.ble     { bleCard(l) }
-                if let s = r.sensor  { sensorCard(s) }
-                if let p = r.power   { powerCard(p, system: r.system) }
-                if let s = r.storage { storageCard(s) }
+                if let s = r.system       { systemCard(s) }
+                if let b = r.battery      { batteryCard(b) }
+                if let s = r.sensor       { sensorCard(s) }
+                if let s = r.storage      { storageCard(s) }
+                if let f = r.fault        { faultCard(f) }
+                if let h = r.resetHistory { resetHistoryCard(h) }
 
                 rawCard(r)
             }
@@ -195,6 +195,12 @@ struct DeviceDiagnosticView: View {
             if s.eepromFailCount      > 0 { out.append("EEPROM failures: \(s.eepromFailCount)") }
             if s.bq27427FailCount     > 0 { out.append("BQ27427 failures: \(s.bq27427FailCount)") }
             if s.lis2dux12FailCount   > 0 { out.append("LIS2DUX12 failures: \(s.lis2dux12FailCount)") }
+        }
+        if let f = r.fault, f.isPresent {
+            out.append("Hard fault recorded · PC=\(f.pcHex)")
+        }
+        if let h = r.resetHistory, h.hasDangerousReset {
+            out.append("Dangerous reset cause in recent history (WDG/LOCKUP)")
         }
         return out
     }
@@ -368,50 +374,6 @@ struct DeviceDiagnosticView: View {
         return DiagCard(title: "Battery", icon: "battery.100", rows: rows)
     }
 
-    private func bleCard(_ b: DiagBLE) -> some View {
-        var rows: [DiagRow] = []
-
-        let rssiStatus: DiagStatus
-        if b.currentRSSIdBm == 0x7F {
-            rssiStatus = .info
-        } else if b.currentRSSIdBm >= -75 {
-            rssiStatus = .ok
-        } else if b.currentRSSIdBm >= -90 {
-            rssiStatus = .warn
-        } else {
-            rssiStatus = .bad
-        }
-        rows.append(DiagRow(label: "RSSI", value: b.rssiDisplay, status: rssiStatus,
-                            note: b.currentRSSIdBm == 0x7F ? "not measured this build" : nil))
-
-        rows.append(DiagRow(label: "Connections since boot",
-                            value: "\(b.connectionCountSinceBoot)", status: .info))
-
-        let discStatus: DiagStatus
-        switch b.lastDisconnectReason {
-        case 0x00: discStatus = .ok
-        case 0x13, 0x16: discStatus = .info               // user-terminated
-        case 0x08, 0x22, 0x3E: discStatus = .warn          // timeouts / failures
-        default: discStatus = .info
-        }
-        rows.append(DiagRow(
-            label: "Last disconnect",
-            value: b.disconnectReasonDescription + String(format: "  (0x%02X)", b.lastDisconnectReason),
-            status: discStatus
-        ))
-
-        let mtuStatus: DiagStatus =
-            b.mtuNegotiated >= 100 ? .ok :
-            b.mtuNegotiated >= 23  ? .info : .warn
-        rows.append(DiagRow(label: "MTU", value: "\(b.mtuNegotiated)", status: mtuStatus))
-
-        rows.append(DiagRow(label: "Conn interval", value: b.connIntervalDisplay,
-                            status: b.connectionIntervalUnits == 0 ? .info : .info,
-                            note: b.connectionIntervalUnits == 0 ? "not measured this build" : nil))
-
-        return DiagCard(title: "BLE Link", icon: "antenna.radiowaves.left.and.right", rows: rows)
-    }
-
     private func sensorCard(_ s: DiagSensor) -> some View {
         var rows: [DiagRow] = []
 
@@ -436,29 +398,6 @@ struct DeviceDiagnosticView: View {
         }
 
         return DiagCard(title: "Sensor", icon: "gyroscope", rows: rows)
-    }
-
-    private func powerCard(_ p: DiagPower, system: DiagSystem?) -> some View {
-        var rows: [DiagRow] = []
-        rows.append(DiagRow(label: "State", value: p.powerStateLabel, status: .info))
-        rows.append(DiagRow(label: "Wakes · motion", value: "\(p.wakesMotion)", status: .info))
-        rows.append(DiagRow(label: "Wakes · cable",  value: "\(p.wakesCable)",  status: .info))
-        rows.append(DiagRow(label: "Wakes · debug",  value: "\(p.wakesDebug)",  status: .info))
-        rows.append(DiagRow(label: "Wakes · tick",   value: "\(p.wakesTick)",   status: .info))
-        rows.append(DiagRow(label: "Time in LP",     value: formatSeconds(p.timeInLPSeconds), status: .info))
-
-        if let sys = system,
-           let duty = p.sleepDuty(uptimeSeconds: sys.uptimeSeconds) {
-            let dutyStatus: DiagStatus =
-                duty >= 0.9 ? .ok :
-                duty >= 0.5 ? .warn : .bad
-            rows.append(DiagRow(label: "Sleep duty",
-                                value: String(format: "%.1f%%", duty * 100.0),
-                                status: dutyStatus,
-                                note: duty < 0.5 ? "device awake more than expected — battery drain risk" : nil))
-        }
-
-        return DiagCard(title: "Power", icon: "bolt.fill", rows: rows)
     }
 
     private func storageCard(_ s: DiagStorage) -> some View {
@@ -498,6 +437,65 @@ struct DeviceDiagnosticView: View {
                             status: s.lis2dux12FailCount == 0 ? .ok : .bad))
 
         return DiagCard(title: "Storage", icon: "internaldrive", rows: rows)
+    }
+
+    private func faultCard(_ f: DiagFault) -> some View {
+        var rows: [DiagRow] = []
+        if f.isPresent {
+            rows.append(DiagRow(label: "Status", value: "RECORDED",
+                                status: .bad,
+                                note: "device hard-faulted before the most recent reset"))
+            rows.append(DiagRow(label: "PC",   value: f.pcHex,   status: .info,
+                                note: "instruction the CPU was executing at fault"))
+            rows.append(DiagRow(label: "LR",   value: f.lrHex,   status: .info,
+                                note: "link register — usually return address of caller"))
+            rows.append(DiagRow(label: "xPSR", value: f.xpsrHex, status: .info))
+            // Bits 0..8 of xPSR carry the exception number. Non-zero here
+            // means the fault happened inside another exception handler,
+            // which is much worse than a clean thread-mode fault.
+            if f.exceptionNumber != 0 {
+                rows.append(DiagRow(label: "Exception #",
+                                    value: "\(f.exceptionNumber)",
+                                    status: .bad,
+                                    note: "nested fault — fault hit inside another exception"))
+            }
+            rows.append(DiagRow(label: "Schema", value: "v\(f.schemaVersion)", status: .info))
+        } else {
+            rows.append(DiagRow(label: "Status", value: "None recorded",
+                                status: .ok,
+                                note: "no hard fault has ever fired on this device"))
+        }
+        return DiagCard(title: "Last Hard Fault",
+                        icon: "exclamationmark.octagon",
+                        rows: rows)
+    }
+
+    private func resetHistoryCard(_ h: DiagResetHistory) -> some View {
+        var rows: [DiagRow] = []
+        if h.entries.isEmpty {
+            rows.append(DiagRow(label: "History", value: "empty",
+                                status: .info,
+                                note: "no resets logged yet — first boot since EEPROM wipe"))
+        } else {
+            // Newest at the top is more useful for at-a-glance — reverse the
+            // firmware's oldest-first ordering when rendering. Boot number
+            // is the most useful "when" so it's the primary value.
+            for e in h.entries.reversed() {
+                let status: DiagStatus =
+                    e.causeIsDangerous ? .bad :
+                    (e.resetCause == 0 ? .info : .ok)
+                rows.append(DiagRow(
+                    label: "Boot #\(e.bootCount)",
+                    value: e.causeDescription + String(format: "  (0x%02X)", e.resetCause),
+                    status: status,
+                    note: e.uptimeDisplay == "—" ? nil
+                        : "ran for \(e.uptimeDisplay) before resetting"
+                ))
+            }
+        }
+        return DiagCard(title: "Recent Resets (last \(h.entries.count))",
+                        icon: "arrow.counterclockwise.circle",
+                        rows: rows)
     }
 
     private func rawCard(_ r: DiagnosticReport) -> some View {
@@ -579,25 +577,11 @@ struct DeviceDiagnosticView: View {
             out += String(format: "flags=0x%04X ctrl=0x%04X status=0x%02X\n\n",
                           d.flagsRaw, d.controlStatusRaw, d.statusBits)
         }
-        if let b = r.ble {
-            out += "[BLE]\n"
-            out += "rssi=\(b.rssiDisplay) conns=\(b.connectionCountSinceBoot) "
-                + "mtu=\(b.mtuNegotiated) interval=\(b.connIntervalDisplay)\n"
-            out += String(format: "last_disc=0x%02X (%@)\n\n",
-                          b.lastDisconnectReason, b.disconnectReasonDescription)
-        }
         if let s = r.sensor {
             out += "[SENSOR]\n"
             out += "mlc=\(s.mlcStateLabel) "
                 + "trans=\(s.mlcTransitionsSinceBoot) int1=\(s.int1FiresSinceBoot) "
                 + "logged=\(s.motionEventsLoggedSinceBoot)\n\n"
-        }
-        if let p = r.power {
-            out += "[POWER]\n"
-            out += "state=\(p.powerStateLabel) "
-                + "wakes(motion/cable/debug/tick)="
-                + "\(p.wakesMotion)/\(p.wakesCable)/\(p.wakesDebug)/\(p.wakesTick) "
-                + "lp=\(p.timeInLPSeconds)s\n\n"
         }
         if let s = r.storage {
             out += "[STORAGE]\n"
@@ -605,7 +589,23 @@ struct DeviceDiagnosticView: View {
                 + "loyalty(healthy/claimed)=\(s.loyaltyStoreHealthy)/\(s.loyaltyClaimed)\n"
             out += "fails(i2c/eeprom/bq/lis)="
                 + "\(s.i2cErrorsSinceBoot)/\(s.eepromFailCount)/"
-                + "\(s.bq27427FailCount)/\(s.lis2dux12FailCount)\n"
+                + "\(s.bq27427FailCount)/\(s.lis2dux12FailCount)\n\n"
+        }
+        if let f = r.fault {
+            out += "[FAULT]\n"
+            if f.isPresent {
+                out += "valid=1 pc=\(f.pcHex) lr=\(f.lrHex) xpsr=\(f.xpsrHex)\n\n"
+            } else {
+                out += "valid=0 (none recorded)\n\n"
+            }
+        }
+        if let h = r.resetHistory {
+            out += "[RESET_HISTORY] (\(h.entries.count) entries, oldest first)\n"
+            for (i, e) in h.entries.enumerated() {
+                out += String(format: "  %d: boot=%u cause=0x%02X (%@) prev_uptime=%@\n",
+                              i, e.bootCount, e.resetCause, e.causeDescription,
+                              e.uptimeDisplay)
+            }
         }
         return out
     }

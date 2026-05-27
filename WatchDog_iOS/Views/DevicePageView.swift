@@ -429,6 +429,23 @@ struct DevicePageView: View {
                             Divider()
 
                             Button {
+                                settingsManager.updateSettings(
+                                    liveOrientation: !settingsManager.liveOrientationEnabled
+                                )
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "rotate.3d")
+                                    Text(settingsManager.liveOrientationEnabled ? "Live 3D: On" : "Live 3D: Off")
+                                }
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundColor(isDeviceConnected
+                                                 ? (settingsManager.liveOrientationEnabled ? .green : .yellow)
+                                                 : .gray)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(!isDeviceConnected)
+
+                            Button {
                                 showDiagnostic = true
                             } label: {
                                 HStack(spacing: 4) {

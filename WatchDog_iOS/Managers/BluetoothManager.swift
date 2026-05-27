@@ -984,21 +984,29 @@ class BluetoothManager: NSObject {
 
     // MARK: - Diagnostic (0xF4 → BATTERYDIAG TLV)
 
-    /// Request a one-shot TLV diagnostic from the WatchDog. The response
-    /// arrives as a single notification on the BATTERYDIAG characteristic.
-    /// `completion` fires on the main thread with the parsed report or an error.
-    /// Throttled to one request per `diagnosticMinInterval` (firmware caches
-    /// battery state on a 1 s tick — faster requests just return the same data).
+    /// Request a one-shot TLV diagnostic from the WatchDog.
+    ///
+    /// The full dump (all sections) is **217 bytes**, which doesn't fit in a
+    /// single BLE notification when iOS negotiates the typical 185-byte ATT
+    /// MTU (max notify payload = MTU - 3 = 182 bytes). To stay under that
+    /// limit without a firmware change, the default-mask path fires two
+    /// sequential chunked requests and merges the sections:
+    ///
+    ///   Chunk 1 (mask 0x6B): SYSTEM + BATTERY + SENSOR + STORAGE + FAULT
+    ///                        ≈ 142 bytes  ✓ fits 182
+    ///   Chunk 2 (mask 0x80): RESET_HISTORY only
+    ///                        ≈  77 bytes  ✓ fits 182
+    ///
+    /// Callers that pass a custom `sectionMask` get a single request — the
+    /// caller is then responsible for keeping the response under the MTU.
+    /// `completion` fires on the main thread with the merged report or an
+    /// error. Throttled by `diagnosticMinInterval` at the public entry only;
+    /// the second internal chunk bypasses the throttle.
     func requestDiagnostic(sectionMask: UInt8 = 0xFF,
                            completion: @escaping (Result<DiagnosticReport, Error>) -> Void) {
         guard connectedDevice?.peripheral != nil,
               writeCharacteristic != nil else {
             completion(.failure(DiagnosticError.notConnected))
-            return
-        }
-
-        guard diagnosticCompletion == nil else {
-            Log.warn(.diag, "Diagnostic already in progress")
             return
         }
 
@@ -1011,16 +1019,62 @@ class BluetoothManager: NSObject {
         }
         lastDiagnosticRequestAt = Date()
 
+        // Custom-mask path: one request, caller owns MTU sizing.
+        guard sectionMask == 0xFF else {
+            requestDiagnosticChunk(sectionMask: sectionMask, completion: completion)
+            return
+        }
+
+        // Default-mask path: split into two chunks so the response fits MTU.
+        requestDiagnosticChunk(sectionMask: 0x6B) { [weak self] result1 in
+            guard let self = self else { return }
+            switch result1 {
+            case .failure(let err):
+                DispatchQueue.main.async { completion(.failure(err)) }
+            case .success(let report1):
+                // Brief settle so the radio finishes draining the first
+                // notification's TX before we kick off the second request.
+                // 50 ms is well below the 1 Hz UI poll cadence and avoids
+                // any back-to-back notify backpressure on the stack.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                    guard let self = self else { return }
+                    self.requestDiagnosticChunk(sectionMask: 0x80) { result2 in
+                        switch result2 {
+                        case .failure:
+                            // Partial is better than failing entirely — the
+                            // reset-history card just won't render this poll.
+                            DispatchQueue.main.async { completion(.success(report1)) }
+                        case .success(let report2):
+                            let merged = DiagnosticReport.merge(report1, report2)
+                            DispatchQueue.main.async { completion(.success(merged)) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Single-shot chunk request. Used internally by `requestDiagnostic` to
+    /// fetch a subset of sections per call so each notification fits MTU.
+    /// Throttling lives on the public wrapper, not here.
+    private func requestDiagnosticChunk(sectionMask: UInt8,
+                                        completion: @escaping (Result<DiagnosticReport, Error>) -> Void) {
+        guard diagnosticCompletion == nil else {
+            Log.warn(.diag, "Diagnostic chunk dropped · another in flight")
+            completion(.failure(DiagnosticError.timeout))
+            return
+        }
+
         diagnosticCompletion = completion
 
         sendData(Data([BluetoothManager.CMD_REQUEST_DIAG, sectionMask]))
-        Log.tx(.diag, String(format: "Diagnostic request (0xF4 mask=0x%02X)", sectionMask))
+        Log.tx(.diag, String(format: "Diagnostic chunk (0xF4 mask=0x%02X)", sectionMask))
 
         DispatchQueue.main.async {
             self.diagnosticTimer?.invalidate()
             self.diagnosticTimer = Timer.scheduledTimer(withTimeInterval: self.diagnosticTimeout, repeats: false) { [weak self] _ in
                 guard let self = self else { return }
-                Log.warn(.diag, "Diagnostic timeout")
+                Log.warn(.diag, String(format: "Diagnostic chunk timeout (mask=0x%02X)", sectionMask))
                 self.finishDiagnostic(result: .failure(DiagnosticError.timeout))
             }
         }
