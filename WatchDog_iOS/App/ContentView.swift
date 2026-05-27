@@ -34,6 +34,17 @@ struct ContentView: View {
             }
         }
         .onAppear {
+            // Touch the SessionLocationStore singleton at app launch so its
+            // initialiser runs early — if location permission was previously
+            // granted, init() now silently starts continuous updates so a
+            // fresh `manager.location` is sitting in the cache by the time
+            // the user arms a device. No prompt is triggered from this
+            // touch; the prompt still only fires from Motion Report's
+            // onAppear (.notDetermined path). This closes the race where
+            // captureForUpcomingArm fired before any fix had ever been
+            // received and the SESSION_START got no location bound to it.
+            _ = SessionLocationStore.shared
+
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                 withAnimation(.easeInOut(duration: 1.0)) {
                     showSplash = false

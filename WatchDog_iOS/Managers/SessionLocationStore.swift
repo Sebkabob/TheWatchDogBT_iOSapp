@@ -70,13 +70,32 @@ class SessionLocationStore: NSObject, CLLocationManagerDelegate {
 
     /// How long after capture we still consider the pending location
     /// fresh enough to associate with an arriving SESSION_START.
-    /// 30 s covers slow loyalty-verify drains and a user who paused
-    /// before completing the long-press; longer than that and the
-    /// pending entry is probably stale (user walked away, arm was a
-    /// no-op, etc.).
-    private let pendingWindow: TimeInterval = 30
+    /// Was 30 s — too tight. `associateIfPending` is called from
+    /// MotionReportView.onAppear, not from the BLE-drain path, so the
+    /// pending entry has to survive however long the user takes to open
+    /// Motion Report after arming. 5 minutes is long enough for "lock
+    /// the device, walk to the car, look at the app" while still short
+    /// enough that an old pending entry doesn't attach to an unrelated
+    /// future arm.
+    private let pendingWindow: TimeInterval = 5 * 60
+
+    /// Treat `manager.location` as authoritative only if its timestamp
+    /// is within this window. CLLocationManager will happily hand back
+    /// a one-hour-old cached fix when updates aren't running, which is
+    /// worse than no location at all — it pins the SESSION_START to
+    /// wherever the phone last had a fix, not where the user actually
+    /// armed the device.
+    private let maxLocationAgeSeconds: TimeInterval = 5 * 60
 
     private var pending: (location: SessionLocation, capturedAt: Date)?
+
+    /// Set by `captureForUpcomingArm` when no fresh `manager.location`
+    /// was available. `didUpdateLocations` watches this and, when a
+    /// fresh fix arrives within `pendingWindow`, promotes the awaiting
+    /// arm into a real `pending` entry. Without this, the previous
+    /// implementation's `manager.requestLocation()` fallback was wasted —
+    /// the one-shot result landed in an empty delegate and was discarded.
+    private var pendingAwaitingFix: Date?
 
     override init() {
         super.init()
@@ -85,6 +104,17 @@ class SessionLocationStore: NSObject, CLLocationManagerDelegate {
         manager.distanceFilter  = 50
         authorizationStatus = manager.authorizationStatus
         loadFromDisk()
+
+        // If the user previously granted permission, start updates now —
+        // silently, no prompt. We want `manager.location` to be a fresh
+        // fix by the time the user arms, NOT nil-because-no-updates or
+        // a stale cached value from a previous app run. Touching the
+        // singleton at app launch (see ContentView.onAppear) drives this
+        // initialiser early enough to matter.
+        if authorizationStatus == .authorizedWhenInUse
+            || authorizationStatus == .authorizedAlways {
+            manager.startUpdatingLocation()
+        }
     }
 
     // MARK: - Authorization
@@ -119,13 +149,32 @@ class SessionLocationStore: NSObject, CLLocationManagerDelegate {
             || authorizationStatus == .authorizedAlways else {
             return
         }
-        if let loc = manager.location, loc.horizontalAccuracy > 0 {
+        let now = Date()
+
+        // Treat manager.location as authoritative only when it's both
+        // valid (positive accuracy = not a "no fix" sentinel) AND fresh.
+        // CLLocationManager hands back hour-old cached fixes when updates
+        // aren't running — using those pins the arm to wherever the phone
+        // last had a fix.
+        if let loc = manager.location,
+           loc.horizontalAccuracy > 0,
+           now.timeIntervalSince(loc.timestamp) < maxLocationAgeSeconds {
             pending = (
                 SessionLocation(lat: loc.coordinate.latitude,
                                 lng: loc.coordinate.longitude,
-                                capturedAt: Date()),
-                Date()
+                                capturedAt: now),
+                now
             )
+            pendingAwaitingFix = nil
+        } else {
+            // No fresh fix. Remember when the arm happened and lean on
+            // the one-shot `requestLocation()` below — `didUpdateLocations`
+            // will promote this into a real `pending` entry as soon as a
+            // fix lands. Also kick continuous updates in case they weren't
+            // running, so we have *some* stream to populate the cache for
+            // future arms.
+            pendingAwaitingFix = now
+            manager.startUpdatingLocation()
         }
         manager.requestLocation()
     }
@@ -235,6 +284,32 @@ class SessionLocationStore: NSObject, CLLocationManagerDelegate {
         // kCLLocationAccuracyHundredMeters + 50m distance filter is
         // low-cost (the system batches significant-motion deltas) and
         // makes the lock-time fix actually current.
+
+        // Promote any awaiting-fix arm into a real pending entry. This
+        // is the canonical fix for "sometimes the lock-time location
+        // doesn't get tracked": captureForUpcomingArm fired before any
+        // fix was available (app just launched, just granted permission,
+        // or moved from background where updates were paused) and parked
+        // an awaitingFix marker; the one-shot requestLocation() it kicked
+        // is what we're seeing return here. Stamp the SessionLocation's
+        // capturedAt with the arm time, not the fix arrival time, so the
+        // 5-minute pendingWindow check downstream uses the right anchor.
+        guard let fresh = locations.last, fresh.horizontalAccuracy > 0 else {
+            return
+        }
+        if let awaiting = pendingAwaitingFix {
+            if Date().timeIntervalSince(awaiting) <= pendingWindow {
+                pending = (
+                    SessionLocation(lat: fresh.coordinate.latitude,
+                                    lng: fresh.coordinate.longitude,
+                                    capturedAt: awaiting),
+                    awaiting
+                )
+            }
+            // Either we just promoted it or it expired before the fix
+            // arrived — either way the awaiting marker is consumed.
+            pendingAwaitingFix = nil
+        }
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {

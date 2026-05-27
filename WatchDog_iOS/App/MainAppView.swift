@@ -388,7 +388,7 @@ struct AboutPage: View {
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 120, height: 120)
                 }
-                Text("WatchDog")
+                Text("WatchDog BT")
                     .font(.title2)
                     .fontWeight(.bold)
                 Text("Version \(AppVersion.displayString)")

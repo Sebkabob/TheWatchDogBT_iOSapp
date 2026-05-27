@@ -1,16 +1,18 @@
-# WatchDog — App Store Connect Listing
+# WatchDog BT — App Store Connect Listing
 
 Copy-paste straight into App Store Connect. Character counts verified against Apple's 2026 limits. Anything in `[brackets]` is a placeholder you need to fill in.
+
+> **2026-05-26 update.** The submission was rejected under 4.1(a) (copycat) for resembling existing "WatchDog" apps. The fix: differentiated brand to **WatchDog BT** (the hardware name), in both the App Store name field and the home-screen `CFBundleDisplayName`. See `AppReviewResponse.md` for the full reply going back to App Review.
 
 ---
 
 ## App Name (30 max)
 
 ```
-WatchDog: Bag Theft Alarm
+WatchDog BT: Bag Theft Alarm
 ```
 
-**25 / 30 characters.** Leads with the brand, then the most specific search phrase a worried bag-owner would type. The colon is allowed and reads cleaner than a dash.
+**28 / 30 characters.** Leads with the brand (`WatchDog BT` — also the home-screen `CFBundleDisplayName`, and the name of the companion hardware), then the most specific search phrase a worried bag-owner would type. The `BT` suffix disambiguates from the several other "WatchDog" apps on the App Store, resolving the 4.1(a) collision flagged in App Review on 2026-05-20.
 
 ---
 
@@ -27,10 +29,10 @@ Anti-theft alarm for your bag
 ## Promotional Text (170 max)
 
 ```
-Set your bag down. Grab a coffee. The second someone reaches for it, WatchDog screams — and your phone knows. No accounts, no cloud, just you and your stuff.
+Set your bag down. Grab a coffee. The second someone reaches for it, WatchDog BT screams — and your phone knows. No accounts, no cloud, just you and your stuff.
 ```
 
-**157 / 170 characters.** This is the only field you can edit after release without resubmitting — great place to swap in seasonal hooks ("Heading to the airport?") or press mentions later.
+**160 / 170 characters.** This is the only field you can edit after release without resubmitting — great place to swap in seasonal hooks ("Heading to the airport?") or press mentions later.
 
 ---
 
@@ -39,7 +41,7 @@ Set your bag down. Grab a coffee. The second someone reaches for it, WatchDog sc
 ```
 Set your bag down. Grab a coffee. Have a real conversation.
 
-WatchDog is a tiny Bluetooth alarm that clips onto whatever you don't want walking away from you. Tuck it into a backpack, slip it into a tote, drop it inside a piece of luggage — the moment someone picks it up, jostles it, or knocks it over, it screams. Then it pings your phone so you actually know it happened.
+WatchDog BT is a tiny Bluetooth alarm that clips onto whatever you don't want walking away from you. Tuck it into a backpack, slip it into a tote, drop it inside a piece of luggage — the moment someone picks it up, jostles it, or knocks it over, it screams. Then it pings your phone so you actually know it happened.
 
 
 WHY PEOPLE USE IT
@@ -53,14 +55,14 @@ WHY PEOPLE USE IT
 
 SET IT UP IN A MINUTE
 
-Pair your WatchDog once. Pick a preset — Door Guard, Drawer Watch, Vehicle Guard, Package Watch, or Max Security — or build your own. Slide the lock button and it's armed. Hold to disarm. That's the whole thing.
+Pair your WatchDog BT once. Pick a preset — Door Guard, Drawer Watch, Vehicle Guard, Package Watch, or Max Security — or build your own. Slide the lock button and it's armed. Hold to disarm. That's the whole thing.
 
 A short tutorial walks you through three gestures the first time you open the app: swipe between devices, tap to open settings, hold to lock. No instruction manual.
 
 
 YOUR LOCK, YOUR DATA
 
-WatchDog doesn't have an account. There's no signup, no cloud sync, no profile to delete later. Pairing is a private handshake between your phone and your device — once it's claimed, only your phone can arm it, disarm it, or read its motion history.
+WatchDog BT doesn't have an account. There's no signup, no cloud sync, no profile to delete later. Pairing is a private handshake between your phone and your device — once it's claimed, only your phone can arm it, disarm it, or read its motion history.
 
 The app pins the location of every lock on a map so you can remember where you left things, but location is only captured at the exact moment you lock. Nothing is streamed, nothing is shared, nothing leaves your phone.
 
@@ -73,7 +75,7 @@ FINE-TUNE THE FEEL
 – Four alarm voices: silent, calm, normal, or full-volume "everyone in the café looks up"
 – Trigger types you can mix and match: In Motion, Shaken, Impact, Freefall, Tilted, Door Opening, Door Closing
 – Timestamped motion logs so you can see exactly when something tried to move it
-– A find-my-WatchDog buzz for when you've forgotten which bag you stuffed it in
+– A find-my-WatchDog-BT buzz for when you've forgotten which bag you stuffed it in
 – Adjustable LED brightness, alarm duration, and Bluetooth range
 
 
@@ -82,7 +84,7 @@ SIX LANGUAGES, ONE APP
 English, Español, Français, Nederlands, Português, 日本語.
 
 
-WatchDog is the device-side equivalent of locking your front door. Quick, quiet, worth the two seconds it costs you.
+WatchDog BT is the device-side equivalent of locking your front door. Quick, quiet, worth the two seconds it costs you.
 
 Hardware sold separately. Learn more at [your marketing URL].
 ```
@@ -106,7 +108,7 @@ backpack,luggage,bike,travel,bluetooth,tracker,motion,security,laptop,purse,suit
 If this is your first App Store release:
 
 ```
-First release. Thanks for picking up a WatchDog.
+First release. Thanks for picking up a WatchDog BT.
 
 This is the launch build — pair your device, set a sensitivity, lock it, you're done. If anything feels rough, the support link below goes straight to me.
 ```
