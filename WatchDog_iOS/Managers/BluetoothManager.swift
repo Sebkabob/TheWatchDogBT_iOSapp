@@ -1815,7 +1815,19 @@ extension BluetoothManager: CBPeripheralDelegate {
             if let firmware {
                 self.watchDogFirmwares[peripheralID] = firmware
             }
-            let wasArmed = self.settingsManager.isArmed
+            // `wasArmedOptimistic` is the iOS-side ARMED bit BEFORE we
+            // decode this notify. DevicePageView flips this the instant
+            // the user taps lock/unlock, so it reflects user intent —
+            // used downstream to suppress a stale "Moving"/"Shaken" MLC
+            // reading that's in flight from before the firmware
+            // processed the iOS settings write. For session-boundary
+            // reconciliation we deliberately don't read it: it can't
+            // tell us whether a 1→0 notify is a real disarm or just a
+            // stale notify arriving after an optimistic flip, and the
+            // old "implicit disarm" path that did rely on it spawned
+            // 0-second sessions on every lock tap.
+            let wasArmedOptimistic = self.settingsManager.isArmed
+            let isFirstNotify = !self.hasReceivedInitialState
             self.deviceState = settingsByte
             self.hasReceivedInitialState = true
             self.settingsManager.decodeSettings(from: settingsByte)
@@ -1829,31 +1841,54 @@ extension BluetoothManager: CBPeripheralDelegate {
                 self.alarmClearTimer = nil
             }
 
-            // Implicit-arm detection. The firmware's ARMED-bit persistence
-            // (added for brownout safety) means a device that browns out
-            // while locked boots back into LOCKED on its own — no iOS tap,
-            // no DevicePageView session synthesis, no location capture. We
-            // observe this from the iOS side as a 0→1 ARMED transition on
-            // a DEVICESTATUS notify that the user didn't initiate, and
-            // backfill: a synthetic SESSION_START dated to "now" (reconnect
-            // time — the original arm time is lost) plus a location capture
-            // at the user's current spot. Gated on the logging-enabled
-            // switch to match the manual-arm path's behaviour. Gated on
-            // "no open session exists for this device" so a reconnect blip
-            // doesn't double-up sessions and so a long-running lock that
-            // survives a quick disconnect stays as one continuous session.
-            if !wasArmed && armedNow,
-               SettingsManager.shared.loggingEnabled,
-               !MotionSessionsRepository.shared.hasOpenSession(for: peripheralID) {
-                Log.info(.motion, "Implicit arm detected — synthesising SESSION_START + location capture")
-                let marker = MotionEvent(
-                    deviceID: peripheralID,
-                    timestamp: Date(),
-                    eventType: .sessionStart,
-                    alarmSounded: false
-                )
-                MotionLogManager.shared.addMotionEvent(marker)
-                SessionLocationStore.shared.captureForUpcomingArm()
+            // First-notify reconciliation. After a reconnect we have to
+            // bring the iOS-side session record into agreement with what
+            // the firmware actually thinks. Two cases:
+            //
+            //   (a) firmware armed but we have no open session → the
+            //       device booted back into LOCKED on its own (firmware
+            //       ARMED-bit persistence after a brownout) without the
+            //       user ever tapping lock in the app. Backfill a
+            //       SESSION_START dated to "now" (the original arm time
+            //       is lost) plus a location capture.
+            //
+            //   (b) firmware unarmed but we have an open session → the
+            //       device disarmed itself while we were disconnected
+            //       (loyalty-verify auto-disarm at reconnect, the user
+            //       pulled the cable for the 30s recovery hatch, etc.).
+            //       Close the orphan with a SESSION_END dated to "now"
+            //       so it can't bleed into the next arm cycle.
+            //
+            // We deliberately do NOT synthesise markers on subsequent
+            // notifies (the old per-transition logic) because the user
+            // is the sole authority on session boundaries while
+            // connected: DevicePageView writes the START on the lock
+            // tap and the END on the unlock tap, full stop. Any
+            // mid-connection firmware-side ARMED transition (e.g.
+            // STABILIZING timeout) intentionally does not close the
+            // open session — the user has to unlock in the app.
+            if isFirstNotify, SettingsManager.shared.loggingEnabled {
+                let openSession = MotionSessionsRepository.shared.hasOpenSession(for: peripheralID)
+                if armedNow && !openSession {
+                    Log.info(.motion, "First-notify reconcile · firmware armed, no open session — synthesising SESSION_START + location capture")
+                    let marker = MotionEvent(
+                        deviceID: peripheralID,
+                        timestamp: Date(),
+                        eventType: .sessionStart,
+                        alarmSounded: false
+                    )
+                    MotionLogManager.shared.addMotionEvent(marker)
+                    SessionLocationStore.shared.captureForUpcomingArm()
+                } else if !armedNow && openSession {
+                    Log.info(.motion, "First-notify reconcile · firmware unarmed, open session — synthesising SESSION_END")
+                    let end = MotionEvent(
+                        deviceID: peripheralID,
+                        timestamp: Date(),
+                        eventType: .sessionEnd,
+                        alarmSounded: false
+                    )
+                    MotionLogManager.shared.addMotionEvent(end)
+                }
             }
 
             self.updateBatteryState(charging: charging, battery: battery)
@@ -1863,7 +1898,7 @@ extension BluetoothManager: CBPeripheralDelegate {
             // "Shaken" notify (sent between the iOS settings-write and the
             // firmware state-machine transition) doesn't briefly survive
             // into the unlocked state. The next fresh notify overwrites.
-            self.mlcState = (wasArmed && !armedNow) ? .stationary : mlc
+            self.mlcState = (wasArmedOptimistic && !armedNow) ? .stationary : mlc
             self.debugAccelX = accelX
             self.debugAccelY = accelY
             self.debugAccelZ = accelZ

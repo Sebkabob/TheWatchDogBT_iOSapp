@@ -158,12 +158,34 @@ class MotionSessionsRepository {
     }
 
     /// True iff at least one session for `deviceID` has no SESSION_END
-    /// recorded yet. Used by BluetoothManager to decide whether to
-    /// synthesise a fresh SESSION_START when reconnecting to a device
-    /// that booted back into LOCKED state on its own (firmware ARMED-bit
-    /// persistence). If a session is still open, we want to extend it,
-    /// not double-up.
+    /// recorded yet. Used by BluetoothManager for first-notify
+    /// reconciliation: if the firmware reports armed=0 on reconnect and
+    /// we still have an open session for that device, close it; if
+    /// firmware reports armed=1 and we don't, open a fresh one.
+    ///
+    /// Reads live from MotionLogManager. The cached `sessions` array
+    /// above is only rebuilt by view code on appear (the BLE / event
+    /// hot path no longer calls `rebuild()`), so by the time the
+    /// reconciliation runs it's typically stale — relying on it gave
+    /// us the "instant SESSION_END on lock tap" bug, where a leftover
+    /// orphan made the gate pass spuriously even when no live session
+    /// existed for the current arm cycle. Scanning the raw event log
+    /// is O(n) on a bounded ring (~169 events), well within budget.
     func hasOpenSession(for deviceID: UUID) -> Bool {
-        sessions.contains { $0.deviceID == deviceID && $0.endedAt == nil }
+        let markers = MotionLogManager.shared.motionEvents.filter {
+            $0.deviceID == deviceID && $0.eventType.isSessionMarker
+        }
+        guard !markers.isEmpty else { return false }
+        let sorted = markers.sorted { lhs, rhs in
+            switch (lhs.timestamp, rhs.timestamp) {
+            case (nil, nil):   return lhs.id.uuidString < rhs.id.uuidString
+            case (nil, _):     return true
+            case (_, nil):     return false
+            case let (lt?, rt?):
+                if lt == rt { return lhs.id.uuidString < rhs.id.uuidString }
+                return lt < rt
+            }
+        }
+        return sorted.last?.eventType == .sessionStart
     }
 }

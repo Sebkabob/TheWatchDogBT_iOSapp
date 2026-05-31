@@ -39,29 +39,75 @@ class MotionLogManager {
         }
     }
 
-    /// How close two timestamps must be (in seconds) to be considered the
-    /// same firmware-side event re-fetched after a connection drop. Firmware
-    /// stores 1-second precision and the wire format truncates fractional
-    /// seconds, so duplicates from a re-drain land at identical timestamps
-    /// — but allow a small slop window in case the firmware ever moves to
-    /// finer resolution and rounds differently.
+    /// Tight dedup: drain-replay protection. The firmware's CMD_ACK_EVENT
+    /// is a no-op (only CMD_CLEAR_LOG prunes its ring), so if iOS drops
+    /// mid-drain the same ring slots come back on reconnect. Same-type
+    /// records within ~2 s of each other are treated as the same event.
     private static let dedupWindowSeconds: TimeInterval = 2.0
 
+    /// Wide alarm-replacement window: covers the gap between the
+    /// firmware's initial duration=1 sentinel (sent at alarm-fire so iOS
+    /// flips isAlarmActive immediately) and the bout-flush alert
+    /// (duration=<real bout>) emitted when motion settles. Worst case is
+    /// alarm_duration_seconds_max (30 s) + bout_ticks_max (~64 s); 90 s
+    /// safely catches both even back-to-back. Only used when promoting
+    /// dur=1 → dur>1 within the window — distinct alarm events with real
+    /// durations are NOT collapsed.
+    private static let alarmDedupWindowSeconds: TimeInterval = 90.0
+
     func addMotionEvent(_ event: MotionEvent) {
-        // Dedup. The firmware's CMD_ACK_EVENT is a no-op (only CMD_CLEAR_LOG
-        // prunes its ring), so if iOS drops mid-drain, the same ring slots
-        // come back on the next reconnect and the previous design appended
-        // them as fresh records. Match on (deviceID, eventType, timestamp
-        // ± dedupWindowSeconds). Unknown-time events can't be deduped this
-        // way — they're rare and fall through.
-        if let ts = event.timestamp {
-            let isDuplicate = motionEvents.contains { existing in
+        // Unknown-time events can't be matched on timestamp — they're rare
+        // and fall through to a straight append.
+        guard let ts = event.timestamp else {
+            let insertIndex = motionEvents.firstIndex { Self.sortsBefore(event, $0) } ?? motionEvents.endIndex
+            motionEvents.insert(event, at: insertIndex)
+            saveMotionEvents()
+            Log.ok(.motion, "Event · \(event.eventType.displayName) at unknown time")
+            return
+        }
+
+        // Tight dedup first. A re-drained event is a same-(deviceID, type)
+        // record within 2 s. If the new record has a higher duration field
+        // (firmware can re-send a bout with updated duration when iOS
+        // drained mid-bout), promote in place; otherwise suppress as a
+        // pure duplicate.
+        if let idx = motionEvents.firstIndex(where: { existing in
+            existing.deviceID == event.deviceID &&
+            existing.eventType == event.eventType &&
+            (existing.timestamp.map { abs($0.timeIntervalSince(ts)) < Self.dedupWindowSeconds } ?? false)
+        }) {
+            let existing = motionEvents[idx]
+            let existingDur = existing.durationTicks250ms ?? 0
+            let newDur = event.durationTicks250ms ?? 0
+            if newDur > existingDur {
+                replaceInPlace(at: idx, existing: existing, with: event)
+                Log.ok(.motion, "Duplicate replaced (dur \(existingDur) → \(newDur) ticks) · \(event.eventType.displayName)")
+            } else {
+                Log.warn(.motion, "Duplicate suppressed · \(event.eventType.displayName) at \(ts)")
+            }
+            return
+        }
+
+        // Wide alarm-bout replacement. A single alarm cycle produces two
+        // alerts on iOS: an initial duration=1 sentinel (flips
+        // isAlarmActive at alarm-fire time) and a duration=<real> bout
+        // flush at alarm-exit time. Coalesce them into one record by
+        // promoting a same-type, alarm-sounded, dur=1 sentinel within
+        // 90 s into the real bout duration. Distinct alarm cycles
+        // (existing.dur > 1) are NOT touched here — they remain
+        // separate records.
+        if event.alarmSounded,
+           let newDur = event.durationTicks250ms, newDur > 1 {
+            if let idx = motionEvents.firstIndex(where: { existing in
                 existing.deviceID == event.deviceID &&
                 existing.eventType == event.eventType &&
-                (existing.timestamp.map { abs($0.timeIntervalSince(ts)) < Self.dedupWindowSeconds } ?? false)
-            }
-            if isDuplicate {
-                Log.warn(.motion, "Duplicate suppressed · \(event.eventType.displayName) at \(ts)")
+                existing.alarmSounded &&
+                (existing.durationTicks250ms ?? 0) == 1 &&
+                (existing.timestamp.map { abs($0.timeIntervalSince(ts)) < Self.alarmDedupWindowSeconds } ?? false)
+            }) {
+                let existing = motionEvents[idx]
+                replaceInPlace(at: idx, existing: existing, with: event)
+                Log.ok(.motion, "Alarm sentinel promoted (→ \(newDur) ticks) · \(event.eventType.displayName)")
                 return
             }
         }
@@ -69,8 +115,7 @@ class MotionLogManager {
         let insertIndex = motionEvents.firstIndex { Self.sortsBefore(event, $0) } ?? motionEvents.endIndex
         motionEvents.insert(event, at: insertIndex)
         saveMotionEvents()
-        let stampStr = event.timestamp.map { "\($0)" } ?? "unknown time"
-        Log.ok(.motion, "Event · \(event.eventType.displayName) at \(stampStr)")
+        Log.ok(.motion, "Event · \(event.eventType.displayName) at \(ts)")
         // Session-repository rebuild + SessionLocationStore.associate
         // used to run here, but accessing those singletons lazily on the
         // BLE-drain hot path can chain into CLLocationManager init and
@@ -79,6 +124,30 @@ class MotionLogManager {
         // loyalty-handshake budget and breaking connections. Both pieces
         // of work are now triggered from MotionReportView's onAppear
         // instead: same end result, none of it on the BLE path.
+    }
+
+    /// Swap the record at `idx` for a new record that carries the
+    /// incoming event's duration but keeps the existing record's id and
+    /// timestamp. Preserves session-location / session-name bindings
+    /// (keyed on event id) and prevents the row from jumping in the
+    /// time-sorted feed when a late bout-flush updates an earlier
+    /// alarm-fire sentinel. `alarmSounded` is OR-ed so a true bit from
+    /// either side wins.
+    private func replaceInPlace(at idx: Int,
+                                existing: MotionEvent,
+                                with event: MotionEvent) {
+        let replacement = MotionEvent(
+            id: existing.id,
+            deviceID: event.deviceID,
+            timestamp: existing.timestamp,
+            eventType: event.eventType,
+            alarmSounded: event.alarmSounded || existing.alarmSounded,
+            durationTicks250ms: event.durationTicks250ms
+        )
+        motionEvents.remove(at: idx)
+        let insertIndex = motionEvents.firstIndex { Self.sortsBefore(replacement, $0) } ?? motionEvents.endIndex
+        motionEvents.insert(replacement, at: insertIndex)
+        saveMotionEvents()
     }
 
     func clearAllEvents(for deviceID: UUID, protecting: Set<UUID> = []) {
