@@ -29,7 +29,7 @@ struct MotionTypeConfig {
     /// via the drain (post-reconnect) came from the disconnected
     /// period, so they're considered `wasConnected = false`.
     static func convert(firmwareType: UInt8,
-                        wasConnected: Bool) -> (eventType: MotionEventType, alarmSounded: Bool) {
+                        wasConnected: Bool) -> (eventType: MotionEventType, alarmSounded: Bool, firedAlarmType: AlarmType?) {
         let eventType = MotionEventType(rawValue: firmwareType) ?? .none
         let settings = SettingsManager.shared
 
@@ -46,6 +46,14 @@ struct MotionTypeConfig {
         let alarmEnabled = settings.alarmType != .none && !settings.alarmDisabled
         let silencedByConnection = wasConnected && settings.disableAlarmWhenConnected
         let actuallyFires = isAlarmTriggering && alarmEnabled && !silencedByConnection
-        return (eventType, actuallyFires)
+        // Freeze the current alarm tone on the event so the label can show
+        // "Loud alarm fired" / "Calm alarm fired" / "Normal alarm fired".
+        // The firmware doesn't echo per-event alarm type over the wire, so
+        // iOS reading SettingsManager at processing time is the best signal
+        // we have. For drained events this captures the alarm-type *as of
+        // reconnect*, which may differ from the type that actually rang —
+        // imperfect but better than no information at all.
+        let firedAlarmType: AlarmType? = actuallyFires ? settings.alarmType : nil
+        return (eventType, actuallyFires, firedAlarmType)
     }
 }

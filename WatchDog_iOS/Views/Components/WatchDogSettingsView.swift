@@ -829,11 +829,24 @@ enum SensitivityLevel: String, CaseIterable, LocalizedSegmentLabel {
     }
 }
 
-enum AlarmType: String, CaseIterable, LocalizedSegmentLabel {
+enum AlarmType: String, CaseIterable, Codable, LocalizedSegmentLabel {
     case none = "None"
     case calm = "Calm"
     case normal = "Normal"
     case loud = "Loud"
+
+    /// "Loud", "Calm", "Normal" — the human-facing display string used in
+    /// motion-log labels like "Loud alarm fired". `.none` returns "" so
+    /// the calling label code can still produce "alarm fired" as a fallback
+    /// when an event somehow records an alarm-fired bit with type `.none`.
+    var firedLabel: String {
+        switch self {
+        case .none:   return ""
+        case .calm:   return "Calm"
+        case .normal: return "Normal"
+        case .loud:   return "Loud"
+        }
+    }
 
     var segmentLabel: String {
         switch self {

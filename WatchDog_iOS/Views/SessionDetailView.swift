@@ -223,13 +223,26 @@ struct SessionDetailView: View {
 
     private var headlineText: String {
         switch session.status {
-        case .alarmed:        return "Alarm fired during this session"
+        case .alarmed:        return alarmedHeadline
         case .disturbed:      return "Motion detected"
         case .peaceful:       return "Nothing happened"
         case .active:         return "Session in progress"
         case .activeOffline:  return "Session in progress (device offline)"
         case .incomplete:     return "Session ended uncleanly"
         }
+    }
+
+    /// Headline for a session that fired the alarm. Picks the tone from
+    /// the first alarmed event in the session (a session typically has
+    /// one tone; if it has more — the user changed AlarmType mid-session —
+    /// the first one is shown). Legacy alarmed events with no
+    /// firedAlarmType fall back to the generic phrasing.
+    private var alarmedHeadline: String {
+        let firstAlarmedTone = session.events.first(where: { $0.alarmSounded })?.firedAlarmType
+        if let tone = firstAlarmedTone, !tone.firedLabel.isEmpty {
+            return "\(tone.firedLabel) alarm fired during this session"
+        }
+        return "Alarm fired during this session"
     }
 
     private var subtitleText: String {
@@ -392,15 +405,24 @@ struct SessionDetailView: View {
                         emphasised: false)
             ForEach(Array(session.events.enumerated()), id: \.offset) { _, event in
                 Divider()
-                // Compose label: "Type [· 1.2s] [· alarm fired]". The
+                // Compose label: "Type [· 1.2s] [· Loud alarm fired]". The
                 // duration segment is only shown when the firmware reports
                 // a meaningful value (>1 tick — a 1-tick event is the
                 // instantaneous floor and tells the user nothing). Legacy
                 // events recorded before the duration byte shipped have a
                 // nil ticks field and naturally fall through to the
-                // single-segment label.
+                // single-segment label. The alarm-fired segment carries the
+                // tone (Loud/Normal/Calm) that was active at processing
+                // time; legacy alarmed events with no firedAlarmType fall
+                // back to the generic "alarm fired" string.
                 let durSegment = MotionEventLabel.durationSuffix(forTicks: event.durationTicks250ms)
-                let alarmSegment = event.alarmSounded ? " · alarm fired" : ""
+                let alarmSegment: String = {
+                    guard event.alarmSounded else { return "" }
+                    if let tone = event.firedAlarmType, !tone.firedLabel.isEmpty {
+                        return " · \(tone.firedLabel) alarm fired"
+                    }
+                    return " · alarm fired"
+                }()
                 let label = "\(event.eventType.displayName)\(durSegment)\(alarmSegment)"
                 EventLogRow(time: event.timestamp,
                             referenceDay: referenceDay,

@@ -80,6 +80,14 @@ struct MotionEvent: Identifiable, Codable {
     /// column. Instantaneous events (FSM impact/freefall, MLC blips
     /// that never reached the deferred-settle path) always carry 1.
     let durationTicks250ms: UInt8?
+    /// Which alarm tone actually fired for this event. The firmware
+    /// doesn't echo per-event alarm type over the wire, so iOS captures
+    /// `SettingsManager.alarmType` at the moment the event is processed
+    /// and freezes it on the record. Always `nil` when `alarmSounded` is
+    /// false. Also `nil` on legacy records persisted before this field
+    /// shipped, in which case downstream labels fall back to a generic
+    /// "alarm fired" string.
+    let firedAlarmType: AlarmType?
 
     /// Convenience: duration as a TimeInterval (seconds). `nil` propagates
     /// the legacy/unknown case from `durationTicks250ms`.
@@ -93,12 +101,14 @@ struct MotionEvent: Identifiable, Codable {
          timestamp: Date?,
          eventType: MotionEventType,
          alarmSounded: Bool,
-         durationTicks250ms: UInt8? = nil) {
+         durationTicks250ms: UInt8? = nil,
+         firedAlarmType: AlarmType? = nil) {
         self.id = id
         self.deviceID = deviceID
         self.timestamp = timestamp
         self.eventType = eventType
         self.alarmSounded = alarmSounded
         self.durationTicks250ms = durationTicks250ms
+        self.firedAlarmType = firedAlarmType
     }
 }

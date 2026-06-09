@@ -1215,7 +1215,8 @@ class BluetoothManager: NSObject {
                                     timestamp: timestamp,
                                     eventType: config.eventType,
                                     alarmSounded: config.alarmSounded,
-                                    durationTicks250ms: durationByte)
+                                    durationTicks250ms: durationByte,
+                                    firedAlarmType: config.firedAlarmType)
             let charging = (batteryByte & 0x80) != 0
             let battery = Int(batteryByte & 0x7F)
 
@@ -1692,7 +1693,8 @@ extension BluetoothManager: CBPeripheralDelegate {
                         timestamp: Date(),
                         eventType: config.eventType,
                         alarmSounded: config.alarmSounded,
-                        durationTicks250ms: durationByte
+                        durationTicks250ms: durationByte,
+                        firedAlarmType: config.firedAlarmType
                     )
                     MotionLogManager.shared.addMotionEvent(event)
                 }
