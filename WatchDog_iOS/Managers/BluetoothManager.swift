@@ -284,7 +284,13 @@ class BluetoothManager: NSObject {
 
     func deviceLabel(for deviceID: UUID) -> String? {
         guard let id = watchDogIdentifiers[deviceID] else { return nil }
-        return String(format: "WatchDog #%04d", id)
+        // Display as hex digits so the on-screen number matches the firmware
+        // author's `#define CFG_PUBLIC_BD_ADDRESS (0x000000000010)` literally:
+        // 0x10 → "0010", 0x15 → "0015", 0xAB → "00AB". Decimal formatting
+        // (%04d) used to surface them as 16, 21, 171 — confusing for anything
+        // past 0x09 because the firmware author types hex but iOS rendered
+        // it as decimal.
+        return String(format: "WatchDog #%04X", id)
     }
 
     // Falls back when older 16-byte status frames carry no version bytes.
