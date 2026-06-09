@@ -61,6 +61,18 @@ struct DevicePageView: View {
     @State private var csvShareURL: URL?
     @State private var showShareSheet = false
 
+    // Brightness-slider send debouncer. The slider's step:1 binding fires
+    // ~50-100 times per finger-drag; without this, each step queued a 12-byte
+    // BLE settings write whose firmware-side handler does an EEPROM page
+    // commit (~15-25 ms). The result was a visible lag between slider position
+    // and actual LED — the device draining a queue of stale brightness values
+    // after the user let go. The setter now updates SettingsManager (and the
+    // UI label) immediately, but the BLE send is coalesced: each value change
+    // cancels the pending send and reschedules it for ~140 ms in the future,
+    // so only the *settled* value goes over the air.
+    @State private var brightnessSendWorkItem: DispatchWorkItem?
+    private static let brightnessSendDebounceMs = 140
+
     // Diagnostic flow
     @State private var showDiagnostic = false
 
@@ -1048,8 +1060,26 @@ struct DevicePageView: View {
         Binding(
             get: { Double(settingsManager.ledBrightness) },
             set: { newValue in
+                // Update the local model immediately so the % readout, the
+                // SwiftUI slider thumb, and the on-screen 3D-model LED preview
+                // all track the finger without lag.
                 settingsManager.updateSettings(ledBrightness: Int(newValue.rounded()))
-                if isDeviceConnected { bluetoothManager.sendSettings() }
+                // Coalesce BLE sends so the firmware only sees the settled
+                // value. Cancel the previously-scheduled send, schedule a new
+                // one. The work item captures `bluetoothManager` and the
+                // current connection state at fire time.
+                guard isDeviceConnected else { return }
+                brightnessSendWorkItem?.cancel()
+                let item = DispatchWorkItem {
+                    if isDeviceConnected {
+                        bluetoothManager.sendSettings()
+                    }
+                }
+                brightnessSendWorkItem = item
+                DispatchQueue.main.asyncAfter(
+                    deadline: .now() + .milliseconds(Self.brightnessSendDebounceMs),
+                    execute: item
+                )
             }
         )
     }
