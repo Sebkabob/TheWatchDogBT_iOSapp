@@ -73,6 +73,12 @@ struct DevicePageView: View {
     @State private var brightnessSendWorkItem: DispatchWorkItem?
     private static let brightnessSendDebounceMs = 140
 
+    // Same idea for the alarm-duration custom stepper: holding +/- can fire
+    // 15+ value changes per second once the accel kicks in, and we don't want
+    // to ship every one of those over BLE.
+    @State private var alarmDurationSendWorkItem: DispatchWorkItem?
+    private static let alarmDurationSendDebounceMs = 140
+
     // Diagnostic flow
     @State private var showDiagnostic = false
 
@@ -1084,6 +1090,25 @@ struct DevicePageView: View {
         )
     }
 
+    /// Debounced BLE send for the custom alarm-duration stepper. Tap-and-hold
+    /// can fire 15+ value changes per second once the accelerated rate kicks
+    /// in; we coalesce them onto a single trailing-edge send so the firmware
+    /// only sees the settled value.
+    private func scheduleAlarmDurationSend() {
+        guard isDeviceConnected else { return }
+        alarmDurationSendWorkItem?.cancel()
+        let item = DispatchWorkItem {
+            if isDeviceConnected {
+                bluetoothManager.sendSettings()
+            }
+        }
+        alarmDurationSendWorkItem = item
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + .milliseconds(Self.alarmDurationSendDebounceMs),
+            execute: item
+        )
+    }
+
     private var disableLEDBinding: Binding<Bool> {
         Binding(
             get: { !settingsManager.lightsEnabled },
@@ -1220,6 +1245,13 @@ struct DevicePageView: View {
                                 selection: sensitivityBinding,
                                 options: SensitivityLevel.allCases
                             )
+                            Text(settingsManager.sensitivity.useCaseDescription)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentTransition(.opacity)
+                                .animation(.easeInOut(duration: 0.18),
+                                           value: settingsManager.sensitivity)
                         }
 
                         VStack(alignment: .leading, spacing: 8) {
@@ -1235,27 +1267,25 @@ struct DevicePageView: View {
                         .opacity(settingsManager.alarmDisabled ? 0.4 : 1)
 
                         VStack(alignment: .leading, spacing: 6) {
-                            Stepper(
-                                value: Binding(
-                                    get: { settingsManager.alarmDuration },
-                                    set: { newValue in
-                                        settingsManager.updateSettings(alarmDuration: newValue)
-                                        if isDeviceConnected { bluetoothManager.sendSettings() }
-                                    }
-                                ),
-                                in: 0...30,
-                                step: 1
-                            ) {
-                                HStack {
-                                    Text(loc.t(.alarmDuration))
-                                        .font(.subheadline)
-                                        .foregroundColor(.secondary)
-                                    Spacer()
-                                    Text("\(settingsManager.alarmDuration)s")
-                                        .font(.subheadline)
-                                        .foregroundColor(.secondary)
-                                        .monospacedDigit()
-                                }
+                            HStack {
+                                Text(loc.t(.alarmDuration))
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                Text("\(settingsManager.alarmDuration)s")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                    .monospacedDigit()
+                                HoldRepeatStepper(
+                                    value: Binding(
+                                        get: { settingsManager.alarmDuration },
+                                        set: { newValue in
+                                            settingsManager.updateSettings(alarmDuration: newValue)
+                                            scheduleAlarmDurationSend()
+                                        }
+                                    ),
+                                    range: 1...30
+                                )
                             }
                             Text(loc.t(.alarmDurationCaption))
                                 .font(.caption)
@@ -1464,6 +1494,145 @@ struct DevicePageView: View {
         bluetoothManager: BluetoothManager(),
         deviceID: UUID()
     )
+}
+
+// MARK: - HoldRepeatStepper
+// Custom +/- pair that replaces SwiftUI's built-in Stepper. The native
+// Stepper auto-repeats while held but uses a fixed rate that feels slow for
+// 1..30 second adjustments — racing from 1 → 30 takes the better part of 10
+// seconds. This one:
+//   • Tap: ±1 immediately.
+//   • Hold: after a short press-down delay the value starts repeating at a
+//     "slow" rate (~5/s).
+//   • After 1 s of continuous holding the rate switches to "fast" (~20/s)
+//     so the user can blast across the range without lifting their finger.
+//   • Stops at the range boundary (no wrap-around).
+//   • Every value change calls `value`'s setter; the caller is responsible
+//     for debouncing BLE sends if needed (scheduleAlarmDurationSend does).
+private struct HoldRepeatStepper: View {
+    @Binding var value: Int
+    let range: ClosedRange<Int>
+
+    /// Delay between press-down and the first auto-repeat tick. Single taps
+    /// release well before this so they only register the immediate ±1.
+    private let initialHoldDelaySec: TimeInterval = 0.35
+    /// Repeat period in the "slow" phase (first 1 s of holding).
+    private let slowIntervalSec: TimeInterval = 0.20
+    /// Repeat period after the accel threshold trips.
+    private let fastIntervalSec: TimeInterval = 0.05
+    /// Time after press-down at which slow → fast happens.
+    private let accelAfterSec: TimeInterval = 1.0
+
+    @State private var minusTimer: Timer?
+    @State private var plusTimer: Timer?
+    @State private var minusHoldStart: Date?
+    @State private var plusHoldStart: Date?
+    @State private var minusHasAccelerated: Bool = false
+    @State private var plusHasAccelerated: Bool = false
+
+    var body: some View {
+        HStack(spacing: 0) {
+            stepButton(direction: -1, systemImage: "minus")
+            Divider().frame(height: 18).padding(.vertical, 6)
+            stepButton(direction: +1, systemImage: "plus")
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(.tertiarySystemFill))
+        )
+    }
+
+    private func stepButton(direction: Int, systemImage: String) -> some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundColor(.primary)
+            .frame(width: 44, height: 30)
+            .contentShape(Rectangle())
+            .onTapGesture { step(direction) }
+            .onLongPressGesture(minimumDuration: .infinity,
+                                maximumDistance: 30,
+                                pressing: { pressing in
+                                    if pressing {
+                                        beginHold(direction)
+                                    } else {
+                                        endHold(direction)
+                                    }
+                                },
+                                perform: {})
+    }
+
+    private func beginHold(_ direction: Int) {
+        let now = Date()
+        if direction < 0 {
+            minusHoldStart = now
+            minusHasAccelerated = false
+            minusTimer?.invalidate()
+            // Use a one-shot to start the repeat after the initial delay.
+            // Apple's Stepper-style behaviour: the press-down's immediate
+            // tap already fired ±1 via onTapGesture, then this kicks in
+            // for sustained holds.
+            minusTimer = Timer.scheduledTimer(withTimeInterval: initialHoldDelaySec,
+                                              repeats: false) { _ in
+                startRepeat(direction: direction)
+            }
+        } else {
+            plusHoldStart = now
+            plusHasAccelerated = false
+            plusTimer?.invalidate()
+            plusTimer = Timer.scheduledTimer(withTimeInterval: initialHoldDelaySec,
+                                             repeats: false) { _ in
+                startRepeat(direction: direction)
+            }
+        }
+    }
+
+    private func startRepeat(direction: Int) {
+        let timer = Timer.scheduledTimer(withTimeInterval: slowIntervalSec, repeats: true) { t in
+            let start: Date? = direction < 0 ? minusHoldStart : plusHoldStart
+            guard let start = start else { t.invalidate(); return }
+            step(direction)
+            let accelerated = direction < 0 ? minusHasAccelerated : plusHasAccelerated
+            if !accelerated && Date().timeIntervalSince(start) >= accelAfterSec {
+                // Promote to fast rate. Tear down the slow timer and stand
+                // up a faster one; the start time stays so we don't bounce
+                // back into the slow phase on jitter.
+                t.invalidate()
+                if direction < 0 { minusHasAccelerated = true } else { plusHasAccelerated = true }
+                let fast = Timer.scheduledTimer(withTimeInterval: fastIntervalSec, repeats: true) { ft in
+                    let s: Date? = direction < 0 ? minusHoldStart : plusHoldStart
+                    guard s != nil else { ft.invalidate(); return }
+                    step(direction)
+                }
+                if direction < 0 { minusTimer = fast } else { plusTimer = fast }
+            }
+        }
+        if direction < 0 { minusTimer = timer } else { plusTimer = timer }
+    }
+
+    private func endHold(_ direction: Int) {
+        if direction < 0 {
+            minusTimer?.invalidate()
+            minusTimer = nil
+            minusHoldStart = nil
+            minusHasAccelerated = false
+        } else {
+            plusTimer?.invalidate()
+            plusTimer = nil
+            plusHoldStart = nil
+            plusHasAccelerated = false
+        }
+    }
+
+    private func step(_ delta: Int) {
+        let next = value + delta
+        if range.contains(next) {
+            value = next
+        } else {
+            // Boundary hit — stop the active timer so the user doesn't have
+            // to release just to silence it.
+            endHold(delta)
+        }
+    }
 }
 
 // MARK: - CubeTestView (debug stand-in for Motion3DView)

@@ -440,7 +440,7 @@ struct WatchDogSettingsView: View {
                         get: { Double(alarmDuration) },
                         set: { alarmDuration = Int($0.rounded()) }
                     ),
-                    in: 0...30,
+                    in: 1...30,
                     step: 1
                 )
 
@@ -825,6 +825,17 @@ enum SensitivityLevel: String, CaseIterable, LocalizedSegmentLabel {
         case .low:    return LocalizationManager.shared.t(.low)
         case .medium: return LocalizationManager.shared.t(.medium)
         case .high:   return LocalizationManager.shared.t(.high)
+        }
+    }
+
+    /// One-line description shown in gray under the Sensitivity segmented
+    /// control on the device page. Updates as the user picks a different
+    /// option. Matches the AlarmType.description pattern.
+    var useCaseDescription: String {
+        switch self {
+        case .low:    return "Best for bags"
+        case .medium: return "Best for items"
+        case .high:   return "Best for doors/drawers"
         }
     }
 }

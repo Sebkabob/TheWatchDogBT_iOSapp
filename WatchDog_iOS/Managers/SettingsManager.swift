@@ -292,7 +292,7 @@ class SettingsManager {
         }
 
         if ud.object(forKey: deviceKey(alarmDurationKey, deviceID)) != nil {
-            alarmDuration = max(0, min(30, ud.integer(forKey: deviceKey(alarmDurationKey, deviceID))))
+            alarmDuration = max(1, min(30, ud.integer(forKey: deviceKey(alarmDurationKey, deviceID))))
         } else {
             alarmDuration = 2
         }
@@ -385,7 +385,7 @@ class SettingsManager {
         if let triggers = triggers { alarmTriggers = triggers }
         if let preset = preset { selectedPresetRawValue = preset }
         if let alarmDuration = alarmDuration {
-            self.alarmDuration = max(0, min(30, alarmDuration))
+            self.alarmDuration = max(1, min(30, alarmDuration))
         }
         if let alarmDisabled = alarmDisabled { self.alarmDisabled = alarmDisabled }
         if let disconnectSoundDisabled = disconnectSoundDisabled {
