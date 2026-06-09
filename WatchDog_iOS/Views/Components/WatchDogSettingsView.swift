@@ -226,18 +226,29 @@ struct WatchDogSettingsView: View {
                 ForEach(presets, id: \.self) { preset in
                     let index = presets.firstIndex(of: preset)!
                     let baseDist = circularDistance(from: selectedIdx, to: index, count: count)
-                    let dist = Double(baseDist) + dragProgress
+                    let dist: Double = Double(baseDist) + Double(dragProgress)
+                    let absDist: Double = abs(dist)
+                    // Pre-compute every modifier value as a concrete type.
+                    // Inlining these in the chain pushes the SwiftUI type
+                    // inferencer past its complexity budget and trips the
+                    // "unable to type-check this expression in reasonable
+                    // time" diagnostic on this view.
+                    let scale: CGFloat = CGFloat(max(0.88, 1.0 - absDist * 0.12))
+                    let opacity: Double = max(0.0, 1.0 - absDist * 0.5)
+                    let rotation: Angle = .degrees(dist * -25.0)
+                    let xOffset: CGFloat = CGFloat(dist) * step
+                    let isSelected: Bool = (selectedPreset == preset)
 
-                    PresetCard(preset: preset, isSelected: selectedPreset == preset)
+                    PresetCard(preset: preset, isSelected: isSelected)
                         .frame(width: cardWidth)
-                        .scaleEffect(max(0.88, 1.0 - abs(dist) * 0.12))
-                        .opacity(max(0, 1.0 - abs(dist) * 0.5))
+                        .scaleEffect(scale)
+                        .opacity(opacity)
                         .rotation3DEffect(
-                            .degrees(dist * -25),
+                            rotation,
                             axis: (x: 0, y: 1, z: 0),
                             perspective: 0.4
                         )
-                        .offset(x: dist * step)
+                        .offset(x: xOffset)
                         .onTapGesture { selectPreset(preset) }
                 }
             }

@@ -31,6 +31,24 @@
 //  reconnects); the timestamp match keeps an old pending entry from
 //  attaching itself to an unrelated future SESSION_START.
 //
+//  Reliability — three layered fallbacks try to get a location attached:
+//    A. Capture-time snapshot. captureForUpcomingArm grabs whatever
+//       `manager.location` has cached, IF anything. Best case, this is
+//       a fix from the last `didUpdateLocations` callback.
+//    B. Pending refresh while arm is in flight. captureForUpcomingArm
+//       arms a `pendingArmDeadline`; every incoming CLLocation up to
+//       that deadline REPLACES `pending` with the newer fix. So if the
+//       cached value was stale (or nil) when the user pressed lock, the
+//       one-shot we kicked off + the continuous updates will land a
+//       real fix into `pending` before the BLE drain hands us the
+//       SESSION_START event.
+//    C. Retroactive association. If SESSION_START still arrives with
+//       no pending location (slow first-launch GPS, indoor warmup,
+//       authorization just granted), we queue the event id into
+//       `awaitingFix`. The next CLLocation that arrives within
+//       `retroactiveWindow` is bound to those events. Without this,
+//       a location that arrives 800 ms too late would be discarded.
+//
 
 import Foundation
 import CoreLocation
@@ -76,7 +94,35 @@ class SessionLocationStore: NSObject, CLLocationManagerDelegate {
     /// no-op, etc.).
     private let pendingWindow: TimeInterval = 30
 
+    /// How long we keep refreshing `pending` from incoming CLLocations
+    /// after an arm-press. Set whenever captureForUpcomingArm runs.
+    /// Bigger than pendingWindow on purpose — if the user pressed lock
+    /// indoors and the GPS takes 25 s to acquire, we still want the
+    /// late fix to land in pending in time for any SESSION_START that
+    /// is still queued.
+    private let pendingArmRefreshWindow: TimeInterval = 45
+
+    /// How long a SESSION_START that arrived with no fix will wait
+    /// for one. Slow-first-launch GPS commonly takes 10–30 s.
+    private let retroactiveWindow: TimeInterval = 60
+
+    /// A CLLocation older than this — measured by its own `.timestamp`,
+    /// not when we received the callback — is treated as too stale to
+    /// use as a fresh fix. Tolerates the system's cached-fix latency
+    /// without binding a 10-minute-old fix to a new SESSION_START.
+    private let freshnessWindow: TimeInterval = 120
+
     private var pending: (location: SessionLocation, capturedAt: Date)?
+
+    /// Set by captureForUpcomingArm. While `Date() < pendingArmDeadline`,
+    /// every incoming CLLocation replaces `pending` with a fresher copy.
+    /// nil means "no arm in flight, don't auto-refresh pending."
+    private var pendingArmDeadline: Date?
+
+    /// SESSION_START event ids that arrived before any fix was ready.
+    /// Each entry includes when we queued it so we can age out stale
+    /// requests instead of binding them to whatever-fix-eventually-shows-up.
+    private var awaitingFix: [(eventID: UUID, queuedAt: Date)] = []
 
     override init() {
         super.init()
@@ -110,16 +156,23 @@ class SessionLocationStore: NSObject, CLLocationManagerDelegate {
 
     /// Snapshot the latest known CLLocation into `pending`. Called by
     /// DevicePageView right before the arm settings packet goes out.
-    /// If we don't have a recent fix (e.g. user just granted permission
-    /// and hasn't moved), we kick a one-shot request — the SESSION_START
-    /// drain typically takes long enough for the fix to come back before
-    /// `associateIfPending` is called.
+    /// Three things happen here, layered for reliability:
+    ///   1. If `manager.location` has anything, snapshot it. Cheap and
+    ///      always available when continuous updates have been running.
+    ///   2. Open the `pendingArmDeadline` window — `didUpdateLocations`
+    ///      will REPLACE `pending` with any fresher fix until the window
+    ///      closes. This catches the case where the cached fix was nil
+    ///      or stale at press-time but a new one arrives moments later.
+    ///   3. Kick `requestLocation()` AND make sure `startUpdatingLocation`
+    ///      is running. The one-shot wakes up assisted-GPS / network
+    ///      assist hardware that may have been parked; the continuous
+    ///      updates make sure subsequent callbacks land.
     func captureForUpcomingArm() {
         guard authorizationStatus == .authorizedWhenInUse
             || authorizationStatus == .authorizedAlways else {
             return
         }
-        if let loc = manager.location, loc.horizontalAccuracy > 0 {
+        if let loc = manager.location, isFresh(loc) {
             pending = (
                 SessionLocation(lat: loc.coordinate.latitude,
                                 lng: loc.coordinate.longitude,
@@ -127,7 +180,19 @@ class SessionLocationStore: NSObject, CLLocationManagerDelegate {
                 Date()
             )
         }
+        pendingArmDeadline = Date().addingTimeInterval(pendingArmRefreshWindow)
+        manager.startUpdatingLocation()
         manager.requestLocation()
+    }
+
+    /// A CLLocation is considered usable when it has a non-negative
+    /// horizontalAccuracy (negative = invalid) AND its own timestamp is
+    /// within `freshnessWindow` of now. The timestamp check matters because
+    /// `manager.location` can return a long-cached value from a previous
+    /// session if the device has been stationary indoors.
+    private func isFresh(_ loc: CLLocation) -> Bool {
+        guard loc.horizontalAccuracy > 0 else { return false }
+        return Date().timeIntervalSince(loc.timestamp) <= freshnessWindow
     }
 
     /// Called from MotionLogManager.addMotionEvent for SESSION_START
@@ -144,14 +209,50 @@ class SessionLocationStore: NSObject, CLLocationManagerDelegate {
     /// stamped it.
     func associateIfPending(eventID: UUID, eventTimestamp: Date?) {
         _ = eventTimestamp  // intentionally unused; see comment above
-        guard let pending else { return }
-        if Date().timeIntervalSince(pending.capturedAt) > pendingWindow {
+
+        // Tier A: a fresh pending capture is the best case.
+        if let pending {
+            if Date().timeIntervalSince(pending.capturedAt) <= pendingWindow {
+                locations[eventID] = pending.location
+                self.pending = nil
+                pendingArmDeadline = nil
+                saveToDisk()
+                return
+            }
+            // Pending entry exists but is too old. Drop it; we'll fall
+            // through to the manager.location / awaitingFix tiers.
             self.pending = nil
+        }
+
+        // Tier B: no pending entry but `manager.location` has a recent
+        // fix (continuous updates have been running). Use it directly.
+        // Common case after a brief gap between captureForUpcomingArm and
+        // SESSION_START where the cached fix arrived in between.
+        if let loc = manager.location, isFresh(loc) {
+            locations[eventID] = SessionLocation(
+                lat: loc.coordinate.latitude,
+                lng: loc.coordinate.longitude,
+                capturedAt: Date())
+            saveToDisk()
             return
         }
-        locations[eventID] = pending.location
-        self.pending = nil
-        saveToDisk()
+
+        // Tier C: no fix yet. Queue the event id so the next CLLocation
+        // callback can bind it retroactively. captureForUpcomingArm just
+        // kicked `requestLocation()` so a fix is on the way; this is the
+        // path for slow-GPS / just-granted-permission cases. Aged-out
+        // queue entries are pruned in `pruneStaleAwaiting()`.
+        pruneStaleAwaiting()
+        awaitingFix.append((eventID: eventID, queuedAt: Date()))
+        manager.startUpdatingLocation()
+        manager.requestLocation()
+    }
+
+    private func pruneStaleAwaiting() {
+        let now = Date()
+        awaitingFix.removeAll {
+            now.timeIntervalSince($0.queuedAt) > retroactiveWindow
+        }
     }
 
     func location(for sessionID: UUID) -> SessionLocation? {
@@ -235,6 +336,46 @@ class SessionLocationStore: NSObject, CLLocationManagerDelegate {
         // kCLLocationAccuracyHundredMeters + 50m distance filter is
         // low-cost (the system batches significant-motion deltas) and
         // makes the lock-time fix actually current.
+
+        // Take the freshest usable fix in the batch. CL can deliver a
+        // batched array; the last element is the newest.
+        guard let loc = locations.reversed().first(where: { isFresh($0) }) else {
+            return
+        }
+
+        // (B) Pending refresh: if an arm is in flight, REPLACE pending
+        // with this fresher reading. We always replace, not "only if
+        // pending is nil" — a fix from 200 ms ago is better than the
+        // one we snapshotted from the cache at press-time.
+        if let deadline = pendingArmDeadline, Date() < deadline {
+            pending = (
+                SessionLocation(lat: loc.coordinate.latitude,
+                                lng: loc.coordinate.longitude,
+                                capturedAt: Date()),
+                Date()
+            )
+        } else {
+            // Arm window closed — drop the deadline so we stop touching
+            // pending on every background update.
+            pendingArmDeadline = nil
+        }
+
+        // (C) Retroactive association: every SESSION_START that was
+        // queued without a fix gets bound to this one, provided it's
+        // still within retroactiveWindow. Aged-out entries are dropped
+        // in pruneStaleAwaiting; everything else is associated and
+        // persisted in a single saveToDisk.
+        pruneStaleAwaiting()
+        if !awaitingFix.isEmpty {
+            let stamp = SessionLocation(lat: loc.coordinate.latitude,
+                                        lng: loc.coordinate.longitude,
+                                        capturedAt: Date())
+            for entry in awaitingFix {
+                self.locations[entry.eventID] = stamp
+            }
+            awaitingFix.removeAll()
+            saveToDisk()
+        }
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
